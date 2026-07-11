@@ -1,0 +1,21 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# .all/ agent cache (regenerable)
+.all/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Test fixtures (large binaries — add explicitly if needed)
+# tests/fixtures/*.xlsx
+
+# Env
+.env
+.env.*
