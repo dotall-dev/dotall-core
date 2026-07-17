@@ -44,28 +44,34 @@ dotall status           # tracked objects, fresh/stale, versions
 dotall/
 ├── Cargo.toml               # [workspace]
 ├── crates/
-│   ├── dotall-core/         # lib: orchestrates the crates below
-│   ├── dotall-cache/        # .all/ IO, manifest, hashing, invalidation
-│   ├── dotall-model/        # canonical AST types + JSON (de)serialize, element IDs
-│   ├── dotall-semantics/    # formula dependency graph
-│   ├── dotall-views/        # L0 summary + Markdown projection + range slices
-│   ├── dotall-edit/         # op types, staging, apply, version/diff/revert
-│   ├── dotall-xlsx/         # format module: read (calamine) + surgical OOXML write
+│   ├── dotall-core/         # store, registry, pipeline, read, history, orchestration
+│   ├── dotall-xlsx/         # typed model, processors, views, edits, OOXML writer
 │   ├── dotall-cli/          # bin: `dotall` (dev harness + real CLI)
 │   └── dotall-mcp/          # bin: stdio MCP server (added after core is solid)
 ```
 
-**Format-module trait from day one:**
+Core concerns begin as strict internal modules. Promote one to a separate crate only
+when independent dependencies, feature gating, test isolation, or ownership make
+the boundary valuable. Do not generalize a universal model or graph from XLSX
+alone.
+
+**Format handler contract from day one:**
 
 ```rust
-trait Format {
-    fn parse(&self, bytes: &[u8]) -> Result<Model>;
-    fn summary(&self, model: &Model) -> Summary;
-    fn apply_ops(&self, source: &Path, ops: &[EditOp]) -> Result<Vec<u8>>;
+trait FormatHandler {
+    fn detect(&self, probe: &DetectionProbe) -> DetectionScore;
+    fn capabilities(&self) -> Capabilities;
+    fn parse(&self, source: &Path) -> Result<ArtifactEnvelope>;
+    fn read(&self, model: &ArtifactEnvelope, request: &ReadRequest)
+        -> Result<ReadResponse>;
+    fn validate_edit(&self, model: &ArtifactEnvelope, ops: &[SemanticOperation])
+        -> Result<ValidatedEdit>;
+    fn apply_edit(&self, source: &Path, edit: &ValidatedEdit)
+        -> Result<PatchedOutput>;
 }
 ```
 
-DOCX/PDF later implement `Format` in their own crates.
+DOCX/PDF later implement the handler contract in their own format-family crates.
 
 ## 3. `.all/` on-disk layout
 
@@ -77,34 +83,35 @@ Project-local `.all/` only for v0. Global `~/.all/cache/` is deferred.
 └── objects/financials.xlsx/
     ├── meta.json                     # mime, size, mtime, source hash, schema ver
     ├── original.ref                  # pointer to source path + hash (no copy)
-    ├── ast/model.json                # ① canonical AST (source of truth for edits)
-    ├── graph/deps.json               # ② formula dependency graph
-    ├── views/
-    │   ├── summary.json              # L0 summary
-    │   └── sheets/<sheet>.md         # LLM-friendly Markdown projection
-    ├── access/log.jsonl              # read provenance (what served, when, tokens)
-    └── edits/
-        ├── staging/patch-*.json      # proposed ops, pre-apply
-        └── history/
-            ├── v001.json ...         # {ops, semantic_diff, ts, agent_id}
-            └── snapshots/v001.ref    # pre-apply source hash (revert target)
+    ├── cache/                        # safe to delete and regenerate
+    │   ├── model/model.json          # ① canonical typed model
+    │   ├── derived/                  # ② dependency graph and later processors
+    │   └── views/                    # ③ summaries and Markdown projections
+    └── state/                        # durable across cache invalidation
+        ├── access/log.jsonl          # read provenance
+        ├── transactions/             # crash recovery journals
+        └── edits/
+            ├── staging/              # proposed ops, pre-apply
+            └── history/
+                ├── v001.json ...     # ops, semantic diff, timestamp, actor
+                └── snapshots/        # pre-apply content-addressed snapshots
 ```
 
 ## 4. The three artifacts
 
-### ① Canonical AST — `ast/model.json`
+### ① Canonical model — `cache/model/model.json`
 
 `Workbook → Sheet → Row → Cell`. Each cell carries a stable `element_id`, value,
 **opaque formula string**, style ref, number format. Round-trip capable. Mutated by
 edits. Not shown to the agent directly.
 
-### ② Semantic graph — `graph/deps.json`
+### ② Semantic graph — `cache/derived/`
 
 Formula **reference** parsing only: `B12 → depends on → A1:A10`, cross-sheet refs,
 named ranges. **No evaluation engine in v0.** Powers "what feeds this cell?" queries
 and semantic diffs.
 
-### ③ Projections — `views/`
+### ③ Projections — `cache/views/`
 
 What the agent consumes:
 
@@ -137,9 +144,9 @@ What the agent consumes:
 `delete_sheet`. Broaden to formatting/merges/etc. after the loop is proven.
 
 ```
-edit  → validate against AST + deps → write edits/staging/patch-NNN.json
-apply → snapshot source hash → surgical OOXML write → refresh ast/graph/views
-      → append edits/history/vNNN.json (ops + semantic diff)
+edit  → validate against model + deps → write state/edits/staging/patch-NNN.json
+apply → snapshot source hash → surgical OOXML write → refresh model/derived/views
+      → append state/edits/history/vNNN.json (ops + semantic diff)
 ```
 
 - Auto-apply default (agents); `--stage-only` keeps patches for human review.
@@ -184,14 +191,13 @@ fidelity test suite guards it.
 
 ## 10. Build sequence
 
-1. Workspace + `.all/` core (manifest, meta, hashing) + `dotall init` / `status`.
-2. `dotall-xlsx` read (calamine) → `ast/model.json`.
-3. `dotall-views`: L0 summary + Markdown projection → `read` (cache hit/miss).
-4. `dotall-semantics`: formula dependency graph.
-5. `dotall-edit`: staging + composable ops + **surgical OOXML apply** + versioning.
-6. `history` / `diff` / `revert`.
-7. Broaden edit ops (formatting, merges, etc.).
-8. `dotall-mcp`: wrap core as stdio MCP; register in Claude Desktop.
+1. Core storage foundation: workspace, manifest, hashing, `init`, and `status`.
+2. XLSX detection and cached typed-model reads with agent projections.
+3. Formula dependency derivation and queries.
+4. Transactional value/formula edits, surgical OOXML apply, history, diff, recovery,
+   and revert.
+5. Broaden row/column/range/sheet operations behind fidelity tests.
+6. `dotall-mcp`: expose the same core as a stdio MCP server.
 
 ## 11. Non-goals for v0 (YAGNI)
 

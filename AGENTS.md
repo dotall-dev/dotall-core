@@ -32,57 +32,68 @@ don't silently drift.
 
 ## Architecture (target)
 
-```
+```text
 dotall/
 ├── Cargo.toml               # [workspace]
 ├── crates/
-│   ├── dotall-core/         # orchestrates the crates below
-│   ├── dotall-cache/        # .all/ IO, manifest, hashing, invalidation
-│   ├── dotall-model/        # canonical AST types + JSON, stable element IDs
-│   ├── dotall-semantics/    # formula dependency graph
-│   ├── dotall-views/        # L0 summary + Markdown projection + range slices
-│   ├── dotall-edit/         # op types, staging, apply, version/diff/revert
-│   ├── dotall-xlsx/         # format module: read + surgical OOXML write
+│   ├── dotall-core/         # store, registry, pipeline, read, history, orchestration
+│   ├── dotall-xlsx/         # typed model, processors, views, edits, OOXML writer
 │   ├── dotall-cli/          # bin: `dotall`
 │   └── dotall-mcp/          # bin: stdio MCP server (added later)
 ```
 
-The `Format` trait is the plug-and-play boundary:
+Core concerns begin as strict internal modules. Promote one to a separate crate only
+when independent dependencies, feature gating, test isolation, or ownership make
+the boundary valuable. Do not generalize a universal model or graph from XLSX
+alone.
+
+The format handler contract is the plug-and-play boundary. Shared envelopes carry
+versioned, format-owned payloads; normal agent workflows never see those internal
+schemas:
 
 ```rust
-trait Format {
-    fn parse(&self, bytes: &[u8]) -> Result<Model>;
-    fn summary(&self, model: &Model) -> Summary;
-    fn apply_ops(&self, source: &Path, ops: &[EditOp]) -> Result<Vec<u8>>;
+trait FormatHandler {
+    fn detect(&self, probe: &DetectionProbe) -> DetectionScore;
+    fn capabilities(&self) -> Capabilities;
+    fn parse(&self, source: &Path) -> Result<ArtifactEnvelope>;
+    fn read(&self, model: &ArtifactEnvelope, request: &ReadRequest)
+        -> Result<ReadResponse>;
+    fn validate_edit(&self, model: &ArtifactEnvelope, ops: &[SemanticOperation])
+        -> Result<ValidatedEdit>;
+    fn apply_edit(&self, source: &Path, edit: &ValidatedEdit)
+        -> Result<PatchedOutput>;
 }
 ```
 
 ## `.all/` layout
 
-```
+```text
 .all/
 ├── manifest.json
 └── objects/<file>/
     ├── meta.json            # mime, size, mtime, source hash, schema ver
     ├── original.ref         # pointer to source (no copy)
-    ├── ast/model.json       # canonical AST (source of truth for edits)
-    ├── graph/deps.json      # formula dependency graph
-    ├── views/
-    │   ├── summary.json      # L0 summary
-    │   └── sheets/<sheet>.md # LLM-friendly Markdown projection
-    ├── access/log.jsonl     # read provenance
-    └── edits/
-        ├── staging/patch-*.json
-        └── history/vNNN.json + snapshots/vNNN.ref
+    ├── cache/               # safe to delete and regenerate
+    │   ├── model/
+    │   ├── derived/
+    │   └── views/
+    └── state/               # retained across cache invalidation
+        ├── access/log.jsonl
+        ├── transactions/
+        └── edits/
+            ├── staging/
+            └── history/ + snapshots/
 ```
 
-`.all/` is gitignored (regenerable cache).
+`.all/` is gitignored runtime state. `cache/` is regenerable; `state/` contains
+durable local history and recovery data and must not be removed by cache cleanup.
 
 ## Conventions
 
-- **Language:** Rust (stable). One Cargo workspace; one concern per crate.
+- **Language:** Rust (stable). One Cargo workspace; focused modules inside core and
+  one crate per format family.
 - **Errors:** `Result` everywhere; no `unwrap()` in library code outside tests.
-- **Serialization:** `serde` + `serde_json`. AST/views are JSON for now
+- **Serialization:** `serde` + `serde_json`. Models/views are JSON for now
   (agent- and human-debuggable); optimize to binary only if profiling demands it.
 - **Hashing:** `blake3` with an `(mtime, size, hash)` fast path — never rehash large
   files on every call.
@@ -99,7 +110,7 @@ tests.
 
 ## Build & test
 
-```
+```bash
 cargo build
 cargo test
 cargo run -p dotall-cli -- <args>
