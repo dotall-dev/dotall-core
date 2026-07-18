@@ -1,0 +1,12 @@
+[package]
+name = "dotall-cli"
+version = "0.1.0"
+edition = "2024"
+autobins = false
+
+[[bin]]
+name = "dotall"
+path = "src/main.rs"
+
+[dependencies]
+dotall-core = { version = "0.1.0", path = "../dotall-core" }
