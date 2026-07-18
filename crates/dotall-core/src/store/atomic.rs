@@ -42,7 +42,7 @@ pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
             .sync_all()
             .map_err(|source| DotallError::io(&temporary, source))?;
 
-        fs::rename(&temporary, path).map_err(|source| DotallError::io(path, source))?;
+        rename_replace(&temporary, path)?;
         sync_parent(parent)?;
         Ok(())
     })();
@@ -51,6 +51,21 @@ pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+fn rename_replace(from: &Path, to: &Path) -> Result<()> {
+    match fs::rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(source) => {
+            // On Windows, rename fails when the destination already exists.
+            if to.exists() {
+                fs::remove_file(to).map_err(|source| DotallError::io(to, source))?;
+                fs::rename(from, to).map_err(|source| DotallError::io(to, source))
+            } else {
+                Err(DotallError::io(to, source))
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -91,5 +106,22 @@ mod tests {
                 .join(format!(".manifest.json.tmp-{}", std::process::id()))
                 .exists()
         );
+    }
+
+    #[test]
+    fn replaces_existing_json_file() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("manifest.json");
+
+        write_json(&path, &Manifest::default()).expect("first write");
+        let updated = Manifest {
+            schema_version: 2,
+            ..Manifest::default()
+        };
+        write_json(&path, &updated).expect("replace write");
+
+        let parsed: Manifest = serde_json::from_slice(&fs::read(&path).expect("read manifest"))
+            .expect("parse manifest");
+        assert_eq!(parsed.schema_version, 2);
     }
 }

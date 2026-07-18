@@ -19,6 +19,8 @@ pub struct DotallStore {
 
 impl DotallStore {
     pub fn init(root: impl AsRef<Path>) -> Result<Self> {
+        let root = root.as_ref();
+        fs::create_dir_all(root).map_err(|source| DotallError::io(root, source))?;
         let workspace = Workspace::at(root)?;
         let all_dir = workspace.all_dir();
         if all_dir.exists() && !all_dir.is_dir() {
@@ -72,14 +74,11 @@ impl DotallStore {
             .get(&key)
             .map_or(0, |object| object.version_count);
 
-        self.manifest.objects.insert(
-            key.clone(),
-            TrackedObject {
-                format_id: format_id.clone(),
-                fingerprint: fingerprint.clone(),
-                version_count,
-            },
-        );
+        let tracked = TrackedObject {
+            format_id: format_id.clone(),
+            fingerprint: fingerprint.clone(),
+            version_count,
+        };
 
         let object_dir = self.workspace.objects_dir().join(&key);
         for directory in [
@@ -105,11 +104,16 @@ impl DotallStore {
         write_json(
             &object_dir.join("original.ref"),
             &OriginalRef {
-                relative_path: key,
+                relative_path: key.clone(),
                 source_hash: fingerprint.blake3,
             },
         )?;
-        write_json(&self.workspace.manifest_path(), &self.manifest)
+
+        let mut next_manifest = self.manifest.clone();
+        next_manifest.objects.insert(key, tracked);
+        write_json(&self.workspace.manifest_path(), &next_manifest)?;
+        self.manifest = next_manifest;
+        Ok(())
     }
 
     pub fn status(&self) -> Result<Vec<ObjectStatus>> {
@@ -158,10 +162,6 @@ fn resolve_source(workspace: &Workspace, relative: &Path) -> Result<(String, std
                 Component::ParentDir | Component::RootDir | Component::Prefix(_)
             )
         })
-        || relative
-            .components()
-            .next()
-            .is_some_and(|component| component.as_os_str() == ".all")
     {
         return Err(DotallError::InvalidSourcePath {
             path: relative.to_path_buf(),
@@ -188,6 +188,13 @@ fn resolve_source(workspace: &Workspace, relative: &Path) -> Result<(String, std
         return Err(DotallError::InvalidSourcePath {
             path: relative.to_path_buf(),
             reason: "path contains a non-UTF-8 or unsupported component".to_owned(),
+        });
+    }
+    if key.contains(&".all") {
+        return Err(DotallError::InvalidSourcePath {
+            path: relative.to_path_buf(),
+            reason: "path must be relative, remain inside the workspace, and not target .all"
+                .to_owned(),
         });
     }
     let key = key.join("/");

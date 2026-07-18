@@ -15,6 +15,16 @@ fn init_is_idempotent_and_creates_required_layout() {
 }
 
 #[test]
+fn init_creates_missing_workspace_directory() {
+    let temp = tempdir().expect("tempdir");
+    let missing = temp.path().join("new-workspace");
+
+    DotallStore::init(&missing).expect("init missing directory");
+
+    assert!(missing.join(".all/manifest.json").is_file());
+}
+
+#[test]
 fn registered_source_moves_from_fresh_to_stale() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("book.xlsx");
@@ -66,6 +76,21 @@ fn parent_traversal_cannot_escape_the_workspace() {
     let error = store
         .register_source("../outside.xlsx", "xlsx")
         .expect_err("unsafe path");
+
+    assert!(error.to_string().contains("invalid source path"));
+}
+
+#[test]
+fn dotted_all_paths_cannot_register_inside_store() {
+    let temp = tempdir().expect("tempdir");
+    let mut store = DotallStore::init(temp.path()).expect("init");
+    let nested = temp.path().join(".all/objects/sneaky.xlsx");
+    fs::create_dir_all(nested.parent().expect("parent")).expect("dirs");
+    fs::write(&nested, b"sneaky").expect("source");
+
+    let error = store
+        .register_source("./.all/objects/sneaky.xlsx", "xlsx")
+        .expect_err("internal path");
 
     assert!(error.to_string().contains("invalid source path"));
 }

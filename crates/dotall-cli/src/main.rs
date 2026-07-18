@@ -99,7 +99,12 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
 fn print_json<T: Serialize>(value: &T) {
     match serde_json::to_string_pretty(value) {
         Ok(json) => println!("{json}"),
-        Err(error) => eprintln!("{{\"error\":\"failed to serialize CLI output: {error}\"}}"),
+        Err(error) => {
+            let fallback = serde_json::json!({
+                "error": format!("failed to serialize CLI output: {error}"),
+            });
+            eprintln!("{fallback}");
+        }
     }
 }
 
