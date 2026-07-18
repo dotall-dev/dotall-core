@@ -49,21 +49,38 @@ Human file (bytes, preserved)
 
 | Layer | Technology | Role |
 |-------|------------|------|
-| Core | **Rust** | AST, semantics, cache, views, edit/version pipeline |
+| Core | **Rust** (`dotall-core`) | Store, registry, pipeline, read, history, orchestration |
+| Format | **Rust** (`dotall-xlsx`, later families) | Typed model, processors, views, semantic edits, writer |
 | CLI | **Rust** (`dotall`) | Dev harness + real CLI over the core |
 | MCP | **Rust** (stdio binary) | The interface agents use in Claude Desktop |
 | SDKs | Python, JS (later) | Thin bindings over the Rust core |
-| Storage | `.all/` | Syntactic + semantic + views + edits |
+| Storage | `.all/` | Model + derived + views + durable edit state |
 
 Distribution target: a **single static Rust binary**. Install = point Claude
 Desktop's MCP config at the binary — no Python/Node runtime required.
 
+## Repository layout
+
+```text
+crates/
+├── dotall-core/    # store, registry, pipeline, read, history, orchestration
+├── dotall-xlsx/    # typed XLSX model, processors, views, semantic edits, writer
+├── dotall-cli/     # `dotall` binary
+└── dotall-mcp/     # stdio MCP binary after the core loop is solid
+```
+
+Core concerns begin as strict internal modules. Promote one to a separate crate only
+when independent dependencies, feature gating, test isolation, or ownership make
+the boundary valuable. Do not generalize a universal model or graph from XLSX
+alone.
+
 ## Modular, plug-and-play
 
-Each concern is an isolated crate behind a narrow interface. Formats implement a
-`Format` trait and register in a format registry — adding DOCX or PDF is a new crate,
-not a core rewrite. This serves both performance (swap implementations behind stable
-interfaces) and maintainability (reason about and test one unit at a time).
+Formats implement a `FormatHandler` contract and register in a format registry —
+adding DOCX or PDF is a new crate, not a core rewrite. Shared envelopes carry
+versioned, format-owned payloads. This serves both performance (swap implementations
+behind stable interfaces) and maintainability (reason about and test one unit at a
+time).
 
 ## Roadmap
 
@@ -89,14 +106,18 @@ XLSX engine, CLI-first, pure Rust. See `docs/specs/xlsx-engine-v0.md`.
 
 ## Key architecture decisions
 
-- **`.all/` scope:** project-local for v0; global content-addressed cache deferred.
+- **`.all/` scope:** project-local for v0; remote artifact sharing deferred
+  (`docs/ideas/remote-artifact-sharing.md`).
 - **Object keying:** relative path primary; content hash for invalidation/dedup.
 - **Original storage:** reference by default (no copy); snapshots only when a version
   needs a revert target.
+- **On-disk layout:** regenerable artifacts under `cache/{model,derived,views}`;
+  durable records under `state/{access,transactions,edits}`.
 - **Invalidation:** `blake3` + `(mtime, size)` fast path; `status`/`sync` to rescan;
   `watch` daemon deferred.
 - **Edit flow:** auto-apply by default (agents), `--stage-only` for human review.
 - **Round-trip:** surgical OOXML patching to preserve untouched content.
+- See also `docs/specs/core-format-architecture.md`.
 
 ## Non-goals (v0)
 
