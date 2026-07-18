@@ -36,8 +36,7 @@ fn json_status_is_machine_readable() {
         .expect("status output");
 
     assert!(output.status.success());
-    let value: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
     assert_eq!(value["tracked_count"], 0);
     assert_eq!(value["objects"], serde_json::json!([]));
 }

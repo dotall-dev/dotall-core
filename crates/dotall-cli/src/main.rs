@@ -88,10 +88,7 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
                     output.workspace.display()
                 );
                 for object in output.objects {
-                    println!(
-                        "{:?}\t{}\t{}",
-                        object.state, object.format_id, object.path
-                    );
+                    println!("{:?}\t{}\t{}", object.state, object.format_id, object.path);
                 }
             }
         }
@@ -102,17 +99,13 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
 fn print_json<T: Serialize>(value: &T) {
     match serde_json::to_string_pretty(value) {
         Ok(json) => println!("{json}"),
-        Err(error) => eprintln!(
-            "{{\"error\":\"failed to serialize CLI output: {error}\"}}"
-        ),
+        Err(error) => eprintln!("{{\"error\":\"failed to serialize CLI output: {error}\"}}"),
     }
 }
 
 fn render_error(error: &DotallError, json: bool) {
     let next_action = match error {
-        DotallError::WorkspaceNotInitialized(_) => {
-            "Run `dotall init <workspace>` first."
-        }
+        DotallError::WorkspaceNotInitialized(_) => "Run `dotall init <workspace>` first.",
         _ => "Inspect the path and retry the operation.",
     };
     if json {

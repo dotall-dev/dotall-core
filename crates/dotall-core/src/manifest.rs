@@ -56,7 +56,7 @@ impl Manifest {
 
 #[cfg(test)]
 mod tests {
-    use super::{Manifest, MANIFEST_SCHEMA_VERSION};
+    use super::{MANIFEST_SCHEMA_VERSION, Manifest};
 
     #[test]
     fn default_manifest_uses_current_schema_and_no_objects() {

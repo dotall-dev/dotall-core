@@ -4,10 +4,8 @@ use std::fs;
 use std::path::{Component, Path};
 
 use crate::error::{DotallError, Result};
-use crate::fingerprint::{check_freshness, fingerprint, Freshness};
-use crate::manifest::{
-    Manifest, ObjectMeta, OriginalRef, TrackedObject, MANIFEST_SCHEMA_VERSION,
-};
+use crate::fingerprint::{Freshness, check_freshness, fingerprint};
+use crate::manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 use crate::status::{ObjectState, ObjectStatus};
 use crate::workspace::Workspace;
 
@@ -93,8 +91,7 @@ impl DotallStore {
             object_dir.join("state/edits/staging"),
             object_dir.join("state/edits/history/snapshots"),
         ] {
-            fs::create_dir_all(&directory)
-                .map_err(|source| DotallError::io(&directory, source))?;
+            fs::create_dir_all(&directory).map_err(|source| DotallError::io(&directory, source))?;
         }
 
         write_json(
@@ -152,10 +149,7 @@ fn load_manifest(workspace: &Workspace) -> Result<Manifest> {
     Ok(manifest)
 }
 
-fn resolve_source(
-    workspace: &Workspace,
-    relative: &Path,
-) -> Result<(String, std::path::PathBuf)> {
+fn resolve_source(workspace: &Workspace, relative: &Path) -> Result<(String, std::path::PathBuf)> {
     if relative.as_os_str().is_empty()
         || relative.is_absolute()
         || relative.components().any(|component| {

@@ -80,9 +80,8 @@ fn modified_unix_nanos(metadata: &Metadata) -> Result<u64> {
     let duration = modified
         .duration_since(UNIX_EPOCH)
         .map_err(|_| DotallError::InvalidWorkspacePath("<pre-epoch mtime>".into()))?;
-    u64::try_from(duration.as_nanos()).map_err(|_| {
-        DotallError::InvalidWorkspacePath("<mtime overflow>".into())
-    })
+    u64::try_from(duration.as_nanos())
+        .map_err(|_| DotallError::InvalidWorkspacePath("<mtime overflow>".into()))
 }
 
 #[cfg(test)]
@@ -90,10 +89,10 @@ mod tests {
     use std::fs;
     use std::time::{Duration, SystemTime};
 
-    use filetime::{set_file_mtime, FileTime};
+    use filetime::{FileTime, set_file_mtime};
     use tempfile::tempdir;
 
-    use super::{check_freshness, fingerprint, Freshness};
+    use super::{Freshness, check_freshness, fingerprint};
 
     #[test]
     fn unchanged_metadata_uses_fast_path() {

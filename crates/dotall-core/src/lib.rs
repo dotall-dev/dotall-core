@@ -6,12 +6,8 @@ mod store;
 mod workspace;
 
 pub use error::{DotallError, Result};
-pub use fingerprint::{
-    check_freshness, fingerprint, Freshness, SourceFingerprint,
-};
-pub use manifest::{
-    Manifest, ObjectMeta, OriginalRef, TrackedObject, MANIFEST_SCHEMA_VERSION,
-};
+pub use fingerprint::{Freshness, SourceFingerprint, check_freshness, fingerprint};
+pub use manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 pub use status::{ObjectState, ObjectStatus};
 pub use store::DotallStore;
 pub use workspace::Workspace;

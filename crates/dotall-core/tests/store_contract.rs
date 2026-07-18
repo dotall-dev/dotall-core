@@ -24,8 +24,16 @@ fn registered_source_moves_from_fresh_to_stale() {
         .register_source("book.xlsx", "xlsx")
         .expect("register");
 
-    assert!(temp.path().join(".all/objects/book.xlsx/meta.json").is_file());
-    assert!(temp.path().join(".all/objects/book.xlsx/original.ref").is_file());
+    assert!(
+        temp.path()
+            .join(".all/objects/book.xlsx/meta.json")
+            .is_file()
+    );
+    assert!(
+        temp.path()
+            .join(".all/objects/book.xlsx/original.ref")
+            .is_file()
+    );
     let fresh = store.status().expect("fresh status");
     assert_eq!(fresh[0].state, ObjectState::FreshFastPath);
 

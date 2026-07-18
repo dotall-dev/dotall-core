@@ -7,14 +7,15 @@ use serde::Serialize;
 use crate::error::{DotallError, Result};
 
 pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    let parent = path.parent().ok_or_else(|| DotallError::InvalidWorkspacePath(
-        path.to_path_buf(),
-    ))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| DotallError::InvalidWorkspacePath(path.to_path_buf()))?;
     fs::create_dir_all(parent).map_err(|source| DotallError::io(parent, source))?;
 
-    let file_name = path.file_name().and_then(|name| name.to_str()).ok_or_else(|| {
-        DotallError::InvalidWorkspacePath(path.to_path_buf())
-    })?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| DotallError::InvalidWorkspacePath(path.to_path_buf()))?;
     let temporary = parent.join(format!(".{file_name}.tmp-{}", std::process::id()));
 
     let result = (|| -> Result<()> {
@@ -81,14 +82,14 @@ mod tests {
 
         write_json(&path, &Manifest::default()).expect("write manifest");
 
-        let parsed: Manifest = serde_json::from_slice(
-            &fs::read(&path).expect("read manifest"),
-        )
-        .expect("parse manifest");
+        let parsed: Manifest = serde_json::from_slice(&fs::read(&path).expect("read manifest"))
+            .expect("parse manifest");
         assert_eq!(parsed, Manifest::default());
-        assert!(!temp.path().join(format!(
-            ".manifest.json.tmp-{}",
-            std::process::id()
-        )).exists());
+        assert!(
+            !temp
+                .path()
+                .join(format!(".manifest.json.tmp-{}", std::process::id()))
+                .exists()
+        );
     }
 }
