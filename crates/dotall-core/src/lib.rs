@@ -5,7 +5,9 @@ mod store;
 mod workspace;
 
 pub use error::{DotallError, Result};
-pub use fingerprint::SourceFingerprint;
+pub use fingerprint::{
+    check_freshness, fingerprint, Freshness, SourceFingerprint,
+};
 pub use manifest::{
     Manifest, ObjectMeta, OriginalRef, TrackedObject,
     MANIFEST_SCHEMA_VERSION,
