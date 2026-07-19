@@ -286,6 +286,7 @@ dependencies = [
  "dotall-core",
  "dotall-xlsx",
  "predicates",
+ "rust_xlsxwriter",
  "serde",
  "serde_json",
  "tempfile",
