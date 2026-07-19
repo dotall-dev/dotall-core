@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/dotall-core",
+    "crates/dotall-xlsx",
     "crates/dotall-cli",
 ]
 resolver = "2"
