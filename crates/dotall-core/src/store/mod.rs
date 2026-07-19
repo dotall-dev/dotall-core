@@ -9,7 +9,7 @@ use serde::de::DeserializeOwned;
 use crate::error::{DotallError, Result};
 use crate::fingerprint::{Freshness, check_freshness, fingerprint};
 use crate::manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
-use crate::pipeline::{CachedArtifact, CachedDerived, CachedView};
+use crate::pipeline::{CachedArtifact, CachedDerived, CachedView, DerivationRecipe};
 use crate::read::AccessRecord;
 use crate::registry::{ArtifactEnvelope, ArtifactSchema};
 use crate::status::{ObjectState, ObjectStatus};
@@ -230,6 +230,52 @@ impl DotallStore {
         };
 
         Ok((cached.source_hash == object.fingerprint.blake3).then_some(cached))
+    }
+
+    /// Stores a derived artifact under the deterministic key for `recipe`.
+    ///
+    /// The source hash is stamped from the tracked manifest so a caller cannot
+    /// accidentally persist a stale hash.
+    pub fn write_derived_for_recipe(
+        &self,
+        relative_path: &str,
+        recipe: &DerivationRecipe,
+        derived: &CachedDerived,
+    ) -> Result<()> {
+        let (key, object) = self.tracked_source(relative_path)?;
+        let recipe_key = recipe.key()?;
+        let derived = CachedDerived {
+            source_hash: object.fingerprint.blake3.clone(),
+            ..derived.clone()
+        };
+        write_json(
+            &self.cache_path(&key, &format!("derived/{recipe_key}.json")),
+            &derived,
+        )
+    }
+
+    /// Reads a derived artifact only when its recipe and model identity match.
+    pub fn read_derived_for_recipe(
+        &self,
+        relative_path: &str,
+        recipe: &DerivationRecipe,
+        model_schema_id: &str,
+        model_schema_version: u32,
+    ) -> Result<Option<CachedDerived>> {
+        let (key, object) = self.tracked_source(relative_path)?;
+        let recipe_key = recipe.key()?;
+        let path = self.cache_path(&key, &format!("derived/{recipe_key}.json"));
+        let Some(cached) = read_cached_json::<CachedDerived>(&path)? else {
+            return Ok(None);
+        };
+
+        Ok((recipe.source_hash == object.fingerprint.blake3
+            && cached.source_hash == object.fingerprint.blake3
+            && cached.model_schema_id == model_schema_id
+            && cached.model_schema_version == model_schema_version
+            && cached.processor_id == recipe.processor_id
+            && cached.processor_version == recipe.processor_version)
+            .then_some(cached))
     }
 
     pub fn append_access(&self, relative_path: &str, record: &AccessRecord<'_>) -> Result<()> {
