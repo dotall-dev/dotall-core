@@ -24,19 +24,20 @@
      cached inspection/read, ranges, budgets, and continuations.
    - Exit gate: second inspection does not reparse or rewrite the model artifact.
 
-3. [`2026-07-18-xlsx-formula-dependencies.md`](2026-07-18-xlsx-formula-dependencies.md)
+3. [`2026-07-20-xlsx-formula-dependencies.md`](2026-07-20-xlsx-formula-dependencies.md)
+   (supersedes `2026-07-18-xlsx-formula-dependencies.md`)
    - Formula reference lexer, dependency graph, derivation recipes, cache, and
      forward/reverse agent queries.
    - **Prerequisite for writes** per
      `docs/superpowers/specs/2026-07-20-xlsx-write-history-design.md`.
    - Exit gate: identical query is a derived-cache hit; no formula evaluation.
 
-4. [`2026-07-18-transactional-xlsx-edits.md`](2026-07-18-transactional-xlsx-edits.md)
-   - Merge 1 writes: `set_cell_value`, `set_cell_formula`, surgical writer,
-     stage/apply, optimistic concurrency, idempotency, journals, snapshots,
-     forensic history, diff, recovery, and revert.
-   - Revise against `2026-07-20-xlsx-write-history-design.md` (stage-default,
-     MCP close-flush) before execution.
+4. [`2026-07-20-transactional-xlsx-edits.md`](2026-07-20-transactional-xlsx-edits.md)
+   (supersedes `2026-07-18-transactional-xlsx-edits.md`; design:
+   `docs/superpowers/specs/2026-07-20-xlsx-write-history-design.md`)
+   - Merge 1: `set_cell_value`, `set_cell_formula`, surgical writer,
+     **stage-default** apply, optimistic concurrency, idempotency, journals,
+     snapshots, forensic history, diff, recovery, and revert.
    - Exit gate: targeted edits are correct, untouched OOXML parts are byte-identical,
      and revert restores the expected state as a new version.
 
