@@ -35,6 +35,37 @@ pub enum DotallError {
 
     #[error("source changed while it was being hashed: {0}")]
     SourceChangedDuringRead(PathBuf),
+
+    #[error("unsupported file format: {0}")]
+    UnsupportedFormat(PathBuf),
+
+    #[error("format {format_id} rejected artifact schema {schema_id} v{schema_version}")]
+    ArtifactSchemaMismatch {
+        format_id: String,
+        schema_id: String,
+        schema_version: u32,
+    },
+
+    #[error("unsupported {format_id} capability {capability}; available: {available:?}")]
+    UnsupportedCapability {
+        format_id: String,
+        capability: String,
+        available: Vec<String>,
+    },
+
+    #[error("{format_id} processing failed for {path}: {message}")]
+    Format {
+        format_id: String,
+        path: PathBuf,
+        message: String,
+    },
+
+    #[error("failed to serialize {context}: {source}")]
+    Serialization {
+        context: String,
+        #[source]
+        source: serde_json::Error,
+    },
 }
 
 impl DotallError {
