@@ -220,3 +220,59 @@ fn format_handler_reports_available_reads_for_unknown_selector() {
             if available.iter().any(|capability| capability == "read.ast_range")
     ));
 }
+
+#[test]
+fn format_handler_reports_missing_sheet_as_format_error() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("financials.xlsx");
+    workbook_fixture(&path);
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&path).expect("parse through handler");
+    let error = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "sheet".into(),
+                    value: "Expenses".into(),
+                }),
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect_err("missing sheet");
+
+    assert!(matches!(
+        error,
+        DotallError::Format { message, .. } if message == "sheet not found: Expenses"
+    ));
+}
+
+#[test]
+fn format_handler_reports_bad_range_syntax_as_format_error() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("financials.xlsx");
+    workbook_fixture(&path);
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&path).expect("parse through handler");
+    let error = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "range".into(),
+                    value: "Revenue!A1:invalid".into(),
+                }),
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect_err("invalid range syntax");
+
+    assert!(matches!(
+        error,
+        DotallError::Format { message, .. } if message == "invalid cell address `invalid`"
+    ));
+}

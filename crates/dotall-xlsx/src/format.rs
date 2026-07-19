@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use dotall_core::registry::{
     ArtifactEnvelope, Capability, DetectionProbe, DetectionScore, FormatDescriptor, FormatHandler,
@@ -103,8 +103,12 @@ impl FormatHandler for XlsxFormat {
                 .selector
                 .as_ref()
                 .map_or(Ok(selector::Selector::Full), |selector| {
-                    selector::parse(&selector.kind, &selector.value)
-                        .map_err(|_| unsupported(&selector.kind))
+                    match selector.kind.as_str() {
+                        "full" | "sheet" | "range" | "ast_range" => {
+                            selector::parse(&selector.kind, &selector.value).map_err(selector_error)
+                        }
+                        _ => Err(unsupported(&selector.kind)),
+                    }
                 })?;
         let (content, next_actions) = match selector {
             selector::Selector::Full => (
@@ -205,7 +209,15 @@ fn find_sheet<'a>(workbook: &'a WorkbookModel, name: &str) -> Result<&'a crate::
         .sheets
         .iter()
         .find(|sheet| sheet.name == name)
-        .ok_or_else(|| unsupported("read.sheet"))
+        .ok_or_else(|| selector_error(format!("sheet not found: {name}")))
+}
+
+fn selector_error(message: String) -> DotallError {
+    DotallError::Format {
+        format_id: FORMAT_ID.into(),
+        path: PathBuf::from("<read selector>"),
+        message,
+    }
 }
 
 fn unsupported(capability: &str) -> DotallError {

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde_json::json;
 
 use crate::model::{CellModel, CellValue, SheetModel, WorkbookModel};
@@ -16,15 +18,18 @@ pub fn markdown_sheet(sheet: &SheetModel) -> String {
 
 pub fn markdown_range(sheet: &SheetModel, start: CellAddress, end: CellAddress) -> String {
     let mut output = format!("## {}!{}:{}\n\n", sheet.name, address(start), address(end));
+    let cells_by_position = sheet
+        .cells
+        .iter()
+        .map(|cell| ((cell.row, cell.col), cell))
+        .collect::<HashMap<_, _>>();
     let rows = (start.row..=end.row)
         .map(|row| {
             (start.col..=end.col)
                 .map(|col| {
-                    sheet
-                        .cells
-                        .iter()
-                        .find(|cell| cell.row == row && cell.col == col)
-                        .map_or_else(String::new, display_cell)
+                    cells_by_position
+                        .get(&(row, col))
+                        .map_or_else(String::new, |cell| display_cell(cell))
                 })
                 .collect::<Vec<_>>()
         })
