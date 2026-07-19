@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use dotall_core::registry::{
-    ArtifactEnvelope, Capability, DetectionProbe, DetectionScore, FormatDescriptor, FormatHandler,
-    Inspection, ReadRequest, ReadResponse, ReadSelector, ReadSuggestion,
+    ArtifactEnvelope, ArtifactSchema, Capability, DetectionProbe, DetectionScore, FormatDescriptor,
+    FormatHandler, Inspection, ReadRequest, ReadResponse, ReadSelector, ReadSuggestion,
 };
 use dotall_core::{DotallError, Result};
 use serde_json::json;
@@ -12,6 +12,9 @@ use crate::model::{SCHEMA_ID, SCHEMA_VERSION, WorkbookModel};
 use crate::{FORMAT_ID, parser, projection, selector, structure};
 
 const AVAILABLE_READS: [&str; 4] = ["read.full", "read.sheet", "read.range", "read.ast_range"];
+const PREVIEW_SHEET_LIMIT: usize = 3;
+const PREVIEW_ROW_LIMIT: u32 = 10;
+const PREVIEW_CELL_LIMIT: usize = 200;
 
 pub struct XlsxFormat;
 
@@ -21,6 +24,14 @@ impl FormatHandler for XlsxFormat {
             id: FORMAT_ID.into(),
             version: SCHEMA_VERSION.to_string(),
             capabilities: capabilities(),
+        }
+    }
+
+    fn artifact_schema(&self) -> ArtifactSchema {
+        ArtifactSchema {
+            format_id: FORMAT_ID.into(),
+            schema_id: SCHEMA_ID.into(),
+            schema_version: SCHEMA_VERSION,
         }
     }
 
@@ -102,7 +113,7 @@ impl FormatHandler for XlsxFormat {
             request
                 .selector
                 .as_ref()
-                .map_or(Ok(selector::Selector::Full), |selector| {
+                .map_or(Ok(selector::Selector::Preview), |selector| {
                     match selector.kind.as_str() {
                         "full" | "sheet" | "range" | "ast_range" => {
                             selector::parse(&selector.kind, &selector.value).map_err(selector_error)
@@ -111,6 +122,7 @@ impl FormatHandler for XlsxFormat {
                     }
                 })?;
         let (content, next_actions) = match selector {
+            selector::Selector::Preview => render_preview(&workbook),
             selector::Selector::Full => (
                 projection::markdown_workbook(&workbook),
                 workbook
@@ -121,8 +133,9 @@ impl FormatHandler for XlsxFormat {
             ),
             selector::Selector::Sheet { name } => {
                 let sheet = find_sheet(&workbook, &name)?;
+                let rendered = projection::markdown_sheet(sheet);
                 (
-                    projection::markdown_sheet(sheet),
+                    rendered,
                     vec![format!(
                         "Use `ast_range` with `{}` for cells with element IDs",
                         used_range(sheet)
@@ -131,15 +144,22 @@ impl FormatHandler for XlsxFormat {
             }
             selector::Selector::Range { name, start, end } => {
                 let sheet = find_sheet(&workbook, &name)?;
-                (
-                    projection::markdown_range(sheet, start, end),
-                    vec![format!(
-                        "Use `ast_range` with `{}!{}:{}` for cells with element IDs",
+                let rendered = projection::markdown_range(sheet, start, end);
+                let mut next_actions = vec![format!(
+                    "Use `ast_range` with `{}!{}:{}` for cells with element IDs",
+                    sheet.name,
+                    address(start),
+                    address(end)
+                )];
+                if rendered.truncated {
+                    next_actions.push(format!(
+                        "Range rendering was truncated; request a smaller range within `{}!{}:{}`",
                         sheet.name,
                         address(start),
                         address(end)
-                    )],
-                )
+                    ));
+                }
+                (rendered.content, next_actions)
             }
             selector::Selector::AstRange { name, start, end } => {
                 let sheet = find_sheet(&workbook, &name)?;
@@ -168,6 +188,45 @@ impl FormatHandler for XlsxFormat {
             next_actions,
         })
     }
+}
+
+fn render_preview(workbook: &WorkbookModel) -> (String, Vec<String>) {
+    let mut content = String::from("# Workbook summary\n\n");
+    for sheet in &workbook.sheets {
+        content.push_str(&format!(
+            "- `{}`: {} rows × {} columns\n",
+            sheet.name, sheet.dimensions.rows, sheet.dimensions.cols
+        ));
+    }
+
+    let mut next_actions = Vec::new();
+    for sheet in workbook.sheets.iter().take(PREVIEW_SHEET_LIMIT) {
+        let rendered = projection::markdown_range_with_limit(
+            sheet,
+            selector::CellAddress { row: 1, col: 1 },
+            selector::CellAddress {
+                row: sheet.dimensions.rows.clamp(1, PREVIEW_ROW_LIMIT),
+                col: sheet.dimensions.cols.max(1),
+            },
+            PREVIEW_CELL_LIMIT,
+        );
+        content.push('\n');
+        content.push_str(&rendered.content);
+        next_actions.push(format!("Read `{}` with selector kind `sheet`", sheet.name));
+        if rendered.truncated {
+            next_actions.push(format!(
+                "Preview of `{}` is capped; request a smaller `range` for more cells",
+                sheet.name
+            ));
+        }
+    }
+    if workbook.sheets.len() > PREVIEW_SHEET_LIMIT {
+        next_actions.push(format!(
+            "Preview shows the first {PREVIEW_SHEET_LIMIT} sheets; read another sheet by name"
+        ));
+    }
+
+    (content, next_actions)
 }
 
 fn capabilities() -> Vec<Capability> {

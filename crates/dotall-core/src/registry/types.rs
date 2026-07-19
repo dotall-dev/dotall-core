@@ -33,6 +33,13 @@ pub struct ArtifactEnvelope {
     pub payload: serde_json::Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactSchema {
+    pub format_id: String,
+    pub schema_id: String,
+    pub schema_version: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Inspection {
     pub format_id: String,

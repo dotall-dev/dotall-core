@@ -13,6 +13,7 @@ pub use types::*;
 
 pub trait FormatHandler: Send + Sync {
     fn descriptor(&self) -> FormatDescriptor;
+    fn artifact_schema(&self) -> ArtifactSchema;
     fn detect(&self, probe: &DetectionProbe<'_>) -> DetectionScore;
     fn parse(&self, source: &Path) -> Result<ArtifactEnvelope>;
     fn inspect(&self, model: &ArtifactEnvelope) -> Result<Inspection>;
@@ -57,6 +58,14 @@ mod tests {
                 id: self.0.into(),
                 version: "1".into(),
                 capabilities: vec![Capability::Inspect],
+            }
+        }
+
+        fn artifact_schema(&self) -> ArtifactSchema {
+            ArtifactSchema {
+                format_id: self.0.into(),
+                schema_id: format!("{}.document", self.0),
+                schema_version: 1,
             }
         }
 

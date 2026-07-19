@@ -6,6 +6,7 @@ pub struct CellAddress {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Selector {
+    Preview,
     Full,
     Sheet {
         name: String,

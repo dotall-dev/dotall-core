@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use dotall_core::read::apply_budget;
 use dotall_core::registry::{
-    Capability, DetectionProbe, DetectionScore, FormatDescriptor, FormatHandler, FormatRegistry,
-    Inspection, ReadRequest,
+    ArtifactSchema, Capability, DetectionProbe, DetectionScore, FormatDescriptor, FormatHandler,
+    FormatRegistry, Inspection, ReadRequest,
 };
 use dotall_core::{ArtifactEnvelope, DotallStore, Engine, ReadResponse, Result};
 use tempfile::tempdir;
@@ -91,6 +91,33 @@ fn stale_source_reparses_before_inspection() {
         .inspect("sample.stub")
         .expect("stale inspect");
 
+    assert_eq!(fixture.parse_count.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn mismatched_cached_producer_reparses_before_inspection() {
+    let mut fixture = EngineFixture::new();
+
+    fixture.engine.inspect("sample.stub").expect("cold inspect");
+    let model_path = fixture
+        .root
+        .join(".all/objects/sample.stub/cache/model/model.json");
+    let mut cached: serde_json::Value =
+        serde_json::from_slice(&fs::read(&model_path).expect("read cached model"))
+            .expect("decode cached model");
+    cached["producer_version"] = serde_json::json!("outdated");
+    fs::write(
+        &model_path,
+        serde_json::to_vec(&cached).expect("encode cached model"),
+    )
+    .expect("overwrite cached model");
+
+    let result = fixture
+        .engine
+        .inspect("sample.stub")
+        .expect("reparse mismatched cache");
+
+    assert!(!result.model_cache_hit);
     assert_eq!(fixture.parse_count.load(Ordering::SeqCst), 2);
 }
 
@@ -186,6 +213,14 @@ impl FormatHandler for CountingFormat {
             id: "stub".into(),
             version: "1".into(),
             capabilities: vec![Capability::Inspect, Capability::ReadFull],
+        }
+    }
+
+    fn artifact_schema(&self) -> ArtifactSchema {
+        ArtifactSchema {
+            format_id: "stub".into(),
+            schema_id: "stub.document".into(),
+            schema_version: 1,
         }
     }
 

@@ -140,7 +140,17 @@ fn cell_value(value: &Data) -> CellValue {
         Data::Int(value) => CellValue::Integer(*value),
         Data::Bool(value) => CellValue::Boolean(*value),
         Data::Error(value) => CellValue::Error(value.to_string()),
-        Data::DateTime(value) => CellValue::Datetime(value.to_string()),
+        Data::DateTime(value) => {
+            let (year, month, day, hour, minute, second, millisecond) = value.to_ymd_hms_milli();
+            let iso = if millisecond == 0 {
+                format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}")
+            } else {
+                format!(
+                    "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millisecond:03}"
+                )
+            };
+            CellValue::Datetime(iso)
+        }
         Data::DateTimeIso(value) | Data::DurationIso(value) => CellValue::Datetime(value.clone()),
     }
 }

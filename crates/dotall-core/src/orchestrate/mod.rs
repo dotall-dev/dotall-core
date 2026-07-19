@@ -156,6 +156,8 @@ impl Engine {
         let (key, source) = resolve_source(self.store.workspace(), Path::new(relative))?;
         let prefix = read_prefix(&source)?;
         let handler = self.registry.detect(Path::new(&key), &prefix)?;
+        let descriptor = handler.descriptor();
+        let schema = handler.artifact_schema();
 
         let is_fresh = self.store.manifest().objects.contains_key(&key)
             && self
@@ -169,7 +171,11 @@ impl Engine {
                         ObjectState::FreshFastPath | ObjectState::FreshAfterHash
                     )
                 });
-        if is_fresh && let Some(model) = self.store.read_model(&key)? {
+        if is_fresh
+            && let Some(model) =
+                self.store
+                    .read_model(&key, &schema, &descriptor.id, &descriptor.version)?
+        {
             let source_hash = self.store.manifest().objects[&key]
                 .fingerprint
                 .blake3

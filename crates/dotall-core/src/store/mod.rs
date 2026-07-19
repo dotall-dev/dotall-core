@@ -11,7 +11,7 @@ use crate::fingerprint::{Freshness, check_freshness, fingerprint};
 use crate::manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 use crate::pipeline::{CachedArtifact, CachedDerived, CachedView};
 use crate::read::AccessRecord;
-use crate::registry::ArtifactEnvelope;
+use crate::registry::{ArtifactEnvelope, ArtifactSchema};
 use crate::status::{ObjectState, ObjectStatus};
 use crate::workspace::Workspace;
 
@@ -158,14 +158,26 @@ impl DotallStore {
         write_json(&self.cache_path(&key, "model/model.json"), &cached)
     }
 
-    pub fn read_model(&self, relative_path: &str) -> Result<Option<ArtifactEnvelope>> {
+    pub fn read_model(
+        &self,
+        relative_path: &str,
+        expected_schema: &ArtifactSchema,
+        expected_producer_id: &str,
+        expected_producer_version: &str,
+    ) -> Result<Option<ArtifactEnvelope>> {
         let (key, object) = self.tracked_source(relative_path)?;
         let path = self.cache_path(&key, "model/model.json");
         let Some(cached) = read_cached_json::<CachedArtifact>(&path)? else {
             return Ok(None);
         };
 
-        if cached.source_hash != object.fingerprint.blake3 {
+        if cached.source_hash != object.fingerprint.blake3
+            || cached.producer_id != expected_producer_id
+            || cached.producer_version != expected_producer_version
+            || cached.artifact.format_id != expected_schema.format_id
+            || cached.artifact.schema_id != expected_schema.schema_id
+            || cached.artifact.schema_version != expected_schema.schema_version
+        {
             return Ok(None);
         }
         Ok(Some(cached.artifact))

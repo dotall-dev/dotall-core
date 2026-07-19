@@ -15,7 +15,7 @@ pub use fingerprint::{Freshness, SourceFingerprint, check_freshness, fingerprint
 pub use manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 pub use orchestrate::{Engine, FileReadResult, InspectResult};
 pub use pipeline::{CachedArtifact, CachedDerived, CachedView};
-pub use registry::{ArtifactEnvelope, ReadResponse};
+pub use registry::{ArtifactEnvelope, ArtifactSchema, ReadResponse};
 pub use status::{ObjectState, ObjectStatus};
 pub use store::DotallStore;
 pub use workspace::Workspace;

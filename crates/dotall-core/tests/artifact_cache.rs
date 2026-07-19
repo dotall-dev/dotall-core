@@ -1,6 +1,8 @@
 use std::fs;
 
-use dotall_core::{ArtifactEnvelope, CachedDerived, CachedView, DotallStore, ReadResponse};
+use dotall_core::{
+    ArtifactEnvelope, ArtifactSchema, CachedDerived, CachedView, DotallStore, ReadResponse,
+};
 use tempfile::tempdir;
 
 fn fixture() -> (tempfile::TempDir, DotallStore) {
@@ -27,7 +29,7 @@ fn model_artifact_round_trips_under_the_tracked_object() {
         .write_model("book.xlsx", &artifact)
         .expect("write model");
     let loaded = store
-        .read_model("book.xlsx")
+        .read_model("book.xlsx", &xlsx_schema(), "xlsx", "1")
         .expect("read model")
         .expect("present model");
 
@@ -60,7 +62,38 @@ fn model_cache_misses_when_its_source_hash_differs() {
     )
     .expect("overwrite cached model");
 
-    assert_eq!(store.read_model("book.xlsx").expect("read model"), None);
+    assert_eq!(
+        store
+            .read_model("book.xlsx", &xlsx_schema(), "xlsx", "1")
+            .expect("read model"),
+        None
+    );
+}
+
+#[test]
+fn model_cache_misses_when_its_schema_differs() {
+    let (_temp, store) = fixture();
+    let artifact = ArtifactEnvelope {
+        format_id: "xlsx".into(),
+        schema_id: "xlsx.workbook".into(),
+        schema_version: 1,
+        payload: serde_json::json!({"sheets": []}),
+    };
+
+    store
+        .write_model("book.xlsx", &artifact)
+        .expect("write model");
+    let incompatible_schema = ArtifactSchema {
+        schema_version: 2,
+        ..xlsx_schema()
+    };
+
+    assert_eq!(
+        store
+            .read_model("book.xlsx", &incompatible_schema, "xlsx", "2")
+            .expect("read model"),
+        None
+    );
 }
 
 #[test]
@@ -108,4 +141,12 @@ fn view_and_derived_artifacts_round_trip() {
             .expect("read derived"),
         Some(derived)
     );
+}
+
+fn xlsx_schema() -> ArtifactSchema {
+    ArtifactSchema {
+        format_id: "xlsx".into(),
+        schema_id: "xlsx.workbook".into(),
+        schema_version: 1,
+    }
 }

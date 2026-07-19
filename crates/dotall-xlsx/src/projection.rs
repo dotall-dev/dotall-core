@@ -1,9 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::json;
 
 use crate::model::{CellModel, CellValue, SheetModel, WorkbookModel};
 use crate::selector::CellAddress;
+
+pub const MAX_RENDERED_CELLS: usize = 10_000;
+
+pub struct MarkdownRender {
+    pub content: String,
+    pub truncated: bool,
+}
 
 pub fn markdown_sheet(sheet: &SheetModel) -> String {
     markdown_range(
@@ -14,36 +21,55 @@ pub fn markdown_sheet(sheet: &SheetModel) -> String {
             col: sheet.dimensions.cols.max(1),
         },
     )
+    .content
 }
 
-pub fn markdown_range(sheet: &SheetModel, start: CellAddress, end: CellAddress) -> String {
+pub fn markdown_range(sheet: &SheetModel, start: CellAddress, end: CellAddress) -> MarkdownRender {
+    markdown_range_with_limit(sheet, start, end, MAX_RENDERED_CELLS)
+}
+
+pub fn markdown_range_with_limit(
+    sheet: &SheetModel,
+    start: CellAddress,
+    end: CellAddress,
+    max_cells: usize,
+) -> MarkdownRender {
     let mut output = format!("## {}!{}:{}\n\n", sheet.name, address(start), address(end));
-    let cells_by_position = sheet
+    let requested_cell_count = (u64::from(end.row) - u64::from(start.row) + 1)
+        .saturating_mul(u64::from(end.col) - u64::from(start.col) + 1);
+    let mut rendered_cells = sheet
         .cells
         .iter()
-        .map(|cell| ((cell.row, cell.col), cell))
-        .collect::<HashMap<_, _>>();
-    let rows = (start.row..=end.row)
-        .map(|row| {
-            (start.col..=end.col)
-                .map(|col| {
-                    cells_by_position
-                        .get(&(row, col))
-                        .map_or_else(String::new, |cell| display_cell(cell))
-                })
-                .collect::<Vec<_>>()
+        .filter(|cell| {
+            (start.row..=end.row).contains(&cell.row) && (start.col..=end.col).contains(&cell.col)
         })
+        .take(max_cells.saturating_add(1))
         .collect::<Vec<_>>();
+    let truncated = requested_cell_count > max_cells as u64 || rendered_cells.len() > max_cells;
+    rendered_cells.truncate(max_cells);
 
-    if let Some(header) = rows.first() {
-        output.push_str(&table_row(header));
+    let mut columns = BTreeSet::new();
+    let mut rows = BTreeMap::<u32, BTreeMap<u32, String>>::new();
+    for cell in rendered_cells {
+        columns.insert(cell.col);
+        rows.entry(cell.row)
+            .or_default()
+            .insert(cell.col, display_cell(cell));
+    }
+
+    if let Some((_, header)) = rows.first_key_value() {
+        let header = row_values(header, &columns);
+        output.push_str(&table_row(&header));
         output.push_str(&table_row(&vec!["---".to_owned(); header.len()]));
-        for row in rows.iter().skip(1) {
-            output.push_str(&table_row(row));
+        for (_, row) in rows.iter().skip(1) {
+            output.push_str(&table_row(&row_values(row, &columns)));
         }
     }
 
-    output
+    MarkdownRender {
+        content: output,
+        truncated,
+    }
 }
 
 pub fn markdown_workbook(workbook: &WorkbookModel) -> String {
@@ -53,6 +79,13 @@ pub fn markdown_workbook(workbook: &WorkbookModel) -> String {
         output.push('\n');
     }
     output
+}
+
+fn row_values(row: &BTreeMap<u32, String>, columns: &BTreeSet<u32>) -> Vec<String> {
+    columns
+        .iter()
+        .map(|column| row.get(column).cloned().unwrap_or_default())
+        .collect()
 }
 
 pub fn ast_range(sheet: &SheetModel, start: CellAddress, end: CellAddress) -> serde_json::Value {

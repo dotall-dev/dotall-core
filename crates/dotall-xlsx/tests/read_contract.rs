@@ -1,7 +1,10 @@
 use dotall_core::DotallError;
 use dotall_core::registry::{DetectionProbe, FormatHandler, ReadRequest, ReadSelector};
-use dotall_xlsx::{CellValue, XlsxFormat, parse_workbook};
-use rust_xlsxwriter::Workbook;
+use dotall_xlsx::{
+    CellModel, CellValue, PreservationStatus, SCHEMA_ID, SCHEMA_VERSION, SheetDimensions,
+    SheetModel, UnmodeledMap, WorkbookModel, XlsxFormat, parse_workbook,
+};
+use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
 use tempfile::tempdir;
 
 #[test]
@@ -135,6 +138,101 @@ fn format_handler_projects_markdown_range_with_drill_down_hint() {
             .next_actions
             .iter()
             .any(|action| action.contains("ast_range"))
+    );
+}
+
+#[test]
+fn format_handler_caps_large_range_rendering_before_engine_budgeting() {
+    let handler = XlsxFormat;
+    let model = workbook_model_with_sparse_cells(vec![CellModel {
+        element_id: "c_1".into(),
+        address: "A1".into(),
+        row: 1,
+        col: 1,
+        value: CellValue::String("only occupied cell".into()),
+        formula: None,
+        style_id: None,
+        number_format: None,
+    }]);
+
+    let response = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "range".into(),
+                    value: "Revenue!A1:XFD1048576".into(),
+                }),
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect("read sparse large range");
+
+    assert!(response.content.contains("only occupied cell"));
+    assert!(
+        response
+            .next_actions
+            .iter()
+            .any(|action| action.contains("truncated")),
+        "large ranges should explain how to narrow the request"
+    );
+}
+
+#[test]
+fn format_handler_defaults_to_summary_and_light_preview() {
+    let handler = XlsxFormat;
+    let cells = (1..=20)
+        .map(|row| CellModel {
+            element_id: format!("c_{row}"),
+            address: format!("A{row}"),
+            row,
+            col: 1,
+            value: CellValue::String(format!("row {row}")),
+            formula: None,
+            style_id: None,
+            number_format: None,
+        })
+        .collect();
+    let model = workbook_model_with_sparse_cells(cells);
+
+    let response = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: None,
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect("read default preview");
+
+    assert!(response.content.contains("# Workbook summary"));
+    assert!(response.content.contains("row 10"));
+    assert!(!response.content.contains("row 20"));
+}
+
+#[test]
+fn parser_emits_iso_8601_for_datetime_cells() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("datetime.xlsx");
+    let mut workbook = Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    let datetime = ExcelDateTime::from_ymd(2024, 2, 3)
+        .expect("date")
+        .and_hms(4, 5, 6)
+        .expect("time");
+    let format = Format::new().set_num_format("yyyy-mm-dd hh:mm:ss");
+    worksheet
+        .write_datetime_with_format(0, 0, &datetime, &format)
+        .expect("datetime");
+    workbook.save(&path).expect("workbook fixture");
+
+    let parsed = parse_workbook(&path).expect("parse workbook");
+
+    assert_eq!(
+        parsed.sheets[0].cells[0].value,
+        CellValue::Datetime("2024-02-03T04:05:06".into())
     );
 }
 
@@ -275,4 +373,35 @@ fn format_handler_reports_bad_range_syntax_as_format_error() {
         error,
         DotallError::Format { message, .. } if message == "invalid cell address `invalid`"
     ));
+}
+
+fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::ArtifactEnvelope {
+    dotall_core::ArtifactEnvelope {
+        format_id: "xlsx".into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        payload: serde_json::to_value(WorkbookModel {
+            workbook_id: "wb_fixture".into(),
+            sheets: vec![SheetModel {
+                element_id: "sh_fixture".into(),
+                name: "Revenue".into(),
+                index: 0,
+                dimensions: SheetDimensions {
+                    rows: 1_048_576,
+                    cols: 16_384,
+                },
+                merges: Vec::new(),
+                cells,
+            }],
+            named_ranges: Vec::new(),
+            style_table: Vec::new(),
+            unmodeled: UnmodeledMap {
+                charts: PreservationStatus::Preserved,
+                pivots: PreservationStatus::Preserved,
+                vba: PreservationStatus::Preserved,
+                other_ooxml_parts: PreservationStatus::Preserved,
+            },
+        })
+        .expect("serialize model"),
+    }
 }
