@@ -64,6 +64,11 @@ impl Iterator for Scanner<'_> {
                 continue;
             }
 
+            if let Some(consumed) = skip_external_reference(&self.input[start..]) {
+                self.cursor = start + consumed;
+                continue;
+            }
+
             if let Some((reference, consumed)) = parse_reference(&self.input[start..])
                 && is_identifier_boundary_after(&self.input[start + consumed..])
                 && !self.input[start + consumed..].trim_start().starts_with('(')
@@ -103,6 +108,87 @@ fn skip_string(input: &str, start: usize) -> usize {
         cursor += 1;
     }
     bytes.len()
+}
+
+fn skip_external_reference(input: &str) -> Option<usize> {
+    if input.starts_with('[') {
+        return skip_bracketed_external_reference(input);
+    }
+
+    if input.starts_with('\'') {
+        return skip_quoted_external_reference(input);
+    }
+
+    None
+}
+
+fn skip_bracketed_external_reference(input: &str) -> Option<usize> {
+    let workbook_length = skip_bracketed_workbook(input)?;
+    let after_workbook = &input[workbook_length..];
+    let sheet_length = skip_sheet_prefix(after_workbook)?;
+    let after_sheet = workbook_length + sheet_length;
+    let (_, cell_length) = parse_cell(&input[after_sheet..])?;
+    let mut consumed = after_sheet + cell_length;
+    if input[consumed..].starts_with(':') {
+        let (_, end_length) = parse_cell(&input[consumed + 1..])?;
+        consumed += 1 + end_length;
+    }
+    Some(consumed)
+}
+
+fn skip_bracketed_workbook(input: &str) -> Option<usize> {
+    let bytes = input.as_bytes();
+    if bytes.first() != Some(&b'[') {
+        return None;
+    }
+
+    let mut cursor = 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b']' {
+            return Some(cursor + 1);
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn skip_quoted_external_reference(input: &str) -> Option<usize> {
+    let rest = input.strip_prefix('\'')?;
+    if !rest.starts_with('[') {
+        return None;
+    }
+
+    let bytes = rest.as_bytes();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'\'' {
+            if bytes.get(cursor + 1) == Some(&b'\'') {
+                cursor += 2;
+                continue;
+            }
+            if bytes.get(cursor + 1) != Some(&b'!') {
+                return None;
+            }
+            let after_sheet = 1 + cursor + 2;
+            let (_, cell_length) = parse_cell(&input[after_sheet..])?;
+            let mut consumed = after_sheet + cell_length;
+            if input[consumed..].starts_with(':') {
+                let (_, end_length) = parse_cell(&input[consumed + 1..])?;
+                consumed += 1 + end_length;
+            }
+            return Some(consumed);
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn skip_sheet_prefix(input: &str) -> Option<usize> {
+    let (_, name_length) = parse_identifier(input)?;
+    if name_length > 0 && input[name_length..].starts_with('!') {
+        return Some(name_length + 1);
+    }
+    None
 }
 
 fn parse_reference(input: &str) -> Option<(FormulaReference, usize)> {
@@ -342,6 +428,19 @@ mod tests {
                 reference(None, cell("A", 1, false, false), None),
                 reference(None, cell("B", 2, false, false), None),
             ]
+        );
+    }
+
+    #[test]
+    fn ignores_external_workbook_references() {
+        assert_eq!(lex("=[Other.xlsx]Inputs!A1"), Vec::<FormulaToken>::new());
+        assert_eq!(
+            lex("='[Other.xlsx]Inputs'!A1:B2"),
+            Vec::<FormulaToken>::new()
+        );
+        assert_eq!(
+            lex("=[Other.xlsx]Inputs!A1 + A1"),
+            vec![reference(None, cell("A", 1, false, false), None)]
         );
     }
 }
