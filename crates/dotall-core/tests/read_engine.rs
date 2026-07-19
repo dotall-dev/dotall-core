@@ -63,6 +63,24 @@ fn second_inspection_uses_cached_model_without_reparse() {
 }
 
 #[test]
+fn inspection_normalizes_dot_relative_path_and_reuses_cached_model() {
+    let mut fixture = EngineFixture::new();
+
+    let first = fixture
+        .engine
+        .inspect("./sample.stub")
+        .expect("cold inspect with dot-relative path");
+    let second = fixture
+        .engine
+        .inspect("./sample.stub")
+        .expect("warm inspect with dot-relative path");
+
+    assert!(!first.model_cache_hit);
+    assert!(second.model_cache_hit);
+    assert_eq!(fixture.parse_count.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn stale_source_reparses_before_inspection() {
     let mut fixture = EngineFixture::new();
 

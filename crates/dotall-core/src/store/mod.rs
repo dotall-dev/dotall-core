@@ -308,7 +308,10 @@ fn cache_name<'a>(name: &'a str, label: &str) -> Result<&'a str> {
     Ok(name)
 }
 
-fn resolve_source(workspace: &Workspace, relative: &Path) -> Result<(String, std::path::PathBuf)> {
+pub(crate) fn resolve_source(
+    workspace: &Workspace,
+    relative: &Path,
+) -> Result<(String, std::path::PathBuf)> {
     if relative.as_os_str().is_empty()
         || relative.is_absolute()
         || relative.components().any(|component| {

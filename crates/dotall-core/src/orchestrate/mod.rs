@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::Read;
-use std::path::{Component, Path};
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -10,6 +10,7 @@ use crate::read::{AccessRecord, apply_budget, now_unix_ms};
 use crate::registry::{
     ArtifactEnvelope, FormatHandler, FormatRegistry, Inspection, ReadRequest, ReadResponse,
 };
+use crate::store::resolve_source;
 use crate::{DotallError, DotallStore, ObjectState, Result};
 
 #[derive(Debug, Serialize)]
@@ -32,19 +33,33 @@ pub struct Engine {
     registry: FormatRegistry,
 }
 
+struct LoadedModel {
+    key: String,
+    handler: Arc<dyn FormatHandler>,
+    model: ArtifactEnvelope,
+    model_cache_hit: bool,
+    source_hash: String,
+}
+
 impl Engine {
     pub fn new(store: DotallStore, registry: FormatRegistry) -> Self {
         Self { store, registry }
     }
 
     pub fn inspect(&mut self, relative: &str) -> Result<InspectResult> {
-        let (handler, model, model_cache_hit, source_hash) = self.model(relative)?;
+        let LoadedModel {
+            key,
+            handler,
+            model,
+            model_cache_hit,
+            source_hash,
+        } = self.model(relative)?;
         let inspection = handler.inspect(&model)?;
         self.store.append_access(
-            relative,
+            &key,
             &AccessRecord {
                 operation: "inspect",
-                path: relative,
+                path: &key,
                 timestamp_unix_ms: now_unix_ms()?,
                 source_hash: &source_hash,
                 model_cache_hit,
@@ -62,11 +77,17 @@ impl Engine {
     }
 
     pub fn read(&mut self, relative: &str, request: &ReadRequest) -> Result<FileReadResult> {
-        let (handler, model, model_cache_hit, source_hash) = self.model(relative)?;
+        let LoadedModel {
+            key,
+            handler,
+            model,
+            model_cache_hit,
+            source_hash,
+        } = self.model(relative)?;
         let descriptor = handler.descriptor();
         let request_hash = request_hash(&descriptor.id, &descriptor.version, request)?;
         let (response, view_cache_hit) = if let Some(view) =
-            self.store.read_view(relative, &request_hash)?
+            self.store.read_view(&key, &request_hash)?
         {
             if view.renderer_id == descriptor.id && view.renderer_version == descriptor.version {
                 (view.response, true)
@@ -79,7 +100,7 @@ impl Engine {
 
         if !view_cache_hit {
             self.store.write_view(
-                relative,
+                &key,
                 &CachedView {
                     source_hash: source_hash.clone(),
                     renderer_id: descriptor.id,
@@ -91,10 +112,10 @@ impl Engine {
         }
 
         self.store.append_access(
-            relative,
+            &key,
             &AccessRecord {
                 operation: "read",
-                path: relative,
+                path: &key,
                 timestamp_unix_ms: now_unix_ms()?,
                 source_hash: &source_hash,
                 model_cache_hit,
@@ -131,45 +152,52 @@ impl Engine {
         Ok(response)
     }
 
-    fn model(
-        &mut self,
-        relative: &str,
-    ) -> Result<(Arc<dyn FormatHandler>, ArtifactEnvelope, bool, String)> {
-        let relative_path = Path::new(relative);
-        validate_relative(relative_path)?;
-        let source = self.store.workspace().root().join(relative_path);
+    fn model(&mut self, relative: &str) -> Result<LoadedModel> {
+        let (key, source) = resolve_source(self.store.workspace(), Path::new(relative))?;
         let prefix = read_prefix(&source)?;
-        let handler = self.registry.detect(relative_path, &prefix)?;
+        let handler = self.registry.detect(Path::new(&key), &prefix)?;
 
-        let is_fresh = self.store.manifest().objects.contains_key(relative)
+        let is_fresh = self.store.manifest().objects.contains_key(&key)
             && self
                 .store
                 .status()?
                 .into_iter()
-                .find(|object| object.path == relative)
+                .find(|object| object.path == key)
                 .is_some_and(|object| {
                     matches!(
                         object.state,
                         ObjectState::FreshFastPath | ObjectState::FreshAfterHash
                     )
                 });
-        if is_fresh && let Some(model) = self.store.read_model(relative)? {
-            let source_hash = self.store.manifest().objects[relative]
+        if is_fresh && let Some(model) = self.store.read_model(&key)? {
+            let source_hash = self.store.manifest().objects[&key]
                 .fingerprint
                 .blake3
                 .clone();
-            return Ok((handler, model, true, source_hash));
+            return Ok(LoadedModel {
+                key,
+                handler,
+                model,
+                model_cache_hit: true,
+                source_hash,
+            });
         }
 
         self.store
-            .register_source(relative, handler.descriptor().id.clone())?;
+            .register_source(&key, handler.descriptor().id.clone())?;
         let model = handler.parse(&source)?;
-        self.store.write_model(relative, &model)?;
-        let source_hash = self.store.manifest().objects[relative]
+        self.store.write_model(&key, &model)?;
+        let source_hash = self.store.manifest().objects[&key]
             .fingerprint
             .blake3
             .clone();
-        Ok((handler, model, false, source_hash))
+        Ok(LoadedModel {
+            key,
+            handler,
+            model,
+            model_cache_hit: false,
+            source_hash,
+        })
     }
 }
 
@@ -209,26 +237,4 @@ fn read_prefix(source: &Path) -> Result<Vec<u8>> {
         .map_err(|source_error| DotallError::io(source, source_error))?;
     prefix.truncate(count);
     Ok(prefix)
-}
-
-fn validate_relative(relative: &Path) -> Result<()> {
-    if relative.as_os_str().is_empty()
-        || relative.is_absolute()
-        || relative.components().any(|component| {
-            matches!(
-                component,
-                Component::ParentDir | Component::RootDir | Component::Prefix(_)
-            )
-        })
-        || relative
-            .components()
-            .any(|component| component.as_os_str() == ".all")
-    {
-        return Err(DotallError::InvalidSourcePath {
-            path: relative.to_path_buf(),
-            reason: "path must be relative, remain inside the workspace, and not target .all"
-                .into(),
-        });
-    }
-    Ok(())
 }
