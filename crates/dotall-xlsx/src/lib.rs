@@ -1,5 +1,6 @@
 pub mod ids;
 pub mod model;
+pub mod parser;
 
 pub const FORMAT_ID: &str = "xlsx";
 
@@ -7,6 +8,7 @@ pub use model::{
     CellModel, CellValue, NamedRange, PreservationStatus, SCHEMA_ID, SCHEMA_VERSION,
     SheetDimensions, SheetModel, StyleEntry, UnmodeledMap, WorkbookModel,
 };
+pub use parser::parse_workbook;
 
 #[cfg(test)]
 mod tests {
