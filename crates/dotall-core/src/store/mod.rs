@@ -1,6 +1,7 @@
 mod atomic;
 
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path};
 
 use serde::de::DeserializeOwned;
@@ -9,6 +10,7 @@ use crate::error::{DotallError, Result};
 use crate::fingerprint::{Freshness, check_freshness, fingerprint};
 use crate::manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 use crate::pipeline::{CachedArtifact, CachedDerived, CachedView};
+use crate::read::AccessRecord;
 use crate::registry::ArtifactEnvelope;
 use crate::status::{ObjectState, ObjectStatus};
 use crate::workspace::Workspace;
@@ -216,6 +218,31 @@ impl DotallStore {
         };
 
         Ok((cached.source_hash == object.fingerprint.blake3).then_some(cached))
+    }
+
+    pub fn append_access(&self, relative_path: &str, record: &AccessRecord<'_>) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self
+            .workspace
+            .objects_dir()
+            .join(key)
+            .join("state/access/log.jsonl");
+        let mut bytes =
+            serde_json::to_vec(record).map_err(|source| DotallError::Serialization {
+                context: "access record".into(),
+                source,
+            })?;
+        bytes.push(b'\n');
+
+        let mut file = fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&path)
+            .map_err(|source| DotallError::io(&path, source))?;
+        file.write_all(&bytes)
+            .map_err(|source| DotallError::io(&path, source))?;
+        file.sync_data()
+            .map_err(|source| DotallError::io(&path, source))
     }
 
     fn tracked_source(&self, relative_path: &str) -> Result<(String, &TrackedObject)> {
