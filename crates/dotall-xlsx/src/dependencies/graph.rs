@@ -149,9 +149,10 @@ fn cell_index(model: &WorkbookModel) -> CellIndex {
         .sheets
         .iter()
         .flat_map(|sheet| {
+            let sheet_key = sheet.name.to_ascii_uppercase();
             sheet.cells.iter().map(move |cell| {
                 (
-                    (sheet.name.clone(), cell.address.to_ascii_uppercase()),
+                    (sheet_key.clone(), cell.address.to_ascii_uppercase()),
                     cell.element_id.clone(),
                 )
             })
@@ -180,8 +181,8 @@ fn reference_target(
     let sheet = reference
         .sheet
         .as_deref()
-        .unwrap_or(current_sheet)
-        .to_owned();
+        .unwrap_or(current_sheet);
+    let sheet_key = sheet.to_ascii_uppercase();
     let start = address(&reference.start);
 
     match &reference.end {
@@ -189,7 +190,7 @@ fn reference_target(
             selector: format!("{sheet}!{start}:{}", address(end)),
         },
         None => cells
-            .get(&(sheet.clone(), start.clone()))
+            .get(&(sheet_key, start.clone()))
             .map(|element_id| DependencyTarget::Element {
                 element_id: element_id.clone(),
             })
@@ -207,7 +208,7 @@ fn selector_contains(selector: &str, source: &CellLocation) -> bool {
     let Some((sheet, start, end)) = parse_selector(selector) else {
         return false;
     };
-    if sheet != source.sheet {
+    if !sheet.eq_ignore_ascii_case(&source.sheet) {
         return false;
     }
 

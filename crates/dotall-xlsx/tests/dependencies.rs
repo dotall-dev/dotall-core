@@ -58,6 +58,53 @@ fn builds_forward_and_reverse_dependencies_without_expanding_ranges() {
 }
 
 #[test]
+fn resolves_sheet_references_case_insensitively() {
+    let model = WorkbookModel {
+        workbook_id: "wb_case".into(),
+        sheets: vec![
+            fixture_sheet(
+                "Inputs",
+                vec![fixture_cell("c_inputs_a1", "A1", None)],
+            ),
+            fixture_sheet(
+                "Summary",
+                vec![fixture_cell(
+                    "c_summary_b2",
+                    "B2",
+                    Some("=inputs!A1"),
+                )],
+            ),
+        ],
+        named_ranges: Vec::new(),
+        style_table: Vec::new(),
+        unmodeled: UnmodeledMap {
+            charts: PreservationStatus::Preserved,
+            pivots: PreservationStatus::Preserved,
+            vba: PreservationStatus::Preserved,
+            other_ooxml_parts: PreservationStatus::Preserved,
+        },
+    };
+    let graph = build(&model);
+
+    let inputs = sheet(&model, "Inputs");
+    let summary = sheet(&model, "Summary");
+    let source = cell(inputs, "A1");
+    let dependent = cell(summary, "B2");
+
+    assert!(graph.forward(&dependent.element_id).iter().any(|edge| {
+        matches!(
+            &edge.to,
+            DependencyTarget::Element { element_id } if element_id == &source.element_id
+        )
+    }));
+    assert_eq!(graph.reverse(&source.element_id).len(), 1);
+    assert_eq!(
+        graph.reverse(&source.element_id)[0].from_element_id,
+        dependent.element_id
+    );
+}
+
+#[test]
 fn serializes_the_graph_as_a_formula_dependencies_artifact() {
     let graph = build(&workbook_fixture());
 
