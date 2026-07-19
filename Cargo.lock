@@ -307,6 +307,7 @@ dependencies = [
 name = "dotall-xlsx"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "calamine",
  "dotall-core",
  "rust_xlsxwriter",
