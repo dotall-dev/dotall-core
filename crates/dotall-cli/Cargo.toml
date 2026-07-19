@@ -11,10 +11,16 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.6.2", features = ["derive"] }
 dotall-core = { version = "0.1.0", path = "../dotall-core" }
+dotall-xlsx = { version = "0.1.0", path = "../dotall-xlsx", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
+rust_xlsxwriter = "0.96.0"
 tempfile = "3.27.0"
+
+[features]
+default = ["xlsx"]
+xlsx = ["dep:dotall-xlsx"]
