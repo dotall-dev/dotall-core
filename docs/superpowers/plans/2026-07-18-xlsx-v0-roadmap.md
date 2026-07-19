@@ -17,9 +17,11 @@
      `init`, and `status`.
    - Exit gate: cold state is durable; status distinguishes fresh/stale/missing.
 
-2. [`2026-07-18-xlsx-read-pipeline.md`](2026-07-18-xlsx-read-pipeline.md)
-   - Format contracts, registry, typed workbook model, cached inspection/read,
-     ranges, budgets, and continuations.
+2. [`2026-07-19-xlsx-read-pipeline.md`](2026-07-19-xlsx-read-pipeline.md)
+   (supersedes `2026-07-18-xlsx-read-pipeline.md`; AST design:
+   `docs/superpowers/specs/2026-07-19-xlsx-translation-ast-design.md`)
+   - Format contracts, translation AST (`xlsx.workbook` v1), dual dialects,
+     cached inspection/read, ranges, budgets, and continuations.
    - Exit gate: second inspection does not reparse or rewrite the model artifact.
 
 3. [`2026-07-18-xlsx-formula-dependencies.md`](2026-07-18-xlsx-formula-dependencies.md)
