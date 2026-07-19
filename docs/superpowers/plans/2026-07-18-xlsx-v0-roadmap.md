@@ -27,17 +27,22 @@
 3. [`2026-07-18-xlsx-formula-dependencies.md`](2026-07-18-xlsx-formula-dependencies.md)
    - Formula reference lexer, dependency graph, derivation recipes, cache, and
      forward/reverse agent queries.
+   - **Prerequisite for writes** per
+     `docs/superpowers/specs/2026-07-20-xlsx-write-history-design.md`.
    - Exit gate: identical query is a derived-cache hit; no formula evaluation.
 
 4. [`2026-07-18-transactional-xlsx-edits.md`](2026-07-18-transactional-xlsx-edits.md)
-   - `set_cell_value`, `set_cell_formula`, surgical writer, optimistic concurrency,
-     idempotency, journals, snapshots, history, diff, recovery, and revert.
+   - Merge 1 writes: `set_cell_value`, `set_cell_formula`, surgical writer,
+     stage/apply, optimistic concurrency, idempotency, journals, snapshots,
+     forensic history, diff, recovery, and revert.
+   - Revise against `2026-07-20-xlsx-write-history-design.md` (stage-default,
+     MCP close-flush) before execution.
    - Exit gate: targeted edits are correct, untouched OOXML parts are byte-identical,
      and revert restores the expected state as a new version.
 
 5. [`2026-07-18-broaden-xlsx-edit-operations.md`](2026-07-18-broaden-xlsx-edit-operations.md)
-   - `set_range`, row/column insertion/deletion, and sheet add/rename/delete with
-     complete impact analysis or safe preflight rejection.
+   - Merge 2: `set_range`, row/column insertion/deletion, and sheet add/rename/delete
+     on the same transaction/history spine.
    - Exit gate: each operation is advertised only after its cross-part golden tests
      pass.
 
