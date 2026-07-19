@@ -235,6 +235,9 @@ fn print_json<T: Serialize>(value: &T) {
 fn render_error(error: &DotallError, json: bool) {
     let next_action = match error {
         DotallError::WorkspaceNotInitialized(_) => "Run `dotall init <workspace>` first.",
+        DotallError::Format { format_id, .. } if format_id == "dotall-cli" => {
+            "Rebuild dotall-cli with --features xlsx."
+        }
         _ => "Inspect the path and retry the operation.",
     };
     if json {
