@@ -1,9 +1,15 @@
+pub mod detection;
+pub mod format;
 pub mod ids;
 pub mod model;
 pub mod parser;
+pub mod projection;
+pub mod selector;
+pub mod structure;
 
 pub const FORMAT_ID: &str = "xlsx";
 
+pub use format::XlsxFormat;
 pub use model::{
     CellModel, CellValue, NamedRange, PreservationStatus, SCHEMA_ID, SCHEMA_VERSION,
     SheetDimensions, SheetModel, StyleEntry, UnmodeledMap, WorkbookModel,
