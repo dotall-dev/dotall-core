@@ -1,8 +1,14 @@
-use dotall_xlsx::dependencies::{DependencyTarget, build, to_artifact};
+use std::fs;
+
+use dotall_core::{ArtifactEnvelope, DotallStore};
+use dotall_xlsx::dependencies::{
+    DependencyTarget, build, ensure_formula_dependencies, to_artifact,
+};
 use dotall_xlsx::{
     CellModel, CellValue, NamedRange, PreservationStatus, SheetDimensions, SheetModel,
     UnmodeledMap, WorkbookModel,
 };
+use tempfile::tempdir;
 
 #[test]
 fn builds_forward_and_reverse_dependencies_without_expanding_ranges() {
@@ -62,17 +68,10 @@ fn resolves_sheet_references_case_insensitively() {
     let model = WorkbookModel {
         workbook_id: "wb_case".into(),
         sheets: vec![
-            fixture_sheet(
-                "Inputs",
-                vec![fixture_cell("c_inputs_a1", "A1", None)],
-            ),
+            fixture_sheet("Inputs", vec![fixture_cell("c_inputs_a1", "A1", None)]),
             fixture_sheet(
                 "Summary",
-                vec![fixture_cell(
-                    "c_summary_b2",
-                    "B2",
-                    Some("=inputs!A1"),
-                )],
+                vec![fixture_cell("c_summary_b2", "B2", Some("=inputs!A1"))],
             ),
         ],
         named_ranges: Vec::new(),
@@ -117,6 +116,60 @@ fn serializes_the_graph_as_a_formula_dependencies_artifact() {
         artifact.payload["edges"],
         serde_json::to_value(graph.edges).expect("serialize edges")
     );
+}
+
+#[test]
+fn formula_dependency_cache_hits_for_identical_model_and_rebuilds_when_source_changes() {
+    let temp = tempdir().expect("workspace");
+    let path = temp.path().join("book.xlsx");
+    fs::write(&path, b"first source").expect("source");
+    let mut store = DotallStore::init(temp.path()).expect("store");
+    store
+        .register_source("book.xlsx", "xlsx")
+        .expect("register first source");
+    let first_model = artifact_for(workbook_fixture());
+    let first_hash = source_hash(&store);
+
+    let (_, first_cache_hit) =
+        ensure_formula_dependencies(&store, "book.xlsx", &first_model, &first_hash)
+            .expect("build dependencies");
+    let (_, second_cache_hit) =
+        ensure_formula_dependencies(&store, "book.xlsx", &first_model, &first_hash)
+            .expect("read cached dependencies");
+
+    assert!(!first_cache_hit);
+    assert!(second_cache_hit);
+
+    fs::write(&path, b"changed source").expect("replace source");
+    store
+        .register_source("book.xlsx", "xlsx")
+        .expect("register changed source");
+    let changed_model = artifact_for(WorkbookModel {
+        workbook_id: "wb_changed".into(),
+        ..workbook_fixture()
+    });
+
+    let (_, rebuilt_cache_hit) =
+        ensure_formula_dependencies(&store, "book.xlsx", &changed_model, &source_hash(&store))
+            .expect("rebuild dependencies");
+
+    assert!(!rebuilt_cache_hit);
+}
+
+fn artifact_for(model: WorkbookModel) -> ArtifactEnvelope {
+    ArtifactEnvelope {
+        format_id: "xlsx".into(),
+        schema_id: "xlsx.workbook".into(),
+        schema_version: 1,
+        payload: serde_json::to_value(model).expect("serialize workbook"),
+    }
+}
+
+fn source_hash(store: &DotallStore) -> String {
+    store.manifest().objects["book.xlsx"]
+        .fingerprint
+        .blake3
+        .clone()
 }
 
 fn workbook_fixture() -> WorkbookModel {

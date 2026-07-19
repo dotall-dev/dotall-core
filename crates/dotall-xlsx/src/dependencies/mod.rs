@@ -2,7 +2,7 @@ mod graph;
 mod lexer;
 
 pub use graph::{
-    DependencyEdge, DependencyGraph, DependencyTarget, SCHEMA_ID, SCHEMA_VERSION, build,
-    to_artifact,
+    DependencyDirection, DependencyEdge, DependencyGraph, DependencyTarget, DepsQueryResult,
+    SCHEMA_ID, SCHEMA_VERSION, build, ensure_and_query, ensure_formula_dependencies, to_artifact,
 };
 pub use lexer::{CellReference, FormulaReference, FormulaToken, lex, references};

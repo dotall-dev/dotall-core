@@ -1,13 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use dotall_core::ArtifactEnvelope;
+use dotall_core::{
+    ArtifactEnvelope, CachedDerived, DerivationRecipe, DotallError, DotallStore, Result,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::dependencies::{CellReference, FormulaToken, lex};
+use crate::model::{SCHEMA_ID as MODEL_SCHEMA_ID, SCHEMA_VERSION as MODEL_SCHEMA_VERSION};
 use crate::{FORMAT_ID, WorkbookModel};
 
 pub const SCHEMA_ID: &str = "xlsx.formula-dependencies";
 pub const SCHEMA_VERSION: u32 = 1;
+const PROCESSOR_ID: &str = "xlsx.formula-dependencies";
+const PROCESSOR_VERSION: &str = "1";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -28,6 +33,20 @@ pub struct DependencyGraph {
     pub edges: Vec<DependencyEdge>,
     #[serde(default)]
     cell_locations: BTreeMap<String, CellLocation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DependencyDirection {
+    Forward,
+    Reverse,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DepsQueryResult {
+    pub cache_hit: bool,
+    pub direction: DependencyDirection,
+    pub edges: Vec<DependencyEdge>,
 }
 
 pub fn build(model: &WorkbookModel) -> DependencyGraph {
@@ -100,6 +119,65 @@ pub fn build(model: &WorkbookModel) -> DependencyGraph {
     }
 }
 
+pub fn ensure_formula_dependencies(
+    store: &DotallStore,
+    relative: &str,
+    model: &ArtifactEnvelope,
+    source_hash: &str,
+) -> Result<(DependencyGraph, bool)> {
+    let workbook = decode_workbook(model)?;
+    let recipe = recipe(model, source_hash)?;
+
+    if let Some(cached) =
+        store.read_derived_for_recipe(relative, &recipe, MODEL_SCHEMA_ID, MODEL_SCHEMA_VERSION)?
+    {
+        return Ok((decode_graph(cached.payload)?, true));
+    }
+
+    let graph = build(&workbook);
+    store.write_derived_for_recipe(
+        relative,
+        &recipe,
+        &CachedDerived {
+            source_hash: source_hash.into(),
+            model_schema_id: MODEL_SCHEMA_ID.into(),
+            model_schema_version: MODEL_SCHEMA_VERSION,
+            processor_id: PROCESSOR_ID.into(),
+            processor_version: PROCESSOR_VERSION.into(),
+            payload: serde_json::to_value(&graph).map_err(|source| DotallError::Serialization {
+                context: "formula dependency graph".into(),
+                source,
+            })?,
+        },
+    )?;
+
+    Ok((graph, false))
+}
+
+pub fn ensure_and_query(
+    store: &DotallStore,
+    relative: &str,
+    model: &ArtifactEnvelope,
+    source_hash: &str,
+    cell_selector: &str,
+    direction: DependencyDirection,
+) -> Result<DepsQueryResult> {
+    let (graph, cache_hit) = ensure_formula_dependencies(store, relative, model, source_hash)?;
+    let edges = match direction {
+        DependencyDirection::Forward => graph.forward(cell_selector),
+        DependencyDirection::Reverse => graph.reverse(cell_selector),
+    }
+    .into_iter()
+    .cloned()
+    .collect();
+
+    Ok(DepsQueryResult {
+        cache_hit,
+        direction,
+        edges,
+    })
+}
+
 pub fn to_artifact(graph: &DependencyGraph) -> ArtifactEnvelope {
     ArtifactEnvelope {
         format_id: FORMAT_ID.into(),
@@ -134,6 +212,47 @@ impl DependencyGraph {
             })
             .collect()
     }
+}
+
+fn recipe(model: &ArtifactEnvelope, source_hash: &str) -> Result<DerivationRecipe> {
+    let model_bytes =
+        serde_json::to_vec(&model.payload).map_err(|source| DotallError::Serialization {
+            context: "XLSX workbook model cache input".into(),
+            source,
+        })?;
+
+    Ok(DerivationRecipe {
+        source_hash: source_hash.into(),
+        processor_id: PROCESSOR_ID.into(),
+        processor_version: PROCESSOR_VERSION.into(),
+        config_hash: blake3::hash(b"{}").to_hex().to_string(),
+        input_hashes: vec![blake3::hash(&model_bytes).to_hex().to_string()],
+    })
+}
+
+fn decode_workbook(model: &ArtifactEnvelope) -> Result<WorkbookModel> {
+    if model.format_id != FORMAT_ID
+        || model.schema_id != MODEL_SCHEMA_ID
+        || model.schema_version != MODEL_SCHEMA_VERSION
+    {
+        return Err(DotallError::ArtifactSchemaMismatch {
+            format_id: FORMAT_ID.into(),
+            schema_id: model.schema_id.clone(),
+            schema_version: model.schema_version,
+        });
+    }
+
+    serde_json::from_value(model.payload.clone()).map_err(|source| DotallError::Serialization {
+        context: "XLSX workbook artifact payload".into(),
+        source,
+    })
+}
+
+fn decode_graph(payload: serde_json::Value) -> Result<DependencyGraph> {
+    serde_json::from_value(payload).map_err(|source| DotallError::Serialization {
+        context: "cached formula dependency graph".into(),
+        source,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,10 +297,7 @@ fn reference_target(
     current_sheet: &str,
     cells: &CellIndex,
 ) -> DependencyTarget {
-    let sheet = reference
-        .sheet
-        .as_deref()
-        .unwrap_or(current_sheet);
+    let sheet = reference.sheet.as_deref().unwrap_or(current_sheet);
     let sheet_key = sheet.to_ascii_uppercase();
     let start = address(&reference.start);
 

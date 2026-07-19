@@ -28,6 +28,13 @@ pub struct FileReadResult {
     pub response: ReadResponse,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelLoadResult {
+    pub envelope: ArtifactEnvelope,
+    pub source_hash: String,
+    pub model_cache_hit: bool,
+}
+
 pub struct Engine {
     store: DotallStore,
     registry: FormatRegistry,
@@ -73,6 +80,21 @@ impl Engine {
             source_hash,
             model_cache_hit,
             inspection,
+        })
+    }
+
+    pub fn load_model(&mut self, relative: &str) -> Result<ModelLoadResult> {
+        let LoadedModel {
+            model,
+            source_hash,
+            model_cache_hit,
+            ..
+        } = self.model(relative)?;
+
+        Ok(ModelLoadResult {
+            envelope: model,
+            source_hash,
+            model_cache_hit,
         })
     }
 
