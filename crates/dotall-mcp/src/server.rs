@@ -1,5 +1,5 @@
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use clap::Parser;
@@ -56,6 +56,7 @@ impl ServerOptions {
 #[derive(Clone)]
 pub struct DotallServer {
     engine: Arc<Mutex<Engine>>,
+    workspace_root: PathBuf,
     flush_on_close: FlushOnClose,
 }
 
@@ -67,8 +68,10 @@ impl DotallServer {
     }
 
     pub fn from_store(store: DotallStore, flush_on_close: FlushOnClose) -> Self {
+        let workspace_root = store.workspace().root().to_path_buf();
         Self {
             engine: Arc::new(Mutex::new(Engine::new(store, registry()))),
+            workspace_root,
             flush_on_close,
         }
     }
@@ -79,6 +82,10 @@ impl DotallServer {
 
     pub fn engine(&self) -> Arc<Mutex<Engine>> {
         Arc::clone(&self.engine)
+    }
+
+    pub fn workspace_root(&self) -> &Path {
+        &self.workspace_root
     }
 }
 
