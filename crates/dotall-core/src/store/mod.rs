@@ -19,7 +19,7 @@ use crate::registry::{ArtifactEnvelope, ArtifactSchema};
 use crate::status::{ObjectState, ObjectStatus};
 use crate::workspace::Workspace;
 
-use atomic::{write_bytes, write_json};
+use atomic::{write_bytes, write_json, write_json_new};
 
 #[derive(Debug)]
 pub struct DotallStore {
@@ -393,6 +393,9 @@ impl DotallStore {
     ///
     /// Versions are sequential starting at 1. The stored record's `version` field is
     /// assigned from the manifest; callers may pass `0` as a placeholder.
+    ///
+    /// Callers must hold [`ApplyLock`] for the source so concurrent appends cannot
+    /// race on version allocation or history file creation.
     pub fn append_history(&mut self, relative_path: &str, record: &HistoryRecord) -> Result<u64> {
         let (key, object) = self.tracked_source(relative_path)?;
         let next_version = object.version_count.saturating_add(1);
@@ -400,18 +403,13 @@ impl DotallStore {
         fs::create_dir_all(&history_dir).map_err(|source| DotallError::io(&history_dir, source))?;
 
         let path = self.history_version_path(&key, next_version);
-        if path.is_file() {
-            return Err(DotallError::HistoryVersionExists {
-                path: Path::new(relative_path).to_path_buf(),
-                version: next_version,
-            });
-        }
-
         let persisted = HistoryRecord {
             version: next_version,
             ..record.clone()
         };
-        write_json(&path, &persisted)?;
+        if let Err(err) = write_json_new(&path, &persisted) {
+            return Err(map_history_version_exists(relative_path, next_version, err));
+        }
 
         let mut next_manifest = self.manifest.clone();
         let tracked =
@@ -423,7 +421,10 @@ impl DotallStore {
                     reason: "source is not tracked".to_owned(),
                 })?;
         tracked.version_count = next_version;
-        write_json(&self.workspace.manifest_path(), &next_manifest)?;
+        if let Err(err) = write_json(&self.workspace.manifest_path(), &next_manifest) {
+            let _ = fs::remove_file(&path);
+            return Err(err);
+        }
         self.manifest = next_manifest;
         Ok(next_version)
     }
@@ -626,4 +627,18 @@ pub(crate) fn resolve_source(
         });
     }
     Ok((key, source))
+}
+
+fn map_history_version_exists(relative_path: &str, version: u64, err: DotallError) -> DotallError {
+    if matches!(
+        &err,
+        DotallError::Io { source, .. } if source.kind() == std::io::ErrorKind::AlreadyExists
+    ) {
+        DotallError::HistoryVersionExists {
+            path: Path::new(relative_path).to_path_buf(),
+            version,
+        }
+    } else {
+        err
+    }
 }

@@ -343,6 +343,40 @@ fn get_history_returns_forensic_record() {
 }
 
 #[test]
+fn append_history_rejects_existing_version_file() {
+    let (_temp, mut store, tx_id) = init_store_with_source();
+    let v1 = sample_history_record(
+        0,
+        tx_id,
+        "=A1*1.1",
+        "2026-07-20T10:15:30Z",
+        "abc123",
+        "def456",
+    );
+
+    let history_path = store
+        .workspace()
+        .root()
+        .join(".all/objects/book.xlsx/state/edits/history/v001.json");
+    fs::create_dir_all(history_path.parent().expect("history parent")).expect("history dir");
+    fs::write(&history_path, b"{}\n").expect("pre-create version file");
+
+    let err = store
+        .append_history("book.xlsx", &v1)
+        .expect_err("append should fail");
+    assert!(
+        matches!(
+            err,
+            DotallError::HistoryVersionExists {
+                ref path,
+                version: 1
+            } if path == &std::path::PathBuf::from("book.xlsx")
+        ),
+        "expected HistoryVersionExists, got {err:?}"
+    );
+}
+
+#[test]
 fn discard_staged_does_not_append_history() {
     let (_temp, store, tx_id) = init_store_with_source();
     let staged = sample_staged(tx_id, "hash_v1", "=A1*1.1");
