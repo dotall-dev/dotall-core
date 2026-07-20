@@ -1,11 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dotall_core::{DotallError, Result};
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 
-use crate::edits::{EditableValue, XlsxEditOp};
 use crate::FORMAT_ID;
+use crate::edits::{EditableValue, XlsxEditOp};
 
 pub(super) fn patch(
     xml: &[u8],

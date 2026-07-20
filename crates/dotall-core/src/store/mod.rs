@@ -384,7 +384,8 @@ impl DotallStore {
         }
         let cancel_path = self.cancel_path(&key, tx_id);
         if cancel_path.is_file() {
-            fs::remove_file(&cancel_path).map_err(|source| DotallError::io(&cancel_path, source))?;
+            fs::remove_file(&cancel_path)
+                .map_err(|source| DotallError::io(&cancel_path, source))?;
         }
         Ok(())
     }
