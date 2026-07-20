@@ -33,12 +33,16 @@ pub struct UnsupportedImpact {
 pub enum ImpactOperation {
     InsertRow { sheet: String, at: u32, count: u32 },
     DeleteRow { sheet: String, at: u32, count: u32 },
+    InsertColumn { sheet: String, at: u32, count: u32 },
+    DeleteColumn { sheet: String, at: u32, count: u32 },
 }
 
 pub fn inventory(package: &[u8], operation: &ImpactOperation) -> Result<ImpactInventory> {
     let (sheet, operation_name) = match operation {
         ImpactOperation::InsertRow { sheet, .. } => (sheet.as_str(), "insert_row"),
         ImpactOperation::DeleteRow { sheet, .. } => (sheet.as_str(), "delete_row"),
+        ImpactOperation::InsertColumn { sheet, .. } => (sheet.as_str(), "insert_column"),
+        ImpactOperation::DeleteColumn { sheet, .. } => (sheet.as_str(), "delete_column"),
     };
     let workbook = entry_bytes(package, "xl/workbook.xml")?;
     let workbook_relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
@@ -174,6 +178,8 @@ pub fn validate_impact(package: &[u8], operation: &ImpactOperation) -> Result<Im
         let operation_name = match operation {
             ImpactOperation::InsertRow { .. } => "insert_row",
             ImpactOperation::DeleteRow { .. } => "delete_row",
+            ImpactOperation::InsertColumn { .. } => "insert_column",
+            ImpactOperation::DeleteColumn { .. } => "delete_column",
         };
         return Err(impact_error(format!(
             "{operation_name} is unsafe: unsupported {} in {} ({})",

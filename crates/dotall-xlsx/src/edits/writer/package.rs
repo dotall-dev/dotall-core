@@ -27,8 +27,12 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
 
     let original = fs::read(source).map_err(|error| source_error(source, error))?;
     let operations = parse_validated_operations(&edit.operations)?;
-    if let [operation @ (XlsxEditOp::InsertRow { .. } | XlsxEditOp::DeleteRow { .. })] =
-        operations.as_slice()
+    if let [
+        operation @ (XlsxEditOp::InsertRow { .. }
+        | XlsxEditOp::DeleteRow { .. }
+        | XlsxEditOp::InsertColumn { .. }
+        | XlsxEditOp::DeleteColumn { .. }),
+    ] = operations.as_slice()
     {
         let (edited_sheet, change) = match operation {
             XlsxEditOp::InsertRow { sheet, at, count } => (
@@ -43,6 +47,22 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 sheet.as_str(),
                 AxisChange::Delete {
                     axis: Axis::Row,
+                    at: *at,
+                    count: *count,
+                },
+            ),
+            XlsxEditOp::InsertColumn { sheet, at, count } => (
+                sheet.as_str(),
+                AxisChange::Insert {
+                    axis: Axis::Column,
+                    at: *at,
+                    count: *count,
+                },
+            ),
+            XlsxEditOp::DeleteColumn { sheet, at, count } => (
+                sheet.as_str(),
+                AxisChange::Delete {
+                    axis: Axis::Column,
                     at: *at,
                     count: *count,
                 },
@@ -80,12 +100,14 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             operation,
             XlsxEditOp::InsertRow { .. }
                 | XlsxEditOp::DeleteRow { .. }
+                | XlsxEditOp::InsertColumn { .. }
+                | XlsxEditOp::DeleteColumn { .. }
                 | XlsxEditOp::SetRange { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
             format_id: FORMAT_ID.into(),
-            capability: "insert_row or unexpanded set_range".into(),
+            capability: "structural operation or unexpanded set_range".into(),
             available: vec!["set_cell_value".into(), "set_cell_formula".into()],
         });
     }
@@ -98,6 +120,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             }
             XlsxEditOp::InsertRow { .. }
             | XlsxEditOp::DeleteRow { .. }
+            | XlsxEditOp::InsertColumn { .. }
+            | XlsxEditOp::DeleteColumn { .. }
             | XlsxEditOp::SetRange { .. } => {
                 unreachable!("structural operations return above")
             }

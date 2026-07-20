@@ -76,6 +76,136 @@ fn delete_row_removes_interval_and_shifts_remaining_cells() {
 }
 
 #[test]
+fn insert_column_shifts_cells_formulas_merges_and_cross_sheet_references() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("columns.xlsx");
+    write_fixture(&source);
+    add_calculation_chain(&source);
+    let before = fs::read(&source).expect("fixture bytes");
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = handler
+        .validate_edit_with_source(
+            &source,
+            &model,
+            &[SemanticOperation {
+                kind: "insert_column".into(),
+                payload: serde_json::json!({ "sheet": "Inputs", "at": 1, "count": 1 }),
+            }],
+        )
+        .expect("validate insert");
+
+    let patched = handler.apply_edit(&source, &edit).expect("apply insert");
+    let reopened = parse_bytes(&patched.bytes, directory.path());
+    assert_eq!(value(&reopened, "Inputs", "B2"), "2");
+    assert_eq!(formula(&reopened, "Inputs", "C2"), "=B2*2");
+    assert_eq!(formula(&reopened, "Summary", "A1"), "=Inputs!B2");
+    assert!(entry(&patched.bytes, "xl/worksheets/sheet1.xml").contains(r#"ref="B1:C1""#));
+    assert!(!zip_entries(&patched.bytes).contains_key("xl/calcChain.xml"));
+    assert_untouched_entries_are_identical(
+        &before,
+        &patched.bytes,
+        &[
+            "xl/worksheets/sheet1.xml",
+            "xl/worksheets/sheet2.xml",
+            "[Content_Types].xml",
+            "xl/calcChain.xml",
+        ],
+    );
+}
+
+#[test]
+fn insert_column_inside_populated_data_expands_spanning_merges() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("columns.xlsx");
+    write_fixture(&source);
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = handler
+        .validate_edit_with_source(
+            &source,
+            &model,
+            &[SemanticOperation {
+                kind: "insert_column".into(),
+                payload: serde_json::json!({ "sheet": "Inputs", "at": 2, "count": 1 }),
+            }],
+        )
+        .expect("validate insert");
+
+    let patched = handler.apply_edit(&source, &edit).expect("apply insert");
+    let reopened = parse_bytes(&patched.bytes, directory.path());
+    assert_eq!(value(&reopened, "Inputs", "A2"), "2");
+    assert_eq!(formula(&reopened, "Inputs", "C2"), "=A2*2");
+    assert_eq!(formula(&reopened, "Summary", "A1"), "=Inputs!A2");
+    assert!(entry(&patched.bytes, "xl/worksheets/sheet1.xml").contains(r#"ref="A1:C1""#));
+}
+
+#[test]
+fn delete_column_removes_interval_and_shifts_remaining_cells() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("columns.xlsx");
+    write_fixture(&source);
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = handler
+        .validate_edit_with_source(
+            &source,
+            &model,
+            &[SemanticOperation {
+                kind: "delete_column".into(),
+                payload: serde_json::json!({ "sheet": "Inputs", "at": 1, "count": 1 }),
+            }],
+        )
+        .expect("validate delete");
+
+    let patched = handler.apply_edit(&source, &edit).expect("apply delete");
+    let reopened = parse_bytes(&patched.bytes, directory.path());
+    assert_eq!(formula(&reopened, "Inputs", "A2"), "=#REF!*2");
+    assert_eq!(formula(&reopened, "Summary", "A1"), "=#REF!");
+}
+
+#[test]
+fn structural_columns_reject_zero_and_xfd_overflow_intervals() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("columns.xlsx");
+    write_fixture(&source);
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+
+    for payload in [
+        serde_json::json!({ "sheet": "Inputs", "at": 2, "count": 0 }),
+        serde_json::json!({ "sheet": "Inputs", "at": 16_384, "count": 2 }),
+    ] {
+        let error = handler
+            .validate_edit_with_source(
+                &source,
+                &model,
+                &[SemanticOperation {
+                    kind: "insert_column".into(),
+                    payload,
+                }],
+            )
+            .expect_err("invalid structural interval");
+        assert!(
+            error.to_string().contains("positive integer `count`")
+                || error.to_string().contains("must not exceed 16384"),
+            "unexpected error: {error}"
+        );
+    }
+
+    handler
+        .validate_edit_with_source(
+            &source,
+            &model,
+            &[SemanticOperation {
+                kind: "insert_column".into(),
+                payload: serde_json::json!({ "sheet": "Inputs", "at": 16_384, "count": 1 }),
+            }],
+        )
+        .expect("XFD insertion is within the Excel column limit");
+}
+
+#[test]
 fn structural_rows_reject_zero_and_out_of_range_intervals() {
     let directory = tempdir().expect("temporary directory");
     let source = directory.path().join("rows.xlsx");
@@ -186,7 +316,7 @@ fn formula(model: &dotall_xlsx::WorkbookModel, sheet: &str, address: &str) -> St
         .find(|candidate| candidate.name == sheet)
         .and_then(|sheet| sheet.cells.iter().find(|cell| cell.address == address))
         .and_then(|cell| cell.formula.clone())
-        .expect("formula")
+        .unwrap_or_else(|| panic!("formula at {sheet}!{address}"))
 }
 
 fn entry(bytes: &[u8], name: &str) -> String {

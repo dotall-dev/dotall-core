@@ -328,6 +328,22 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Rejects unsupported structural impacts before surgically patching worksheets."
                 .into(),
         },
+        EditCapability {
+            operation: "insert_column".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Insert blank worksheet columns and rewrite affected formulas.".into(),
+            example: json!({ "kind": "insert_column", "payload": { "sheet": "Sheet1", "at": 2, "count": 1 } }),
+            safety: "Rejects unsupported structural impacts before surgically patching worksheets."
+                .into(),
+        },
+        EditCapability {
+            operation: "delete_column".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Delete worksheet columns and rewrite affected formulas.".into(),
+            example: json!({ "kind": "delete_column", "payload": { "sheet": "Sheet1", "at": 2, "count": 1 } }),
+            safety: "Rejects unsupported structural impacts before surgically patching worksheets."
+                .into(),
+        },
     ]
 }
 

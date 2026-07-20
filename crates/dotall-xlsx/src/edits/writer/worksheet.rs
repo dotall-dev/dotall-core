@@ -19,6 +19,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetCellFormula { address, .. } => (address.as_str(), operation),
             XlsxEditOp::InsertRow { .. }
             | XlsxEditOp::DeleteRow { .. }
+            | XlsxEditOp::InsertColumn { .. }
+            | XlsxEditOp::DeleteColumn { .. }
             | XlsxEditOp::SetRange { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
@@ -114,6 +116,8 @@ pub(super) fn patch(
                 | XlsxEditOp::SetCellFormula { address, .. } => address,
                 XlsxEditOp::InsertRow { .. }
                 | XlsxEditOp::DeleteRow { .. }
+                | XlsxEditOp::InsertColumn { .. }
+                | XlsxEditOp::DeleteColumn { .. }
                 | XlsxEditOp::SetRange { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
@@ -132,6 +136,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetCellFormula { address, .. } => address,
             XlsxEditOp::InsertRow { .. }
             | XlsxEditOp::DeleteRow { .. }
+            | XlsxEditOp::InsertColumn { .. }
+            | XlsxEditOp::DeleteColumn { .. }
             | XlsxEditOp::SetRange { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
@@ -250,6 +256,8 @@ fn render_new_cell(
         }
         XlsxEditOp::InsertRow { .. }
         | XlsxEditOp::DeleteRow { .. }
+        | XlsxEditOp::InsertColumn { .. }
+        | XlsxEditOp::DeleteColumn { .. }
         | XlsxEditOp::SetRange { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
@@ -413,6 +421,8 @@ fn render_cell_parts(
         }
         XlsxEditOp::InsertRow { .. }
         | XlsxEditOp::DeleteRow { .. }
+        | XlsxEditOp::InsertColumn { .. }
+        | XlsxEditOp::DeleteColumn { .. }
         | XlsxEditOp::SetRange { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }

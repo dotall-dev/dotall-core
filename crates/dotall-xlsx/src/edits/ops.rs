@@ -35,6 +35,16 @@ pub enum XlsxEditOp {
         at: u32,
         count: u32,
     },
+    InsertColumn {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
+    DeleteColumn {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

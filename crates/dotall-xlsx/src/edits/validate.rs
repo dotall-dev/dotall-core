@@ -70,16 +70,22 @@ pub fn validate_with_source(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
-    if operations
-        .iter()
-        .all(|operation| operation.kind != "insert_row" && operation.kind != "delete_row")
-    {
+    if operations.iter().all(|operation| {
+        !matches!(
+            operation.kind.as_str(),
+            "insert_row" | "delete_row" | "insert_column" | "delete_column"
+        )
+    }) {
         return validate(model, operations);
     }
-    if operations.len() != 1 || !matches!(operations[0].kind.as_str(), "insert_row" | "delete_row")
+    if operations.len() != 1
+        || !matches!(
+            operations[0].kind.as_str(),
+            "insert_row" | "delete_row" | "insert_column" | "delete_column"
+        )
     {
         return Err(format_error(
-            "structural row edits cannot be combined with other operations",
+            "structural edits cannot be combined with other operations",
         ));
     }
 
@@ -91,21 +97,33 @@ pub fn validate_with_source(
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|sheet| !sheet.is_empty())
-        .ok_or_else(|| format_error("insert_row requires a non-empty `sheet` field"))?;
+        .ok_or_else(|| {
+            format_error(format!(
+                "{} requires a non-empty `sheet` field",
+                operation.kind
+            ))
+        })?;
     let sheet_model = find_sheet(&workbook, sheet)?;
     let canonical_sheet = sheet_model.name.clone();
     let at = required_positive_u32(&operation.payload, "at")?;
     let count = required_positive_u32(&operation.payload, "count")?;
-    if at > 1_048_576 {
-        return Err(format_error("structural row `at` must not exceed 1048576"));
+    let (axis, limit) = match operation.kind.as_str() {
+        "insert_row" | "delete_row" => ("row", 1_048_576),
+        "insert_column" | "delete_column" => ("column", 16_384),
+        _ => unreachable!(),
+    };
+    if at > limit {
+        return Err(format_error(format!(
+            "structural {axis} `at` must not exceed {limit}"
+        )));
     }
     if at
         .checked_add(count - 1)
-        .is_none_or(|last_row| last_row > 1_048_576)
+        .is_none_or(|last_coordinate| last_coordinate > limit)
     {
-        return Err(format_error(
-            "structural row interval must not exceed 1048576",
-        ));
+        return Err(format_error(format!(
+            "structural {axis} interval must not exceed {limit}"
+        )));
     }
     let package = fs::read(source).map_err(|error| DotallError::Format {
         format_id: FORMAT_ID.into(),
@@ -121,6 +139,16 @@ pub fn validate_with_source(
                 count,
             },
             "delete_row" => ImpactOperation::DeleteRow {
+                sheet: canonical_sheet.clone(),
+                at,
+                count,
+            },
+            "insert_column" => ImpactOperation::InsertColumn {
+                sheet: canonical_sheet.clone(),
+                at,
+                count,
+            },
+            "delete_column" => ImpactOperation::DeleteColumn {
                 sheet: canonical_sheet.clone(),
                 at,
                 count,
@@ -142,8 +170,8 @@ pub fn validate_with_source(
             }),
         }],
         semantic_diff: vec![SemanticChange {
-            target: format!("{canonical_sheet}!row:{at}"),
-            element_id: format!("row:{canonical_sheet}:{at}"),
+            target: format!("{canonical_sheet}!{axis}:{at}"),
+            element_id: format!("{axis}:{canonical_sheet}:{at}"),
             change: operation.kind.clone(),
             before: None,
             after: Some(count.to_string()),
@@ -543,7 +571,7 @@ fn required_positive_u32(payload: &Value, field: &str) -> Result<u32> {
         .filter(|value| *value > 0)
         .ok_or_else(|| {
             format_error(format!(
-                "structural row edit requires a positive integer `{field}`"
+                "structural edit requires a positive integer `{field}`"
             ))
         })
 }
@@ -579,6 +607,9 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
                 unreachable!("structural edits are validated separately")
             }
             XlsxEditOp::DeleteRow { .. } => {
+                unreachable!("structural edits are validated separately")
+            }
+            XlsxEditOp::InsertColumn { .. } | XlsxEditOp::DeleteColumn { .. } => {
                 unreachable!("structural edits are validated separately")
             }
             XlsxEditOp::SetRange { .. } => {
@@ -676,6 +707,9 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         },
         XlsxEditOp::InsertRow { .. } => unreachable!("structural edits are validated separately"),
         XlsxEditOp::DeleteRow { .. } => unreachable!("structural edits are validated separately"),
+        XlsxEditOp::InsertColumn { .. } | XlsxEditOp::DeleteColumn { .. } => {
+            unreachable!("structural edits are validated separately")
+        }
         XlsxEditOp::SetRange { .. } => {
             unreachable!("set_range is expanded into cell edits during validation")
         }

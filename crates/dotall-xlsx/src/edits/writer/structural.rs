@@ -2,7 +2,7 @@ use dotall_core::{DotallError, Result};
 
 use crate::FORMAT_ID;
 use crate::edits::transform::{
-    AxisChange, TransformResult, parse_range, transform_formula, transform_range,
+    Axis, AxisChange, TransformResult, parse_range, transform_formula, transform_range,
 };
 
 pub(super) fn patch(
@@ -13,6 +13,11 @@ pub(super) fn patch(
 ) -> Result<Vec<u8>> {
     let source = std::str::from_utf8(xml)
         .map_err(|utf8_error| error(format!("worksheet is not UTF-8: {utf8_error}")))?;
+    if !formula_sheet.eq_ignore_ascii_case(edited_sheet) {
+        return Ok(
+            transform_formula_nodes(source, formula_sheet, edited_sheet, change).into_bytes(),
+        );
+    }
     let mut output = String::with_capacity(source.len());
     let mut cursor = 0;
     while let Some(relative) = source[cursor..].find("<row") {
@@ -48,12 +53,28 @@ pub(super) fn patch(
 
 fn transform_row(row: u32, change: AxisChange) -> Result<Option<u32>> {
     match change {
-        AxisChange::Insert { at, count, .. } if row >= at => row
+        AxisChange::Insert {
+            axis: Axis::Column, ..
+        }
+        | AxisChange::Delete {
+            axis: Axis::Column, ..
+        } => Ok(Some(row)),
+        AxisChange::Insert {
+            axis: Axis::Row,
+            at,
+            count,
+        } if row >= at => row
             .checked_add(count)
             .map(Some)
             .ok_or_else(|| error("row insert exceeds Excel limit")),
-        AxisChange::Insert { .. } => Ok(Some(row)),
-        AxisChange::Delete { at, count, .. } => {
+        AxisChange::Insert {
+            axis: Axis::Row, ..
+        } => Ok(Some(row)),
+        AxisChange::Delete {
+            axis: Axis::Row,
+            at,
+            count,
+        } => {
             let end = at
                 .checked_add(count - 1)
                 .ok_or_else(|| error("invalid row delete"))?;
@@ -74,11 +95,11 @@ fn transform_cell_addresses(block: &str, change: AxisChange) -> Result<String> {
     while let Some(relative) = block[cursor..].find("<c") {
         let start = cursor + relative;
         output.push_str(&block[cursor..start]);
-        let end = block[start..]
+        let tag_end = block[start..]
             .find('>')
             .map(|i| start + i)
             .ok_or_else(|| error("unterminated cell"))?;
-        let tag = &block[start..=end];
+        let tag = &block[start..=tag_end];
         let address = attribute(tag, "r").ok_or_else(|| error("worksheet cell is missing r"))?;
         let cell = crate::edits::transform::parse_cell(address).map_err(error)?;
         match crate::edits::transform::transform_cell(&cell, change) {
@@ -86,10 +107,27 @@ fn transform_cell_addresses(block: &str, change: AxisChange) -> Result<String> {
                 output.push_str(&replace_attribute(tag, "r", &cell.to_string()))
             }
             TransformResult::Removed | TransformResult::RefError => {
-                return Err(error("cell address transformation failed"));
+                if !matches!(
+                    change,
+                    AxisChange::Delete {
+                        axis: Axis::Column,
+                        ..
+                    }
+                ) {
+                    return Err(error("cell address transformation failed"));
+                }
+                cursor = if tag.ends_with("/>") {
+                    tag_end + 1
+                } else {
+                    block[tag_end + 1..]
+                        .find("</c>")
+                        .map(|i| tag_end + 1 + i + 4)
+                        .ok_or_else(|| error("unterminated cell"))?
+                };
+                continue;
             }
         }
-        cursor = end + 1;
+        cursor = tag_end + 1;
     }
     output.push_str(&block[cursor..]);
     Ok(output)

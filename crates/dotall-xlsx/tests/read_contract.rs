@@ -113,6 +113,8 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_range",
             "insert_row",
             "delete_row",
+            "insert_column",
+            "delete_column",
         ]
     );
     assert_eq!(
