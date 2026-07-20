@@ -314,6 +314,15 @@ fn formula(workbook: &dotall_xlsx::WorkbookModel, sheet: &str, address: &str) ->
         .expect("formula")
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct ZipEntrySnapshot {
+    crc32: u32,
+    compression: zip::CompressionMethod,
+    compressed_size: u64,
+    inflated: Vec<u8>,
+    raw_compressed: Vec<u8>,
+}
+
 fn assert_untouched_entries_are_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);
@@ -327,30 +336,71 @@ fn assert_untouched_entries_are_identical(before: &[u8], after: &[u8], patched: 
         before_entries.contains_key("xl/styles.xml"),
         "fixture must include styles.xml"
     );
-    for (name, (before_crc, before_compression, before_bytes)) in before_entries {
-        let (after_crc, after_compression, after_bytes) =
-            after_entries.get(&name).expect("entry retained");
-        if !patched.contains(&name.as_str()) {
-            assert_eq!(before_crc, *after_crc, "CRC changed for {name}");
-            assert_eq!(
-                before_compression, *after_compression,
-                "compression method changed for {name}"
-            );
-            assert_eq!(before_bytes, *after_bytes, "bytes changed for {name}");
+    for (name, before_entry) in &before_entries {
+        let after_entry = after_entries.get(name).expect("entry retained");
+        if patched.contains(&name.as_str()) {
+            continue;
         }
+        assert_eq!(
+            before_entry.crc32, after_entry.crc32,
+            "CRC changed for {name}"
+        );
+        assert_eq!(
+            before_entry.compression, after_entry.compression,
+            "compression method changed for {name}"
+        );
+        assert_eq!(
+            before_entry.compressed_size, after_entry.compressed_size,
+            "compressed size changed for {name}"
+        );
+        assert_eq!(
+            before_entry.inflated, after_entry.inflated,
+            "inflated bytes changed for {name}"
+        );
+        assert_eq!(
+            before_entry.raw_compressed, after_entry.raw_compressed,
+            "raw compressed payload changed for {name}"
+        );
     }
 }
 
-fn zip_entries(bytes: &[u8]) -> BTreeMap<String, (u32, zip::CompressionMethod, Vec<u8>)> {
+fn zip_entries(bytes: &[u8]) -> BTreeMap<String, ZipEntrySnapshot> {
     let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("open ZIP");
     let mut entries = BTreeMap::new();
     for index in 0..archive.len() {
-        let mut entry = archive.by_index(index).expect("ZIP entry");
-        let mut contents = Vec::new();
-        entry.read_to_end(&mut contents).expect("read ZIP entry");
+        let name = {
+            let entry = archive.by_index(index).expect("ZIP entry");
+            entry.name().to_owned()
+        };
+        let (crc32, compression, compressed_size) = {
+            let entry = archive.by_index(index).expect("ZIP entry");
+            (
+                entry.crc32(),
+                entry.compression(),
+                entry.compressed_size(),
+            )
+        };
+        let mut raw_compressed = Vec::new();
+        archive
+            .by_index_raw(index)
+            .expect("raw ZIP entry")
+            .read_to_end(&mut raw_compressed)
+            .expect("read raw compressed payload");
+        let mut inflated = Vec::new();
+        archive
+            .by_index(index)
+            .expect("ZIP entry")
+            .read_to_end(&mut inflated)
+            .expect("read inflated ZIP entry");
         entries.insert(
-            entry.name().to_owned(),
-            (entry.crc32(), entry.compression(), contents),
+            name,
+            ZipEntrySnapshot {
+                crc32,
+                compression,
+                compressed_size,
+                inflated,
+                raw_compressed,
+            },
         );
     }
     entries
@@ -358,7 +408,7 @@ fn zip_entries(bytes: &[u8]) -> BTreeMap<String, (u32, zip::CompressionMethod, V
 
 fn worksheet_xml(bytes: &[u8], name: &str) -> String {
     let entries = zip_entries(bytes);
-    String::from_utf8(entries[name].2.clone()).expect("worksheet XML")
+    String::from_utf8(entries[name].inflated.clone()).expect("worksheet XML")
 }
 
 fn replace_zip_entry(path: &std::path::Path, name: &str, replace: impl FnOnce(String) -> String) {
