@@ -13,7 +13,9 @@ pub mod registry;
 
 pub use error::{DotallError, Result};
 pub use fingerprint::{Freshness, SourceFingerprint, check_freshness, fingerprint};
-pub use history::{ApplyLock, EditRequest, HistoryRecord, HistoryStatus, StagedEdit};
+pub use history::{
+    ApplyLock, EditRequest, HistoryRecord, HistoryStatus, HistorySummary, StagedEdit,
+};
 pub use manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 pub use orchestrate::{Engine, FileReadResult, InspectResult, ModelLoadResult};
 pub use pipeline::{CachedArtifact, CachedDerived, CachedView, DerivationRecipe};

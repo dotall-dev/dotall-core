@@ -8,7 +8,8 @@ mod record;
 mod transaction;
 
 pub use lock::ApplyLock;
-pub use record::{HistoryRecord, HistoryStatus};
+pub(crate) use record::history_version_file_name;
+pub use record::{HistoryRecord, HistoryStatus, HistorySummary};
 pub use transaction::{EditRequest, StagedEdit};
 
 #[cfg(test)]
