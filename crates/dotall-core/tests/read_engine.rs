@@ -233,6 +233,7 @@ impl FormatHandler for CountingFormat {
             id: "stub".into(),
             version: "1".into(),
             capabilities: vec![Capability::Inspect, Capability::ReadFull],
+            edit_capabilities: Vec::new(),
         }
     }
 
@@ -268,6 +269,7 @@ impl FormatHandler for CountingFormat {
             format_id: "stub".into(),
             summary: serde_json::json!({"title": "Stub"}),
             capabilities: self.descriptor().capabilities,
+            edit_capabilities: Vec::new(),
             suggested_reads: Vec::new(),
         })
     }

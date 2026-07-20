@@ -63,6 +63,11 @@ enum Command {
         path: PathBuf,
         #[arg(long, conflicts_with = "ops_json")]
         op: Option<String>,
+        #[arg(
+            long,
+            conflicts_with_all = ["ops_json", "sheet", "address", "value", "formula"]
+        )]
+        payload_json: Option<String>,
         #[arg(long)]
         sheet: Option<String>,
         #[arg(long)]
@@ -140,6 +145,7 @@ struct ApplyAllOutput {
 
 struct EditOptions<'a> {
     op: Option<&'a str>,
+    payload_json: Option<&'a str>,
     sheet: Option<&'a str>,
     address: Option<&'a str>,
     value: Option<&'a str>,
@@ -247,6 +253,7 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
         Command::Edit {
             path,
             op,
+            payload_json,
             sheet,
             address,
             value,
@@ -259,6 +266,7 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
             path,
             &EditOptions {
                 op: op.as_deref(),
+                payload_json: payload_json.as_deref(),
                 sheet: sheet.as_deref(),
                 address: address.as_deref(),
                 value: value.as_deref(),
@@ -285,6 +293,7 @@ fn run_edit(cli: &Cli, path: &Path, options: &EditOptions<'_>) -> dotall_core::R
     let mut engine = Engine::new(store, default_registry());
     let operations = build_operations(
         options.op,
+        options.payload_json,
         options.sheet,
         options.address,
         options.value,
@@ -459,6 +468,7 @@ fn run_revert(
 
 fn build_operations(
     op: Option<&str>,
+    payload_json: Option<&str>,
     sheet: Option<&str>,
     address: Option<&str>,
     value: Option<&str>,
@@ -476,6 +486,16 @@ fn build_operations(
         path: PathBuf::from("<edit>"),
         reason: "edit requires --op or --ops-json".into(),
     })?;
+    if let Some(raw) = payload_json {
+        let payload = serde_json::from_str(raw).map_err(|source| DotallError::Serialization {
+            context: "edit --payload-json".into(),
+            source,
+        })?;
+        return Ok(vec![SemanticOperation {
+            kind: op.into(),
+            payload,
+        }]);
+    }
     let sheet = sheet.ok_or_else(|| DotallError::InvalidSourcePath {
         path: PathBuf::from("<edit>"),
         reason: "edit requires --sheet".into(),

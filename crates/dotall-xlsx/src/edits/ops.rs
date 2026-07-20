@@ -20,6 +20,52 @@ pub enum XlsxEditOp {
         element_id: String,
         formula: String,
     },
+    SetRange {
+        sheet: String,
+        start_cell: String,
+        values: Vec<Vec<EditableCell>>,
+    },
+    InsertRow {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
+    DeleteRow {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
+    InsertColumn {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
+    DeleteColumn {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
+    AddSheet {
+        name: String,
+        after: Option<String>,
+    },
+    RenameSheet {
+        from: String,
+        to: String,
+    },
+    DeleteSheet {
+        name: String,
+        #[serde(default)]
+        dependency_policy: DeleteSheetPolicy,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteSheetPolicy {
+    #[default]
+    RejectIfReferenced,
+    ReplaceReferencesWithRefError,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -29,6 +75,13 @@ pub enum EditableValue {
     Number(f64),
     Boolean(bool),
     Blank,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum EditableCell {
+    Value(EditableValue),
+    Formula(String),
 }
 
 impl EditableValue {

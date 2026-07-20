@@ -114,6 +114,98 @@ fn apply_updates_source_history_and_diff() {
 }
 
 #[test]
+fn ops_json_stages_applies_and_records_set_range() {
+    let temp = tempdir().expect("tempdir");
+    let workbook = temp.path().join("book.xlsx");
+    workbook_fixture(&workbook);
+    let workspace = temp.path().to_str().expect("UTF-8 workspace");
+    let source = workbook.to_str().expect("UTF-8 workbook");
+    let operation = r#"[{"kind":"set_range","payload":{"sheet":"Sheet","start_cell":"A2","values":[["Bravo",99]]}}]"#;
+
+    dotall().args(["init", workspace]).assert().success();
+
+    let staged = dotall()
+        .args(["--json", "edit", source, "--ops-json", operation])
+        .output()
+        .expect("stage range edit");
+    assert!(staged.status.success());
+    let staged: serde_json::Value =
+        serde_json::from_slice(&staged.stdout).expect("stage JSON output");
+    let tx_id = staged["tx_id"].as_str().expect("tx_id");
+
+    dotall()
+        .args(["apply", source, "--tx", tx_id])
+        .assert()
+        .success();
+
+    dotall()
+        .args(["read", source, "--range", "Sheet!A1:B2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("| Bravo | 99 |"));
+
+    let history = dotall()
+        .args(["--json", "history", source])
+        .output()
+        .expect("history output");
+    assert!(history.status.success());
+    let history: serde_json::Value =
+        serde_json::from_slice(&history.stdout).expect("history JSON output");
+    assert_eq!(history["entries"].as_array().expect("entries").len(), 1);
+    assert_eq!(history["entries"][0]["op_count"], 2);
+}
+
+#[test]
+fn op_payload_stages_applies_and_records_structural_edit() {
+    let temp = tempdir().expect("tempdir");
+    let workbook = temp.path().join("book.xlsx");
+    workbook_fixture(&workbook);
+    let workspace = temp.path().to_str().expect("UTF-8 workspace");
+    let source = workbook.to_str().expect("UTF-8 workbook");
+    let payload = r#"{"sheet":"Sheet","at":2,"count":1}"#;
+
+    dotall().args(["init", workspace]).assert().success();
+
+    let staged = dotall()
+        .args([
+            "--json",
+            "edit",
+            source,
+            "--op",
+            "insert_row",
+            "--payload-json",
+            payload,
+        ])
+        .output()
+        .expect("stage structural edit");
+    assert!(staged.status.success());
+    let staged: serde_json::Value =
+        serde_json::from_slice(&staged.stdout).expect("stage JSON output");
+    let tx_id = staged["tx_id"].as_str().expect("tx_id");
+
+    dotall()
+        .args(["apply", source, "--tx", tx_id])
+        .assert()
+        .success();
+
+    dotall()
+        .args(["read", source, "--range", "Sheet!A1:B3"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("| Alpha | 42 |"));
+
+    let history = dotall()
+        .args(["--json", "history", source])
+        .output()
+        .expect("history output");
+    assert!(history.status.success());
+    let history: serde_json::Value =
+        serde_json::from_slice(&history.stdout).expect("history JSON output");
+    assert_eq!(history["entries"].as_array().expect("entries").len(), 1);
+    assert_eq!(history["entries"][0]["op_count"], 1);
+}
+
+#[test]
 fn revert_stages_restore_and_apply_commits_new_version() {
     let temp = tempdir().expect("tempdir");
     let workbook = temp.path().join("book.xlsx");

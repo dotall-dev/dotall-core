@@ -4,6 +4,7 @@ use std::io::{Cursor, Read, Write};
 
 use dotall_core::SemanticOperation;
 use dotall_core::registry::FormatHandler;
+use dotall_xlsx::edits::validate_with_source;
 use dotall_xlsx::{XlsxFormat, parse_workbook};
 use rust_xlsxwriter::Workbook;
 use tempfile::tempdir;
@@ -365,6 +366,120 @@ fn rejects_edits_to_shared_formula_cells() {
     );
 }
 
+#[test]
+fn insert_row_only_shifts_the_edited_sheet_and_updates_cross_sheet_formulas() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("workbook.xlsx");
+    write_structural_fixture(&source);
+    let before = fs::read(&source).expect("fixture bytes");
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = validate_with_source(
+        &source,
+        &model,
+        &[SemanticOperation {
+            kind: "insert_row".into(),
+            payload: serde_json::json!({ "sheet": "Inputs", "at": 2, "count": 1 }),
+        }],
+    )
+    .expect("validate row insert");
+
+    let patched = handler
+        .apply_edit(&source, &edit)
+        .expect("apply row insert");
+    let after = parse_workbook_bytes(&patched.bytes, directory.path());
+
+    assert_eq!(cell_value(&after, "Inputs", "A4"), "30");
+    assert_eq!(cell_value(&after, "Summary", "A3"), "99");
+    assert_eq!(formula(&after, "Summary", "B3"), "=Inputs!A4");
+    assert_untouched_entries_are_identical(
+        &before,
+        &patched.bytes,
+        &["xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml"],
+    );
+}
+
+#[test]
+fn delete_row_preserves_unrelated_zip_entries() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("workbook.xlsx");
+    write_structural_fixture(&source);
+    let before = fs::read(&source).expect("fixture bytes");
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = validate_with_source(
+        &source,
+        &model,
+        &[SemanticOperation {
+            kind: "delete_row".into(),
+            payload: serde_json::json!({ "sheet": "Inputs", "at": 2, "count": 1 }),
+        }],
+    )
+    .expect("validate row delete");
+
+    let patched = handler
+        .apply_edit(&source, &edit)
+        .expect("apply row delete");
+    let after = parse_workbook_bytes(&patched.bytes, directory.path());
+
+    assert_eq!(cell_value(&after, "Inputs", "A2"), "30");
+    assert_eq!(formula(&after, "Summary", "B3"), "=Inputs!A2");
+    assert_untouched_entries_are_identical(
+        &before,
+        &patched.bytes,
+        &["xl/worksheets/sheet1.xml", "xl/worksheets/sheet2.xml"],
+    );
+}
+
+#[test]
+fn delete_row_removes_the_calc_chain_relationship_with_the_calc_chain() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("workbook.xlsx");
+    write_structural_fixture(&source);
+    replace_zip_entry(&source, "xl/_rels/workbook.xml.rels", |xml| {
+        xml.replacen(
+            "</Relationships>",
+            r#"<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain" Target="calcChain.xml"/></Relationships>"#,
+            1,
+        )
+    });
+    replace_zip_entry(&source, "[Content_Types].xml", |xml| {
+        xml.replacen(
+            "</Types>",
+            r#"<Override PartName="/xl/calcChain.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/></Types>"#,
+            1,
+        )
+    });
+    append_zip_entry(
+        &source,
+        "xl/calcChain.xml",
+        r#"<calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>"#,
+    );
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = validate_with_source(
+        &source,
+        &model,
+        &[SemanticOperation {
+            kind: "delete_row".into(),
+            payload: serde_json::json!({ "sheet": "Inputs", "at": 2, "count": 1 }),
+        }],
+    )
+    .expect("validate row delete");
+
+    let patched = handler
+        .apply_edit(&source, &edit)
+        .expect("apply row delete");
+    let entries = zip_entries(&patched.bytes);
+
+    assert!(!entries.contains_key("xl/calcChain.xml"));
+    assert!(!worksheet_xml(&patched.bytes, "xl/_rels/workbook.xml.rels").contains("calcChain"));
+    assert!(!worksheet_xml(&patched.bytes, "[Content_Types].xml").contains("calcChain"));
+}
+
 fn write_fixture(path: &std::path::Path) {
     let mut workbook = Workbook::new();
     let inputs = workbook
@@ -378,6 +493,25 @@ fn write_fixture(path: &std::path::Path) {
         .expect("sheet name");
     summary
         .write_formula(0, 1, "=Inputs!A1")
+        .expect("summary formula");
+    workbook.save(path).expect("write fixture");
+}
+
+fn write_structural_fixture(path: &std::path::Path) {
+    let mut workbook = Workbook::new();
+    let inputs = workbook
+        .add_worksheet()
+        .set_name("Inputs")
+        .expect("sheet name");
+    inputs.write_number(0, 0, 10).expect("input value");
+    inputs.write_number(2, 0, 30).expect("input value");
+    let summary = workbook
+        .add_worksheet()
+        .set_name("Summary")
+        .expect("sheet name");
+    summary.write_number(2, 0, 99).expect("summary value");
+    summary
+        .write_formula(2, 1, "=Inputs!A3")
         .expect("summary formula");
     workbook.save(path).expect("write fixture");
 }
@@ -538,5 +672,22 @@ fn replace_zip_entry(path: &std::path::Path, name: &str, replace: impl FnOnce(St
             output.raw_copy_file(entry).expect("copy ZIP entry");
         }
     }
+    fs::write(path, output.finish().expect("finish ZIP").into_inner()).expect("write fixture");
+}
+
+fn append_zip_entry(path: &std::path::Path, name: &str, contents: &str) {
+    let source = fs::read(path).expect("fixture bytes");
+    let mut archive = ZipArchive::new(Cursor::new(source)).expect("open ZIP");
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        let entry = archive.by_index(index).expect("ZIP entry");
+        output.raw_copy_file(entry).expect("copy ZIP entry");
+    }
+    output
+        .start_file(name, SimpleFileOptions::default())
+        .expect("start additional entry");
+    output
+        .write_all(contents.as_bytes())
+        .expect("write additional entry");
     fs::write(path, output.finish().expect("finish ZIP").into_inner()).expect("write fixture");
 }

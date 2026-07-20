@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
@@ -10,9 +10,12 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 use crate::FORMAT_ID;
+use crate::edits::transform::{Axis, AxisChange};
 use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
 use super::shared_strings;
+use super::structural;
+use super::workbook;
 use super::worksheet;
 
 pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
@@ -25,12 +28,155 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
 
     let original = fs::read(source).map_err(|error| source_error(source, error))?;
     let operations = parse_validated_operations(&edit.operations)?;
+    if let [XlsxEditOp::AddSheet { name, after }] = operations.as_slice() {
+        let patch = workbook::add_sheet(&original, name, after.as_deref())?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [XlsxEditOp::RenameSheet { from, to }] = operations.as_slice() {
+        let patch = workbook::rename_sheet(&original, from, to)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [XlsxEditOp::DeleteSheet { name, .. }] = operations.as_slice() {
+        let patch = workbook::delete_sheet(&original, name)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [
+        operation @ (XlsxEditOp::InsertRow { .. }
+        | XlsxEditOp::DeleteRow { .. }
+        | XlsxEditOp::InsertColumn { .. }
+        | XlsxEditOp::DeleteColumn { .. }),
+    ] = operations.as_slice()
+    {
+        let (edited_sheet, change) = match operation {
+            XlsxEditOp::InsertRow { sheet, at, count } => (
+                sheet.as_str(),
+                AxisChange::Insert {
+                    axis: Axis::Row,
+                    at: *at,
+                    count: *count,
+                },
+            ),
+            XlsxEditOp::DeleteRow { sheet, at, count } => (
+                sheet.as_str(),
+                AxisChange::Delete {
+                    axis: Axis::Row,
+                    at: *at,
+                    count: *count,
+                },
+            ),
+            XlsxEditOp::InsertColumn { sheet, at, count } => (
+                sheet.as_str(),
+                AxisChange::Insert {
+                    axis: Axis::Column,
+                    at: *at,
+                    count: *count,
+                },
+            ),
+            XlsxEditOp::DeleteColumn { sheet, at, count } => (
+                sheet.as_str(),
+                AxisChange::Delete {
+                    axis: Axis::Column,
+                    at: *at,
+                    count: *count,
+                },
+            ),
+            _ => unreachable!(),
+        };
+        let mut replacements = BTreeMap::new();
+        for (sheet, path) in worksheet_paths(&original)? {
+            replacements.insert(
+                path.clone(),
+                structural::patch(
+                    &entry_bytes(&original, &path)?,
+                    &sheet,
+                    edited_sheet,
+                    change,
+                )?,
+            );
+        }
+        let mut removals = BTreeSet::new();
+        if has_entry(&original, "xl/calcChain.xml")? {
+            removals.insert("xl/calcChain.xml".to_owned());
+            replacements.insert(
+                "[Content_Types].xml".into(),
+                remove_calc_chain_override(&entry_bytes(&original, "[Content_Types].xml")?)?,
+            );
+            replacements.insert(
+                "xl/_rels/workbook.xml.rels".into(),
+                remove_calc_chain_relationship(&entry_bytes(
+                    &original,
+                    "xl/_rels/workbook.xml.rels",
+                )?)?,
+            );
+        }
+        let bytes = rebuild_package(&original, &replacements, &removals, &BTreeMap::new())?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if operations.iter().any(|operation| {
+        matches!(
+            operation,
+            XlsxEditOp::InsertRow { .. }
+                | XlsxEditOp::DeleteRow { .. }
+                | XlsxEditOp::InsertColumn { .. }
+                | XlsxEditOp::DeleteColumn { .. }
+                | XlsxEditOp::AddSheet { .. }
+                | XlsxEditOp::RenameSheet { .. }
+                | XlsxEditOp::DeleteSheet { .. }
+                | XlsxEditOp::SetRange { .. }
+        )
+    }) {
+        return Err(DotallError::UnsupportedCapability {
+            format_id: FORMAT_ID.into(),
+            capability: "structural operation or unexpanded set_range".into(),
+            available: vec!["set_cell_value".into(), "set_cell_formula".into()],
+        });
+    }
     let worksheet_paths = worksheet_paths(&original)?;
     let mut grouped = BTreeMap::<String, Vec<XlsxEditOp>>::new();
     for operation in operations {
         let sheet = match &operation {
             XlsxEditOp::SetCellValue { sheet, .. } | XlsxEditOp::SetCellFormula { sheet, .. } => {
                 sheet
+            }
+            XlsxEditOp::InsertRow { .. }
+            | XlsxEditOp::DeleteRow { .. }
+            | XlsxEditOp::InsertColumn { .. }
+            | XlsxEditOp::DeleteColumn { .. }
+            | XlsxEditOp::AddSheet { .. }
+            | XlsxEditOp::RenameSheet { .. }
+            | XlsxEditOp::DeleteSheet { .. }
+            | XlsxEditOp::SetRange { .. } => {
+                unreachable!("structural operations return above")
             }
         };
         grouped.entry(sheet.clone()).or_default().push(operation);
@@ -78,7 +224,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
         );
     }
 
-    let bytes = rebuild_package(&original, &replacements)?;
+    let bytes = rebuild_package(&original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes,
@@ -264,7 +410,12 @@ fn entry_bytes(package: &[u8], name: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn rebuild_package(original: &[u8], replacements: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>> {
+fn rebuild_package(
+    original: &[u8],
+    replacements: &BTreeMap<String, Vec<u8>>,
+    removals: &BTreeSet<String>,
+    additions: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>> {
     let mut archive = ZipArchive::new(Cursor::new(original))
         .map_err(|error| writer_error(format!("invalid XLSX package: {error}")))?;
     let output = Cursor::new(Vec::new());
@@ -275,6 +426,9 @@ fn rebuild_package(original: &[u8], replacements: &BTreeMap<String, Vec<u8>>) ->
             .by_index(index)
             .map_err(|error| writer_error(format!("cannot read ZIP entry: {error}")))?;
         let name = entry.name().to_owned();
+        if removals.contains(&name) {
+            continue;
+        }
         if let Some(replacement) = replacements.get(&name) {
             let options = SimpleFileOptions::default()
                 .compression_method(entry.compression())
@@ -291,11 +445,65 @@ fn rebuild_package(original: &[u8], replacements: &BTreeMap<String, Vec<u8>>) ->
                 .map_err(|error| writer_error(format!("cannot copy ZIP entry: {error}")))?;
         }
     }
+    for (name, bytes) in additions {
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .map_err(|error| writer_error(format!("cannot start added ZIP entry: {error}")))?;
+        writer
+            .write_all(bytes)
+            .map_err(|error| writer_error(format!("cannot write added ZIP entry: {error}")))?;
+    }
 
     writer
         .finish()
         .map_err(|error| writer_error(format!("cannot finish XLSX package: {error}")))
         .map(|cursor| cursor.into_inner())
+}
+
+fn remove_calc_chain_override(xml: &[u8]) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("content types XML is not UTF-8: {error}")))?;
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find("<Override") {
+        let start = cursor + relative;
+        output.push_str(&source[cursor..start]);
+        let end = source[start..]
+            .find('>')
+            .map(|offset| start + offset)
+            .ok_or_else(|| writer_error("unterminated content types Override"))?;
+        let tag = &source[start..=end];
+        if !tag.contains(r#"PartName="/xl/calcChain.xml""#) {
+            output.push_str(tag);
+        }
+        cursor = end + 1;
+    }
+    output.push_str(&source[cursor..]);
+    Ok(output.into_bytes())
+}
+
+fn remove_calc_chain_relationship(xml: &[u8]) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml).map_err(|error| {
+        writer_error(format!("workbook relationships XML is not UTF-8: {error}"))
+    })?;
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find("<Relationship") {
+        let start = cursor + relative;
+        output.push_str(&source[cursor..start]);
+        let end = source[start..]
+            .find('>')
+            .map(|offset| start + offset)
+            .ok_or_else(|| writer_error("unterminated workbook Relationship"))?;
+        let tag = &source[start..=end];
+        if !tag.contains(r#"Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain""#)
+        {
+            output.push_str(tag);
+        }
+        cursor = end + 1;
+    }
+    output.push_str(&source[cursor..]);
+    Ok(output.into_bytes())
 }
 
 fn source_error(source: &Path, error: std::io::Error) -> DotallError {

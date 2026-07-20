@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 use dotall_core::{
@@ -8,8 +10,10 @@ use dotall_core::{
 use serde_json::Value;
 
 use crate::dependencies::{DependencyGraph, build};
+use crate::edits::impact::{ImpactOperation, validate_impact};
 use crate::edits::ops::{
-    EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp, format_cell_value, format_editable_value,
+    DeleteSheetPolicy, EditableCell, EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp,
+    format_cell_value, format_editable_value,
 };
 use crate::ids;
 use crate::model::{CellModel, CellValue, SCHEMA_ID as MODEL_SCHEMA_ID, WorkbookModel};
@@ -56,6 +60,272 @@ pub fn validate(
     })
 }
 
+/// Validates operations that require package-level impact analysis before staging.
+///
+/// Cell edits remain model-only. Structural operations additionally inspect the
+/// source OOXML package so they can reject unsupported impacted parts before the
+/// transaction is journaled.
+pub fn validate_with_source(
+    source: &Path,
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.iter().any(|operation| {
+        matches!(
+            operation.kind.as_str(),
+            "add_sheet" | "rename_sheet" | "delete_sheet"
+        )
+    }) {
+        return validate_sheet_operation(source, model, operations);
+    }
+    if operations.iter().all(|operation| {
+        !matches!(
+            operation.kind.as_str(),
+            "insert_row" | "delete_row" | "insert_column" | "delete_column"
+        )
+    }) {
+        return validate(model, operations);
+    }
+    if operations.len() != 1
+        || !matches!(
+            operations[0].kind.as_str(),
+            "insert_row" | "delete_row" | "insert_column" | "delete_column"
+        )
+    {
+        return Err(format_error(
+            "structural edits cannot be combined with other operations",
+        ));
+    }
+
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    let sheet = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| {
+            format_error(format!(
+                "{} requires a non-empty `sheet` field",
+                operation.kind
+            ))
+        })?;
+    let sheet_model = find_sheet(&workbook, sheet)?;
+    let canonical_sheet = sheet_model.name.clone();
+    let at = required_positive_u32(&operation.payload, "at")?;
+    let count = required_positive_u32(&operation.payload, "count")?;
+    let (axis, limit) = match operation.kind.as_str() {
+        "insert_row" | "delete_row" => ("row", 1_048_576),
+        "insert_column" | "delete_column" => ("column", 16_384),
+        _ => unreachable!(),
+    };
+    if at > limit {
+        return Err(format_error(format!(
+            "structural {axis} `at` must not exceed {limit}"
+        )));
+    }
+    if at
+        .checked_add(count - 1)
+        .is_none_or(|last_coordinate| last_coordinate > limit)
+    {
+        return Err(format_error(format!(
+            "structural {axis} interval must not exceed {limit}"
+        )));
+    }
+    let package = fs::read(source).map_err(|error| DotallError::Format {
+        format_id: FORMAT_ID.into(),
+        path: source.into(),
+        message: error.to_string(),
+    })?;
+    validate_impact(
+        &package,
+        &match operation.kind.as_str() {
+            "insert_row" => ImpactOperation::InsertRow {
+                sheet: canonical_sheet.clone(),
+                at,
+                count,
+            },
+            "delete_row" => ImpactOperation::DeleteRow {
+                sheet: canonical_sheet.clone(),
+                at,
+                count,
+            },
+            "insert_column" => ImpactOperation::InsertColumn {
+                sheet: canonical_sheet.clone(),
+                at,
+                count,
+            },
+            "delete_column" => ImpactOperation::DeleteColumn {
+                sheet: canonical_sheet.clone(),
+                at,
+                count,
+            },
+            _ => unreachable!(),
+        },
+    )?;
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: operation.kind.clone(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "at": at,
+                "count": count,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!{axis}:{at}"),
+            element_id: format!("{axis}:{canonical_sheet}:{at}"),
+            change: operation.kind.clone(),
+            before: None,
+            after: Some(count.to_string()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: vec!["refs parsed; values not evaluated".into()],
+        },
+    })
+}
+
+fn validate_sheet_operation(
+    source: &Path,
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "sheet structural edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    let package = fs::read(source).map_err(|error| DotallError::Format {
+        format_id: FORMAT_ID.into(),
+        path: source.into(),
+        message: error.to_string(),
+    })?;
+
+    match operation.kind.as_str() {
+        "add_sheet" => {
+            let name = required_sheet_name(&operation.payload, "name")?;
+            validate_new_sheet_name(&workbook, &name, None)?;
+            let after = optional_sheet_name(&operation.payload, "after")?
+                .map(|after| find_sheet(&workbook, &after).map(|sheet| sheet.name.clone()))
+                .transpose()?;
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "add_sheet".into(),
+                    payload: serde_json::json!({ "name": name, "after": after }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: name.clone(),
+                    element_id: format!("sheet:{name}"),
+                    change: "add_sheet".into(),
+                    before: None,
+                    after: Some(after.unwrap_or_else(|| "end".into())),
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["refs parsed; values not evaluated".into()],
+                },
+            })
+        }
+        "rename_sheet" => {
+            let from = required_sheet_name(&operation.payload, "from")?;
+            let to = required_sheet_name(&operation.payload, "to")?;
+            let canonical_from = find_sheet(&workbook, &from)?.name.clone();
+            validate_new_sheet_name(&workbook, &to, Some(&canonical_from))?;
+            crate::edits::writer::validate_rename_safety(&package, &canonical_from)?;
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "rename_sheet".into(),
+                    payload: serde_json::json!({ "from": canonical_from, "to": to }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: canonical_from.clone(),
+                    element_id: format!("sheet:{canonical_from}"),
+                    change: "rename_sheet".into(),
+                    before: Some(canonical_from),
+                    after: Some(to),
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["refs parsed; values not evaluated".into()],
+                },
+            })
+        }
+        "delete_sheet" => {
+            let name = required_sheet_name(&operation.payload, "name")?;
+            let canonical_name = find_sheet(&workbook, &name)?.name.clone();
+            let dependency_policy = parse_delete_sheet_policy(&operation.payload)?;
+            let references =
+                crate::edits::writer::delete_sheet_references(&package, &canonical_name)?;
+            if dependency_policy == DeleteSheetPolicy::RejectIfReferenced
+                && (!references.formula_cells.is_empty() || !references.defined_names.is_empty())
+            {
+                let mut inbound = references.formula_cells;
+                inbound.extend(references.defined_names);
+                return Err(format_error(format!(
+                    "delete_sheet `{canonical_name}` is referenced by: {}",
+                    inbound.join(", ")
+                )));
+            }
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "delete_sheet".into(),
+                    payload: serde_json::json!({
+                        "name": canonical_name,
+                        "dependency_policy": match dependency_policy {
+                            DeleteSheetPolicy::RejectIfReferenced => "reject_if_referenced",
+                            DeleteSheetPolicy::ReplaceReferencesWithRefError =>
+                                "replace_references_with_ref_error",
+                        },
+                    }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: canonical_name.clone(),
+                    element_id: format!("sheet:{canonical_name}"),
+                    change: "delete_sheet".into(),
+                    before: Some(canonical_name),
+                    after: None,
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["references are rewritten to #REF! on apply".into()],
+                },
+            })
+        }
+        _ => Err(format_error("unsupported sheet structural edit")),
+    }
+}
+
+fn parse_delete_sheet_policy(payload: &Value) -> Result<DeleteSheetPolicy> {
+    match payload
+        .get("dependency_policy")
+        .and_then(Value::as_str)
+        .unwrap_or("reject_if_referenced")
+    {
+        "reject_if_referenced" => Ok(DeleteSheetPolicy::RejectIfReferenced),
+        "replace_references_with_ref_error" => Ok(DeleteSheetPolicy::ReplaceReferencesWithRefError),
+        value => Err(format_error(format!(
+            "delete_sheet has unsupported dependency_policy `{value}`"
+        ))),
+    }
+}
+
 fn decode(model: &ArtifactEnvelope) -> Result<WorkbookModel> {
     if model.format_id != FORMAT_ID
         || model.schema_id != MODEL_SCHEMA_ID
@@ -85,7 +355,10 @@ fn parse_operations(
     let mut parsed = operations
         .iter()
         .map(|operation| parse_operation(workbook, operation))
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     parsed.sort_by(|left, right| {
         (
             left.resolved.sheet.as_str(),
@@ -116,11 +389,11 @@ fn parse_operations(
 fn parse_operation(
     workbook: &WorkbookModel,
     operation: &SemanticOperation,
-) -> Result<ParsedOperation> {
+) -> Result<Vec<ParsedOperation>> {
     match operation.kind.as_str() {
         "set_cell_value" => {
             let (resolved, value) = parse_cell_target(workbook, &operation.payload)?;
-            Ok(ParsedOperation {
+            Ok(vec![ParsedOperation {
                 op: XlsxEditOp::SetCellValue {
                     sheet: resolved.sheet.clone(),
                     address: resolved.address.clone(),
@@ -128,12 +401,12 @@ fn parse_operation(
                     value,
                 },
                 resolved,
-            })
+            }])
         }
         "set_cell_formula" => {
             let (resolved, formula) = parse_formula_target(workbook, &operation.payload)?;
             let formula = normalize_formula(&formula);
-            Ok(ParsedOperation {
+            Ok(vec![ParsedOperation {
                 op: XlsxEditOp::SetCellFormula {
                     sheet: resolved.sheet.clone(),
                     address: resolved.address.clone(),
@@ -141,12 +414,106 @@ fn parse_operation(
                     formula,
                 },
                 resolved,
-            })
+            }])
         }
+        "set_range" => parse_range(workbook, &operation.payload),
         kind => Err(format_error(format!(
-            "unsupported edit operation `{kind}`; supported: set_cell_value, set_cell_formula"
+            "unsupported edit operation `{kind}`; supported: set_cell_value, set_cell_formula, set_range"
         ))),
     }
+}
+
+fn parse_range(workbook: &WorkbookModel, payload: &Value) -> Result<Vec<ParsedOperation>> {
+    const MAX_RANGE_CELLS: usize = 10_000;
+    const EXCEL_MAX_ROWS: u32 = 1_048_576;
+    const EXCEL_MAX_COLS: u32 = 16_384;
+
+    let sheet_name = payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_range requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(workbook, sheet_name)?;
+    let start_cell = payload
+        .get("start_cell")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .ok_or_else(|| format_error("set_range requires a non-empty `start_cell` field"))?;
+    let start = parse_address(start_cell)?;
+    let rows = payload
+        .get("values")
+        .and_then(Value::as_array)
+        .filter(|rows| !rows.is_empty())
+        .ok_or_else(|| format_error("set_range requires a non-empty `values` matrix"))?;
+    let width = rows
+        .first()
+        .and_then(Value::as_array)
+        .filter(|row| !row.is_empty())
+        .map(Vec::len)
+        .ok_or_else(|| format_error("set_range rejects empty rows"))?;
+    if rows.iter().any(|row| {
+        row.as_array()
+            .is_none_or(|cells| cells.is_empty() || cells.len() != width)
+    }) {
+        return Err(format_error(
+            "set_range rejects empty rows and ragged matrices",
+        ));
+    }
+    let cell_count = rows
+        .len()
+        .checked_mul(width)
+        .ok_or_else(|| format_error("set_range exceeds the maximum cell count"))?;
+    if cell_count > MAX_RANGE_CELLS {
+        return Err(format_error(format!(
+            "set_range exceeds the maximum cell count of {MAX_RANGE_CELLS}"
+        )));
+    }
+    let end_row = start
+        .row
+        .checked_add((rows.len() - 1) as u32)
+        .ok_or_else(|| format_error("set_range exceeds Excel limits"))?;
+    let end_col = start
+        .col
+        .checked_add((width - 1) as u32)
+        .ok_or_else(|| format_error("set_range exceeds Excel limits"))?;
+    if end_row > EXCEL_MAX_ROWS || end_col > EXCEL_MAX_COLS {
+        return Err(format_error("set_range exceeds Excel limits"));
+    }
+
+    rows.iter()
+        .enumerate()
+        .flat_map(|(row_offset, row)| {
+            row.as_array()
+                .expect("validated rectangular matrix")
+                .iter()
+                .enumerate()
+                .map(move |(col_offset, value)| (row_offset, col_offset, value))
+        })
+        .map(|(row_offset, col_offset, value)| {
+            let row = start.row + row_offset as u32;
+            let col = start.col + col_offset as u32;
+            let address = format_address(CellAddress { row, col });
+            let resolved = resolve_by_sheet_address(workbook, &sheet.name, &address)?;
+            let editable = parse_editable_cell(value)?;
+            let op = match editable {
+                EditableCell::Value(value) => XlsxEditOp::SetCellValue {
+                    sheet: resolved.sheet.clone(),
+                    address: resolved.address.clone(),
+                    element_id: resolved.element_id.clone(),
+                    value,
+                },
+                EditableCell::Formula(formula) => XlsxEditOp::SetCellFormula {
+                    sheet: resolved.sheet.clone(),
+                    address: resolved.address.clone(),
+                    element_id: resolved.element_id.clone(),
+                    formula: normalize_formula(&formula),
+                },
+            };
+            Ok(ParsedOperation { op, resolved })
+        })
+        .collect()
 }
 
 fn parse_cell_target(
@@ -308,6 +675,110 @@ fn parse_editable_value(value: &Value) -> Result<EditableValue> {
     }
 }
 
+fn parse_editable_cell(value: &Value) -> Result<EditableCell> {
+    if let Some(object) = value.as_object() {
+        let kind = object.get("kind").and_then(Value::as_str);
+        return match kind {
+            Some("formula") => {
+                let formula = object
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|formula| !formula.is_empty())
+                    .ok_or_else(|| {
+                        format_error("set_range formula cells require a non-empty string value")
+                    })?;
+                Ok(EditableCell::Formula(formula.to_owned()))
+            }
+            Some("value") => Ok(EditableCell::Value(parse_editable_value(
+                object
+                    .get("value")
+                    .ok_or_else(|| format_error("set_range value cells require a `value` field"))?,
+            )?)),
+            Some(other) => Err(format_error(format!(
+                "set_range cell kind `{other}` must be `value` or `formula`"
+            ))),
+            None => Err(format_error(
+                "set_range object cells require a `kind` of `value` or `formula`",
+            )),
+        };
+    }
+    Ok(EditableCell::Value(parse_editable_value(value)?))
+}
+
+fn required_positive_u32(payload: &Value, field: &str) -> Result<u32> {
+    payload
+        .get(field)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            format_error(format!(
+                "structural edit requires a positive integer `{field}`"
+            ))
+        })
+}
+
+fn required_sheet_name(payload: &Value, field: &str) -> Result<String> {
+    let name = payload
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format_error(format!("sheet operation requires a string `{field}`")))?;
+    validate_sheet_name(name)?;
+    Ok(name.to_owned())
+}
+
+fn optional_sheet_name(payload: &Value, field: &str) -> Result<Option<String>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => {
+            validate_sheet_name(value)?;
+            Ok(Some(value.clone()))
+        }
+        _ => Err(format_error(format!(
+            "sheet operation requires `{field}` to be a string when present"
+        ))),
+    }
+}
+
+fn validate_sheet_name(name: &str) -> Result<()> {
+    if name.is_empty() || name.chars().count() > 31 {
+        return Err(format_error(
+            "Excel sheet names must contain between 1 and 31 characters",
+        ));
+    }
+    if name.starts_with('\'') || name.ends_with('\'') {
+        return Err(format_error(
+            "Excel sheet names cannot begin or end with an apostrophe",
+        ));
+    }
+    if name
+        .chars()
+        .any(|character| matches!(character, '[' | ']' | ':' | '*' | '?' | '/' | '\\'))
+    {
+        return Err(format_error(
+            "Excel sheet names cannot contain []:*?/\\ characters",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_new_sheet_name(
+    workbook: &WorkbookModel,
+    name: &str,
+    renamed_sheet: Option<&str>,
+) -> Result<()> {
+    if workbook.sheets.iter().any(|sheet| {
+        !renamed_sheet.is_some_and(|renamed| sheet.name.eq_ignore_ascii_case(renamed))
+            && sheet.name.eq_ignore_ascii_case(name)
+    }) {
+        return Err(format_error(format!(
+            "Excel sheet name `{name}` conflicts with an existing sheet (sheet names are case-insensitive)"
+        )));
+    }
+    Ok(())
+}
+
 fn normalize_formula(formula: &str) -> String {
     let trimmed = formula.trim();
     if trimmed.starts_with('=') {
@@ -335,6 +806,23 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
                 before: operation.resolved.formula.clone(),
                 after: Some(formula.clone()),
             },
+            XlsxEditOp::InsertRow { .. } => {
+                unreachable!("structural edits are validated separately")
+            }
+            XlsxEditOp::DeleteRow { .. } => {
+                unreachable!("structural edits are validated separately")
+            }
+            XlsxEditOp::InsertColumn { .. } | XlsxEditOp::DeleteColumn { .. } => {
+                unreachable!("structural edits are validated separately")
+            }
+            XlsxEditOp::SetRange { .. } => {
+                unreachable!("set_range is expanded into cell edits during validation")
+            }
+            XlsxEditOp::AddSheet { .. }
+            | XlsxEditOp::RenameSheet { .. }
+            | XlsxEditOp::DeleteSheet { .. } => {
+                unreachable!("sheet edits are validated separately")
+            }
         })
         .collect()
 }
@@ -425,6 +913,19 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
                 "formula": formula,
             }),
         },
+        XlsxEditOp::InsertRow { .. } => unreachable!("structural edits are validated separately"),
+        XlsxEditOp::DeleteRow { .. } => unreachable!("structural edits are validated separately"),
+        XlsxEditOp::InsertColumn { .. } | XlsxEditOp::DeleteColumn { .. } => {
+            unreachable!("structural edits are validated separately")
+        }
+        XlsxEditOp::SetRange { .. } => {
+            unreachable!("set_range is expanded into cell edits during validation")
+        }
+        XlsxEditOp::AddSheet { .. }
+        | XlsxEditOp::RenameSheet { .. }
+        | XlsxEditOp::DeleteSheet { .. } => {
+            unreachable!("sheet edits are validated separately")
+        }
     }
 }
 
