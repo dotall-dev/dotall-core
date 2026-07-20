@@ -17,7 +17,9 @@ pub(super) fn patch(
         .map(|operation| match operation {
             XlsxEditOp::SetCellValue { address, .. }
             | XlsxEditOp::SetCellFormula { address, .. } => (address.as_str(), operation),
-            XlsxEditOp::InsertRow { .. } => unreachable!("structural operations return before worksheet patching"),
+            XlsxEditOp::InsertRow { .. } | XlsxEditOp::SetRange { .. } => {
+                unreachable!("structural operations return before worksheet patching")
+            }
         })
         .collect::<BTreeMap<_, _>>();
     let mut reader = Reader::from_reader(xml);
@@ -108,7 +110,9 @@ pub(super) fn patch(
             let address = match operation {
                 XlsxEditOp::SetCellValue { address, .. }
                 | XlsxEditOp::SetCellFormula { address, .. } => address,
-                XlsxEditOp::InsertRow { .. } => unreachable!("structural operations return before worksheet patching"),
+                XlsxEditOp::InsertRow { .. } | XlsxEditOp::SetRange { .. } => {
+                    unreachable!("structural operations return before worksheet patching")
+                }
             };
             !found.contains(address)
         })
@@ -122,7 +126,9 @@ pub(super) fn patch(
         let address = match operation {
             XlsxEditOp::SetCellValue { address, .. }
             | XlsxEditOp::SetCellFormula { address, .. } => address,
-            XlsxEditOp::InsertRow { .. } => unreachable!("structural operations return before worksheet patching"),
+            XlsxEditOp::InsertRow { .. } | XlsxEditOp::SetRange { .. } => {
+                unreachable!("structural operations return before worksheet patching")
+            }
         };
         let row = row_number(address)?;
         rows.entry(row)
@@ -236,7 +242,9 @@ fn render_new_cell(
         XlsxEditOp::SetCellValue { address, .. } | XlsxEditOp::SetCellFormula { address, .. } => {
             address
         }
-        XlsxEditOp::InsertRow { .. } => unreachable!("structural operations return before worksheet patching"),
+        XlsxEditOp::InsertRow { .. } | XlsxEditOp::SetRange { .. } => {
+            unreachable!("structural operations return before worksheet patching")
+        }
     };
     render_cell_parts(address, "", operation, shared_string_indices)
 }
@@ -395,7 +403,7 @@ fn render_cell_parts(
                 escape(formula)
             ))
         }
-        XlsxEditOp::InsertRow { .. } => {
+        XlsxEditOp::InsertRow { .. } | XlsxEditOp::SetRange { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

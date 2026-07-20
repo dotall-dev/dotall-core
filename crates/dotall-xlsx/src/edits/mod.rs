@@ -3,7 +3,9 @@ mod ops;
 mod validate;
 pub(crate) mod writer;
 
-pub use ops::{EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp, format_cell_value};
+pub use ops::{
+    EditableCell, EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp, format_cell_value,
+};
 pub use validate::{validate, validate_with_source};
 
 pub(crate) fn parse_validated_operations(
@@ -42,6 +44,9 @@ pub(crate) fn parse_validated_operations(
                 at: required_positive_u32(operation, "at")?,
                 count: required_positive_u32(operation, "count")?,
             }),
+            "set_range" => Err(invalid_operation(
+                "validated set_range operations must be expanded into cell edits",
+            )),
             kind => Err(invalid_operation(format!(
                 "unsupported validated edit operation `{kind}`"
             ))),
@@ -59,7 +64,11 @@ fn required_positive_u32(
         .and_then(serde_json::Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
         .filter(|value| *value > 0)
-        .ok_or_else(|| invalid_operation(format!("validated edit operation requires positive `{field}`")))
+        .ok_or_else(|| {
+            invalid_operation(format!(
+                "validated edit operation requires positive `{field}`"
+            ))
+        })
 }
 
 fn required_string(

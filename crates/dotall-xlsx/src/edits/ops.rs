@@ -20,6 +20,11 @@ pub enum XlsxEditOp {
         element_id: String,
         formula: String,
     },
+    SetRange {
+        sheet: String,
+        start_cell: String,
+        values: Vec<Vec<EditableCell>>,
+    },
     InsertRow {
         sheet: String,
         at: u32,
@@ -34,6 +39,13 @@ pub enum EditableValue {
     Number(f64),
     Boolean(bool),
     Blank,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum EditableCell {
+    Value(EditableValue),
+    Formula(String),
 }
 
 impl EditableValue {

@@ -25,13 +25,15 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
 
     let original = fs::read(source).map_err(|error| source_error(source, error))?;
     let operations = parse_validated_operations(&edit.operations)?;
-    if operations
-        .iter()
-        .any(|operation| matches!(operation, XlsxEditOp::InsertRow { .. }))
-    {
+    if operations.iter().any(|operation| {
+        matches!(
+            operation,
+            XlsxEditOp::InsertRow { .. } | XlsxEditOp::SetRange { .. }
+        )
+    }) {
         return Err(DotallError::UnsupportedCapability {
             format_id: FORMAT_ID.into(),
-            capability: "insert_row".into(),
+            capability: "insert_row or unexpanded set_range".into(),
             available: vec!["set_cell_value".into(), "set_cell_formula".into()],
         });
     }
@@ -39,8 +41,12 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     let mut grouped = BTreeMap::<String, Vec<XlsxEditOp>>::new();
     for operation in operations {
         let sheet = match &operation {
-            XlsxEditOp::SetCellValue { sheet, .. } | XlsxEditOp::SetCellFormula { sheet, .. } => sheet,
-            XlsxEditOp::InsertRow { .. } => unreachable!("structural operations return above"),
+            XlsxEditOp::SetCellValue { sheet, .. } | XlsxEditOp::SetCellFormula { sheet, .. } => {
+                sheet
+            }
+            XlsxEditOp::InsertRow { .. } | XlsxEditOp::SetRange { .. } => {
+                unreachable!("structural operations return above")
+            }
         };
         grouped.entry(sheet.clone()).or_default().push(operation);
     }

@@ -12,7 +12,8 @@ use serde_json::Value;
 use crate::dependencies::{DependencyGraph, build};
 use crate::edits::impact::{ImpactOperation, validate_impact};
 use crate::edits::ops::{
-    EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp, format_cell_value, format_editable_value,
+    EditableCell, EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp, format_cell_value,
+    format_editable_value,
 };
 use crate::ids;
 use crate::model::{CellModel, CellValue, SCHEMA_ID as MODEL_SCHEMA_ID, WorkbookModel};
@@ -166,7 +167,10 @@ fn parse_operations(
     let mut parsed = operations
         .iter()
         .map(|operation| parse_operation(workbook, operation))
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     parsed.sort_by(|left, right| {
         (
             left.resolved.sheet.as_str(),
@@ -197,11 +201,11 @@ fn parse_operations(
 fn parse_operation(
     workbook: &WorkbookModel,
     operation: &SemanticOperation,
-) -> Result<ParsedOperation> {
+) -> Result<Vec<ParsedOperation>> {
     match operation.kind.as_str() {
         "set_cell_value" => {
             let (resolved, value) = parse_cell_target(workbook, &operation.payload)?;
-            Ok(ParsedOperation {
+            Ok(vec![ParsedOperation {
                 op: XlsxEditOp::SetCellValue {
                     sheet: resolved.sheet.clone(),
                     address: resolved.address.clone(),
@@ -209,12 +213,12 @@ fn parse_operation(
                     value,
                 },
                 resolved,
-            })
+            }])
         }
         "set_cell_formula" => {
             let (resolved, formula) = parse_formula_target(workbook, &operation.payload)?;
             let formula = normalize_formula(&formula);
-            Ok(ParsedOperation {
+            Ok(vec![ParsedOperation {
                 op: XlsxEditOp::SetCellFormula {
                     sheet: resolved.sheet.clone(),
                     address: resolved.address.clone(),
@@ -222,12 +226,106 @@ fn parse_operation(
                     formula,
                 },
                 resolved,
-            })
+            }])
         }
+        "set_range" => parse_range(workbook, &operation.payload),
         kind => Err(format_error(format!(
-            "unsupported edit operation `{kind}`; supported: set_cell_value, set_cell_formula"
+            "unsupported edit operation `{kind}`; supported: set_cell_value, set_cell_formula, set_range"
         ))),
     }
+}
+
+fn parse_range(workbook: &WorkbookModel, payload: &Value) -> Result<Vec<ParsedOperation>> {
+    const MAX_RANGE_CELLS: usize = 10_000;
+    const EXCEL_MAX_ROWS: u32 = 1_048_576;
+    const EXCEL_MAX_COLS: u32 = 16_384;
+
+    let sheet_name = payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_range requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(workbook, sheet_name)?;
+    let start_cell = payload
+        .get("start_cell")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .ok_or_else(|| format_error("set_range requires a non-empty `start_cell` field"))?;
+    let start = parse_address(start_cell)?;
+    let rows = payload
+        .get("values")
+        .and_then(Value::as_array)
+        .filter(|rows| !rows.is_empty())
+        .ok_or_else(|| format_error("set_range requires a non-empty `values` matrix"))?;
+    let width = rows
+        .first()
+        .and_then(Value::as_array)
+        .filter(|row| !row.is_empty())
+        .map(Vec::len)
+        .ok_or_else(|| format_error("set_range rejects empty rows"))?;
+    if rows.iter().any(|row| {
+        row.as_array()
+            .is_none_or(|cells| cells.is_empty() || cells.len() != width)
+    }) {
+        return Err(format_error(
+            "set_range rejects empty rows and ragged matrices",
+        ));
+    }
+    let cell_count = rows
+        .len()
+        .checked_mul(width)
+        .ok_or_else(|| format_error("set_range exceeds the maximum cell count"))?;
+    if cell_count > MAX_RANGE_CELLS {
+        return Err(format_error(format!(
+            "set_range exceeds the maximum cell count of {MAX_RANGE_CELLS}"
+        )));
+    }
+    let end_row = start
+        .row
+        .checked_add((rows.len() - 1) as u32)
+        .ok_or_else(|| format_error("set_range exceeds Excel limits"))?;
+    let end_col = start
+        .col
+        .checked_add((width - 1) as u32)
+        .ok_or_else(|| format_error("set_range exceeds Excel limits"))?;
+    if end_row > EXCEL_MAX_ROWS || end_col > EXCEL_MAX_COLS {
+        return Err(format_error("set_range exceeds Excel limits"));
+    }
+
+    rows.iter()
+        .enumerate()
+        .flat_map(|(row_offset, row)| {
+            row.as_array()
+                .expect("validated rectangular matrix")
+                .iter()
+                .enumerate()
+                .map(move |(col_offset, value)| (row_offset, col_offset, value))
+        })
+        .map(|(row_offset, col_offset, value)| {
+            let row = start.row + row_offset as u32;
+            let col = start.col + col_offset as u32;
+            let address = format_address(CellAddress { row, col });
+            let resolved = resolve_by_sheet_address(workbook, &sheet.name, &address)?;
+            let editable = parse_editable_cell(value)?;
+            let op = match editable {
+                EditableCell::Value(value) => XlsxEditOp::SetCellValue {
+                    sheet: resolved.sheet.clone(),
+                    address: resolved.address.clone(),
+                    element_id: resolved.element_id.clone(),
+                    value,
+                },
+                EditableCell::Formula(formula) => XlsxEditOp::SetCellFormula {
+                    sheet: resolved.sheet.clone(),
+                    address: resolved.address.clone(),
+                    element_id: resolved.element_id.clone(),
+                    formula: normalize_formula(&formula),
+                },
+            };
+            Ok(ParsedOperation { op, resolved })
+        })
+        .collect()
 }
 
 fn parse_cell_target(
@@ -389,6 +487,37 @@ fn parse_editable_value(value: &Value) -> Result<EditableValue> {
     }
 }
 
+fn parse_editable_cell(value: &Value) -> Result<EditableCell> {
+    if let Some(object) = value.as_object() {
+        let kind = object.get("kind").and_then(Value::as_str);
+        return match kind {
+            Some("formula") => {
+                let formula = object
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|formula| !formula.is_empty())
+                    .ok_or_else(|| {
+                        format_error("set_range formula cells require a non-empty string value")
+                    })?;
+                Ok(EditableCell::Formula(formula.to_owned()))
+            }
+            Some("value") => Ok(EditableCell::Value(parse_editable_value(
+                object
+                    .get("value")
+                    .ok_or_else(|| format_error("set_range value cells require a `value` field"))?,
+            )?)),
+            Some(other) => Err(format_error(format!(
+                "set_range cell kind `{other}` must be `value` or `formula`"
+            ))),
+            None => Err(format_error(
+                "set_range object cells require a `kind` of `value` or `formula`",
+            )),
+        };
+    }
+    Ok(EditableCell::Value(parse_editable_value(value)?))
+}
+
 fn required_positive_u32(payload: &Value, field: &str) -> Result<u32> {
     payload
         .get(field)
@@ -427,6 +556,9 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             },
             XlsxEditOp::InsertRow { .. } => {
                 unreachable!("structural edits are validated separately")
+            }
+            XlsxEditOp::SetRange { .. } => {
+                unreachable!("set_range is expanded into cell edits during validation")
             }
         })
         .collect()
@@ -519,6 +651,9 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
             }),
         },
         XlsxEditOp::InsertRow { .. } => unreachable!("structural edits are validated separately"),
+        XlsxEditOp::SetRange { .. } => {
+            unreachable!("set_range is expanded into cell edits during validation")
+        }
     }
 }
 

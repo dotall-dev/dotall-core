@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use dotall_core::registry::{
     ArtifactEnvelope, ArtifactSchema, Capability, DetectionProbe, DetectionScore, EditCapability,
-    FormatDescriptor, FormatHandler, Inspection, PatchedOutput, ReadRequest, ReadResponse, ReadSelector,
-    ReadSuggestion, SemanticOperation, ValidatedEdit,
+    FormatDescriptor, FormatHandler, Inspection, PatchedOutput, ReadRequest, ReadResponse,
+    ReadSelector, ReadSuggestion, SemanticOperation, ValidatedEdit,
 };
 use dotall_core::{DotallError, Result};
 use serde_json::json;
@@ -292,6 +292,24 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Sheet1", "address": "B1", "formula": "=A1*2" }
             }),
             safety: "Surgically patches the target worksheet and preserves unrelated OOXML parts."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_range".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description:
+                "Set a rectangular range of values and formulas without evaluating formulas.".into(),
+            example: json!({
+                "kind": "set_range",
+                "payload": {
+                    "sheet": "Sheet1",
+                    "start_cell": "A1",
+                    "values": [
+                        [1, { "kind": "formula", "value": "=A1*2" }]
+                    ]
+                }
+            }),
+            safety: "Validates the complete rectangle before one surgical worksheet patch pass."
                 .into(),
         },
     ]
