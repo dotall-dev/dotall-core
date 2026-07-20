@@ -21,6 +21,8 @@ pub(super) fn patch(
             | XlsxEditOp::DeleteRow { .. }
             | XlsxEditOp::InsertColumn { .. }
             | XlsxEditOp::DeleteColumn { .. }
+            | XlsxEditOp::AddSheet { .. }
+            | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::SetRange { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
@@ -118,6 +120,8 @@ pub(super) fn patch(
                 | XlsxEditOp::DeleteRow { .. }
                 | XlsxEditOp::InsertColumn { .. }
                 | XlsxEditOp::DeleteColumn { .. }
+                | XlsxEditOp::AddSheet { .. }
+                | XlsxEditOp::RenameSheet { .. }
                 | XlsxEditOp::SetRange { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
@@ -138,6 +142,8 @@ pub(super) fn patch(
             | XlsxEditOp::DeleteRow { .. }
             | XlsxEditOp::InsertColumn { .. }
             | XlsxEditOp::DeleteColumn { .. }
+            | XlsxEditOp::AddSheet { .. }
+            | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::SetRange { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
@@ -258,6 +264,8 @@ fn render_new_cell(
         | XlsxEditOp::DeleteRow { .. }
         | XlsxEditOp::InsertColumn { .. }
         | XlsxEditOp::DeleteColumn { .. }
+        | XlsxEditOp::AddSheet { .. }
+        | XlsxEditOp::RenameSheet { .. }
         | XlsxEditOp::SetRange { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
@@ -423,6 +431,8 @@ fn render_cell_parts(
         | XlsxEditOp::DeleteRow { .. }
         | XlsxEditOp::InsertColumn { .. }
         | XlsxEditOp::DeleteColumn { .. }
+        | XlsxEditOp::AddSheet { .. }
+        | XlsxEditOp::RenameSheet { .. }
         | XlsxEditOp::SetRange { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }

@@ -45,6 +45,14 @@ pub enum XlsxEditOp {
         at: u32,
         count: u32,
     },
+    AddSheet {
+        name: String,
+        after: Option<String>,
+    },
+    RenameSheet {
+        from: String,
+        to: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -15,6 +15,7 @@ use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
 use super::shared_strings;
 use super::structural;
+use super::workbook;
 use super::worksheet;
 
 pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
@@ -27,6 +28,32 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
 
     let original = fs::read(source).map_err(|error| source_error(source, error))?;
     let operations = parse_validated_operations(&edit.operations)?;
+    if let [XlsxEditOp::AddSheet { name, after }] = operations.as_slice() {
+        let patch = workbook::add_sheet(&original, name, after.as_deref())?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &BTreeSet::new(),
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [XlsxEditOp::RenameSheet { from, to }] = operations.as_slice() {
+        let patch = workbook::rename_sheet(&original, from, to)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &BTreeSet::new(),
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
     if let [
         operation @ (XlsxEditOp::InsertRow { .. }
         | XlsxEditOp::DeleteRow { .. }
@@ -96,7 +123,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 )?)?,
             );
         }
-        let bytes = rebuild_package(&original, &replacements, &removals)?;
+        let bytes = rebuild_package(&original, &replacements, &removals, &BTreeMap::new())?;
         return Ok(PatchedOutput {
             after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
             bytes,
@@ -109,6 +136,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::DeleteRow { .. }
                 | XlsxEditOp::InsertColumn { .. }
                 | XlsxEditOp::DeleteColumn { .. }
+                | XlsxEditOp::AddSheet { .. }
+                | XlsxEditOp::RenameSheet { .. }
                 | XlsxEditOp::SetRange { .. }
         )
     }) {
@@ -129,6 +158,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::DeleteRow { .. }
             | XlsxEditOp::InsertColumn { .. }
             | XlsxEditOp::DeleteColumn { .. }
+            | XlsxEditOp::AddSheet { .. }
+            | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::SetRange { .. } => {
                 unreachable!("structural operations return above")
             }
@@ -178,7 +209,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
         );
     }
 
-    let bytes = rebuild_package(&original, &replacements, &BTreeSet::new())?;
+    let bytes = rebuild_package(&original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes,
@@ -368,6 +399,7 @@ fn rebuild_package(
     original: &[u8],
     replacements: &BTreeMap<String, Vec<u8>>,
     removals: &BTreeSet<String>,
+    additions: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Vec<u8>> {
     let mut archive = ZipArchive::new(Cursor::new(original))
         .map_err(|error| writer_error(format!("invalid XLSX package: {error}")))?;
@@ -397,6 +429,14 @@ fn rebuild_package(
                 .raw_copy_file(entry)
                 .map_err(|error| writer_error(format!("cannot copy ZIP entry: {error}")))?;
         }
+    }
+    for (name, bytes) in additions {
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .map_err(|error| writer_error(format!("cannot start added ZIP entry: {error}")))?;
+        writer
+            .write_all(bytes)
+            .map_err(|error| writer_error(format!("cannot write added ZIP entry: {error}")))?;
     }
 
     writer

@@ -115,6 +115,8 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "delete_row",
             "insert_column",
             "delete_column",
+            "add_sheet",
+            "rename_sheet",
         ]
     );
     assert_eq!(

@@ -70,6 +70,11 @@ pub fn validate_with_source(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
+    if operations.iter().any(|operation| {
+        matches!(operation.kind.as_str(), "add_sheet" | "rename_sheet")
+    }) {
+        return validate_sheet_operation(source, model, operations);
+    }
     if operations.iter().all(|operation| {
         !matches!(
             operation.kind.as_str(),
@@ -181,6 +186,83 @@ pub fn validate_with_source(
             notes: vec!["refs parsed; values not evaluated".into()],
         },
     })
+}
+
+fn validate_sheet_operation(
+    source: &Path,
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "sheet structural edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    let package = fs::read(source).map_err(|error| DotallError::Format {
+        format_id: FORMAT_ID.into(),
+        path: source.into(),
+        message: error.to_string(),
+    })?;
+
+    match operation.kind.as_str() {
+        "add_sheet" => {
+            let name = required_sheet_name(&operation.payload, "name")?;
+            validate_new_sheet_name(&workbook, &name, None)?;
+            let after = optional_sheet_name(&operation.payload, "after")?
+                .map(|after| find_sheet(&workbook, &after).map(|sheet| sheet.name.clone()))
+                .transpose()?;
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "add_sheet".into(),
+                    payload: serde_json::json!({ "name": name, "after": after }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: name.clone(),
+                    element_id: format!("sheet:{name}"),
+                    change: "add_sheet".into(),
+                    before: None,
+                    after: Some(after.unwrap_or_else(|| "end".into())),
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["refs parsed; values not evaluated".into()],
+                },
+            })
+        }
+        "rename_sheet" => {
+            let from = required_sheet_name(&operation.payload, "from")?;
+            let to = required_sheet_name(&operation.payload, "to")?;
+            let canonical_from = find_sheet(&workbook, &from)?.name.clone();
+            validate_new_sheet_name(&workbook, &to, Some(&canonical_from))?;
+            crate::edits::writer::validate_rename_safety(&package, &canonical_from)?;
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "rename_sheet".into(),
+                    payload: serde_json::json!({ "from": canonical_from, "to": to }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: canonical_from.clone(),
+                    element_id: format!("sheet:{canonical_from}"),
+                    change: "rename_sheet".into(),
+                    before: Some(canonical_from),
+                    after: Some(to),
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["refs parsed; values not evaluated".into()],
+                },
+            })
+        }
+        _ => Err(format_error("unsupported sheet structural edit")),
+    }
 }
 
 fn decode(model: &ArtifactEnvelope) -> Result<WorkbookModel> {
@@ -576,6 +658,63 @@ fn required_positive_u32(payload: &Value, field: &str) -> Result<u32> {
         })
 }
 
+fn required_sheet_name(payload: &Value, field: &str) -> Result<String> {
+    let name = payload
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format_error(format!("sheet operation requires a string `{field}`")))?;
+    validate_sheet_name(name)?;
+    Ok(name.to_owned())
+}
+
+fn optional_sheet_name(payload: &Value, field: &str) -> Result<Option<String>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => {
+            validate_sheet_name(value)?;
+            Ok(Some(value.clone()))
+        }
+        _ => Err(format_error(format!(
+            "sheet operation requires `{field}` to be a string when present"
+        ))),
+    }
+}
+
+fn validate_sheet_name(name: &str) -> Result<()> {
+    if name.is_empty() || name.chars().count() > 31 {
+        return Err(format_error(
+            "Excel sheet names must contain between 1 and 31 characters",
+        ));
+    }
+    if name.starts_with('\'') || name.ends_with('\'') {
+        return Err(format_error(
+            "Excel sheet names cannot begin or end with an apostrophe",
+        ));
+    }
+    if name.chars().any(|character| matches!(character, '[' | ']' | ':' | '*' | '?' | '/' | '\\')) {
+        return Err(format_error(
+            "Excel sheet names cannot contain []:*?/\\ characters",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_new_sheet_name(
+    workbook: &WorkbookModel,
+    name: &str,
+    renamed_sheet: Option<&str>,
+) -> Result<()> {
+    if workbook.sheets.iter().any(|sheet| {
+        !renamed_sheet.is_some_and(|renamed| sheet.name.eq_ignore_ascii_case(renamed))
+            && sheet.name.eq_ignore_ascii_case(name)
+    }) {
+        return Err(format_error(format!(
+            "Excel sheet name `{name}` conflicts with an existing sheet (sheet names are case-insensitive)"
+        )));
+    }
+    Ok(())
+}
+
 fn normalize_formula(formula: &str) -> String {
     let trimmed = formula.trim();
     if trimmed.starts_with('=') {
@@ -614,6 +753,9 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             }
             XlsxEditOp::SetRange { .. } => {
                 unreachable!("set_range is expanded into cell edits during validation")
+            }
+            XlsxEditOp::AddSheet { .. } | XlsxEditOp::RenameSheet { .. } => {
+                unreachable!("sheet edits are validated separately")
             }
         })
         .collect()
@@ -712,6 +854,9 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         }
         XlsxEditOp::SetRange { .. } => {
             unreachable!("set_range is expanded into cell edits during validation")
+        }
+        XlsxEditOp::AddSheet { .. } | XlsxEditOp::RenameSheet { .. } => {
+            unreachable!("sheet edits are validated separately")
         }
     }
 }

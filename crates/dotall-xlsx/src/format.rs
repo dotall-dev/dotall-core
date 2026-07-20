@@ -344,6 +344,22 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Rejects unsupported structural impacts before surgically patching worksheets."
                 .into(),
         },
+        EditCapability {
+            operation: "add_sheet".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Add a blank worksheet, optionally after an existing sheet.".into(),
+            example: json!({ "kind": "add_sheet", "payload": { "name": "Data", "after": "Sheet1" } }),
+            safety: "Surgically patches workbook metadata and adds only the new worksheet part."
+                .into(),
+        },
+        EditCapability {
+            operation: "rename_sheet".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Rename a worksheet and rewrite supported sheet-qualified formulas.".into(),
+            example: json!({ "kind": "rename_sheet", "payload": { "from": "Sheet1", "to": "Data" } }),
+            safety: "Rejects charts, tables, defined names, and other unsupported parts that reference the renamed sheet."
+                .into(),
+        },
     ]
 }
 

@@ -60,6 +60,14 @@ pub(crate) fn parse_validated_operations(
                 at: required_positive_u32(operation, "at")?,
                 count: required_positive_u32(operation, "count")?,
             }),
+            "add_sheet" => Ok(XlsxEditOp::AddSheet {
+                name: required_string(operation, "name")?,
+                after: optional_string(operation, "after")?,
+            }),
+            "rename_sheet" => Ok(XlsxEditOp::RenameSheet {
+                from: required_string(operation, "from")?,
+                to: required_string(operation, "to")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
@@ -98,6 +106,19 @@ fn required_string(
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .ok_or_else(|| invalid_operation(format!("validated edit operation requires `{field}`")))
+}
+
+fn optional_string(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<Option<String>> {
+    match operation.payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
+        _ => Err(invalid_operation(format!(
+            "validated edit operation requires `{field}` to be a non-empty string when present"
+        ))),
+    }
 }
 
 fn invalid_operation(message: impl Into<String>) -> dotall_core::DotallError {
