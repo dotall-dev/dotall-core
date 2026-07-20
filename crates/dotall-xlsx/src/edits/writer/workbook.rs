@@ -211,7 +211,10 @@ pub(super) fn delete_sheet(package: &[u8], name: &str) -> Result<PackagePatch> {
 }
 
 pub(crate) fn validate_rename_safety(package: &[u8], from: &str) -> Result<()> {
-    let reference = sheet_reference_prefix(from);
+    let references = [
+        sheet_reference_prefix(from),
+        format!("'{}'!", from.replace('\'', "''")),
+    ];
     let mut archive = ZipArchive::new(Cursor::new(package))
         .map_err(|error| writer_error(format!("invalid XLSX package: {error}")))?;
     for index in 0..archive.len() {
@@ -226,7 +229,7 @@ pub(crate) fn validate_rename_safety(package: &[u8], from: &str) -> Result<()> {
         entry
             .read_to_string(&mut xml)
             .map_err(|error| writer_error(format!("cannot read `{path}`: {error}")))?;
-        if xml.contains(&reference) {
+        if references.iter().any(|reference| xml.contains(reference)) {
             return Err(writer_error(format!(
                 "rename_sheet is unsafe: `{path}` contains references to `{from}` that this writer does not rewrite"
             )));
@@ -933,5 +936,34 @@ fn writer_error(message: impl Into<String>) -> DotallError {
         format_id: FORMAT_ID.into(),
         path: "<xlsx workbook writer>".into(),
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use zip::ZipWriter;
+    use zip::write::SimpleFileOptions;
+
+    use super::validate_rename_safety;
+
+    #[test]
+    fn rename_safety_rejects_quoted_sheet_references_in_charts() {
+        let mut writer = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file("xl/charts/chart1.xml", SimpleFileOptions::default())
+            .expect("start chart entry");
+        writer
+            .write_all(
+                br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:f>'Inputs'!$A$1:$A$2</c:f></c:chartSpace>"#,
+            )
+            .expect("write chart entry");
+        let package = writer.finish().expect("finish package").into_inner();
+
+        let error = validate_rename_safety(&package, "Inputs")
+            .expect_err("quoted chart references must block sheet rename");
+
+        assert!(error.to_string().contains("xl/charts/chart1.xml"));
     }
 }

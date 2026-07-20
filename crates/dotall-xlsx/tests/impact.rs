@@ -193,6 +193,56 @@ fn structural_edits_reject_worksheet_features_and_chart_relationships() {
 }
 
 #[test]
+fn structural_edits_reject_shared_array_and_data_table_formulas() {
+    let operation = ImpactOperation::InsertRow {
+        sheet: "Inputs".into(),
+        at: 2,
+        count: 1,
+    };
+
+    for formula_type in ["shared", "array", "dataTable"] {
+        let package = worksheet_impact_fixture(&format!(
+            r#"<sheetData><row r="1"><c r="A1"><f t="{formula_type}" ref="A1:A2">A1</f><v>1</v></c></row></sheetData>"#
+        ));
+        let inventory = inventory(&package, &operation).expect("inventory package");
+
+        assert!(
+            inventory
+                .unsupported
+                .iter()
+                .any(|impact| impact.construct == format!("{formula_type} formula")),
+            "{formula_type} formulas must block structural edits: {:#?}",
+            inventory.unsupported
+        );
+        validate_impact(&package, &operation)
+            .expect_err("special formula types require an unsupported rewrite");
+    }
+}
+
+#[test]
+fn structural_edits_reject_page_breaks() {
+    let package = worksheet_impact_fixture(
+        r#"<sheetData/><rowBreaks count="1" manualBreakCount="1"><brk id="1" man="1"/></rowBreaks><colBreaks count="1" manualBreakCount="1"><brk id="1" man="1"/></colBreaks>"#,
+    );
+    let operation = ImpactOperation::InsertRow {
+        sheet: "Inputs".into(),
+        at: 2,
+        count: 1,
+    };
+
+    let inventory = inventory(&package, &operation).expect("inventory package");
+    let constructs = inventory
+        .unsupported
+        .iter()
+        .map(|impact| impact.construct.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(constructs.contains(&"rowBreaks"));
+    assert!(constructs.contains(&"colBreaks"));
+    validate_impact(&package, &operation).expect_err("page breaks require an unsupported rewrite");
+}
+
+#[test]
 fn delete_row_rejects_pivot_source_references() {
     let package = pivot_fixture("PivotData");
     let error = validate_impact(
@@ -383,6 +433,35 @@ fn structural_feature_fixture() -> Vec<u8> {
         (
             "xl/drawings/_rels/drawing1.xml.rels",
             r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/></Relationships>"#,
+        ),
+    ] {
+        writer
+            .start_file(path, options)
+            .expect("start fixture entry");
+        writer
+            .write_all(xml.as_bytes())
+            .expect("write fixture entry");
+    }
+    writer.finish().expect("finish fixture").into_inner()
+}
+
+fn worksheet_impact_fixture(worksheet_contents: &str) -> Vec<u8> {
+    let mut writer = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    for (path, xml) in [
+        (
+            "xl/workbook.xml",
+            r#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Inputs" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            &format!(
+                r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">{worksheet_contents}</worksheet>"#
+            ),
         ),
     ] {
         writer

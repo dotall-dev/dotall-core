@@ -22,6 +22,16 @@ pub(super) fn patch(
     let mut cursor = 0;
     while let Some(relative) = source[cursor..].find("<row") {
         let start = cursor + relative;
+        let name_end = start + "<row".len();
+        if source
+            .as_bytes()
+            .get(name_end)
+            .is_some_and(|byte| !matches!(*byte, b'>' | b'/' | b' ' | b'\t' | b'\r' | b'\n'))
+        {
+            output.push_str(&source[cursor..name_end]);
+            cursor = name_end;
+            continue;
+        }
         output.push_str(&source[cursor..start]);
         let tag_end = source[start..]
             .find('>')
@@ -214,5 +224,31 @@ fn error(message: impl Into<String>) -> DotallError {
         format_id: FORMAT_ID.into(),
         path: "<xlsx structural writer>".into(),
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_scanner_skips_row_breaks() {
+        let xml = br#"<worksheet><sheetData><row r="2"><c r="A2"><v>1</v></c></row></sheetData><rowBreaks count="1"><brk id="1"/></rowBreaks></worksheet>"#;
+
+        let patched = patch(
+            xml,
+            "Inputs",
+            "Inputs",
+            AxisChange::Insert {
+                axis: Axis::Row,
+                at: 2,
+                count: 1,
+            },
+        )
+        .expect("row breaks are not worksheet rows");
+
+        let patched = String::from_utf8(patched).expect("UTF-8 XML");
+        assert!(patched.contains(r#"<row r="3">"#));
+        assert!(patched.contains(r#"<rowBreaks count="1">"#));
     }
 }

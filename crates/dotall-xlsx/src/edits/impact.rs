@@ -163,6 +163,19 @@ fn unsupported_worksheet_constructs(
                     b"dataValidations" => Some("dataValidations"),
                     b"conditionalFormatting" => Some("conditionalFormatting"),
                     b"hyperlinks" => Some("hyperlinks"),
+                    b"rowBreaks" => Some("rowBreaks"),
+                    b"colBreaks" => Some("colBreaks"),
+                    b"f" => attributes(&element)?
+                        .get("t")
+                        .filter(|formula_type| {
+                            matches!(formula_type.as_str(), "shared" | "array" | "dataTable")
+                        })
+                        .map(|formula_type| match formula_type.as_str() {
+                            "shared" => "shared formula",
+                            "array" => "array formula",
+                            "dataTable" => "dataTable formula",
+                            _ => unreachable!(),
+                        }),
                     _ => None,
                 };
                 if let Some(construct) = construct {
