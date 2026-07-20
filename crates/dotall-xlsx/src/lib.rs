@@ -1,3 +1,4 @@
+pub mod dependencies;
 pub mod detection;
 pub mod format;
 pub mod ids;

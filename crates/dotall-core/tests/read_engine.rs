@@ -63,6 +63,26 @@ fn second_inspection_uses_cached_model_without_reparse() {
 }
 
 #[test]
+fn load_model_reuses_a_fresh_cached_model() {
+    let mut fixture = EngineFixture::new();
+
+    let first = fixture
+        .engine
+        .load_model("sample.stub")
+        .expect("cold model load");
+    let second = fixture
+        .engine
+        .load_model("sample.stub")
+        .expect("warm model load");
+
+    assert!(!first.model_cache_hit);
+    assert!(second.model_cache_hit);
+    assert_eq!(first.envelope, second.envelope);
+    assert_eq!(first.source_hash, second.source_hash);
+    assert_eq!(fixture.parse_count.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn inspection_normalizes_dot_relative_path_and_reuses_cached_model() {
     let mut fixture = EngineFixture::new();
 
