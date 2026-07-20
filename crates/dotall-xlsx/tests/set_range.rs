@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 
 use dotall_core::SemanticOperation;
 use dotall_core::registry::FormatHandler;
 use dotall_xlsx::{XlsxFormat, parse_workbook};
 use rust_xlsxwriter::Workbook;
 use tempfile::tempdir;
-use zip::ZipArchive;
+use zip::write::SimpleFileOptions;
+use zip::{ZipArchive, ZipWriter};
 
 #[test]
 fn patches_a_two_by_three_mixed_range_and_preserves_untouched_zip_entries() {
@@ -97,6 +98,68 @@ fn rejects_range_beyond_excel_limits() {
 }
 
 #[test]
+fn rejects_range_exceeding_maximum_cell_count() {
+    let handler = XlsxFormat;
+    let model = fixture_model(&handler);
+    let row = vec![1; 101];
+    let values: Vec<Vec<i32>> = vec![row; 101];
+
+    let error = handler
+        .validate_edit(
+            &model,
+            &[set_range("Inputs", "A1", serde_json::json!(values))],
+        )
+        .expect_err("oversized range must be rejected");
+
+    assert!(
+        error.to_string().contains("maximum cell count"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn leaves_source_unchanged_when_apply_fails_on_last_cell() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("workbook.xlsx");
+    write_atomicity_fixture(&source);
+    let before = range_cell_snapshot(&source);
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[set_range(
+                "Inputs",
+                "A1",
+                serde_json::json!([
+                    [10, 20, 30],
+                    [40, 50, 60]
+                ]),
+            )],
+        )
+        .expect("validate range edit");
+
+    replace_zip_entry(&source, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replacen(
+            r#"<c r="C2"><f>C1+1</f><v>0</v></c>"#,
+            r#"<c r="C2"><f t="shared" si="0" ref="C2:C3">C1+1</f><v>0</v></c>"#,
+            1,
+        )
+    });
+
+    let error = handler
+        .apply_edit(&source, &edit)
+        .expect_err("shared formula cell must fail apply");
+
+    assert!(
+        error.to_string().contains("shared"),
+        "unexpected error: {error}"
+    );
+    assert_eq!(range_cell_snapshot(&source), before);
+}
+
+#[test]
 fn rejects_duplicate_targets_between_range_and_cell_edits() {
     let handler = XlsxFormat;
     let model = fixture_model(&handler);
@@ -159,6 +222,65 @@ fn write_fixture(path: &std::path::Path) {
         .write_formula(0, 0, "=Inputs!A1")
         .expect("summary formula");
     workbook.save(path).expect("write fixture");
+}
+
+fn write_atomicity_fixture(path: &std::path::Path) {
+    let mut workbook = Workbook::new();
+    let inputs = workbook
+        .add_worksheet()
+        .set_name("Inputs")
+        .expect("sheet name");
+    inputs.write_number(0, 0, 1).expect("A1");
+    inputs.write_number(0, 1, 2).expect("B1");
+    inputs.write_number(0, 2, 3).expect("C1");
+    inputs.write_number(1, 0, 4).expect("A2");
+    inputs.write_number(1, 1, 5).expect("B2");
+    inputs
+        .write_formula(1, 2, "=C1+1")
+        .expect("C2 formula");
+    workbook.save(path).expect("write fixture");
+}
+
+fn range_cell_snapshot(path: &std::path::Path) -> BTreeMap<String, String> {
+    let workbook = parse_workbook(path).expect("parse fixture");
+    ["A1", "B1", "C1", "A2", "B2", "C2"]
+        .into_iter()
+        .map(|address| {
+            (
+                address.to_owned(),
+                cell_value(&workbook, "Inputs", address),
+            )
+        })
+        .collect()
+}
+
+fn replace_zip_entry(path: &std::path::Path, name: &str, replace: impl FnOnce(String) -> String) {
+    let source = fs::read(path).expect("fixture bytes");
+    let mut archive = ZipArchive::new(Cursor::new(source)).expect("open ZIP");
+    let mut output = ZipWriter::new(Cursor::new(Vec::new()));
+    let mut replace = Some(replace);
+
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).expect("ZIP entry");
+        let entry_name = entry.name().to_owned();
+        if entry_name == name {
+            let mut xml = String::new();
+            entry.read_to_string(&mut xml).expect("read worksheet XML");
+            let replacement = replace.take().expect("replace exactly once")(xml);
+            output
+                .start_file(
+                    entry_name,
+                    SimpleFileOptions::default().compression_method(entry.compression()),
+                )
+                .expect("start replacement entry");
+            output
+                .write_all(replacement.as_bytes())
+                .expect("write replacement entry");
+        } else {
+            output.raw_copy_file(entry).expect("copy ZIP entry");
+        }
+    }
+    fs::write(path, output.finish().expect("finish ZIP").into_inner()).expect("write fixture");
 }
 
 fn parse_workbook_bytes(bytes: &[u8], directory: &std::path::Path) -> dotall_xlsx::WorkbookModel {
