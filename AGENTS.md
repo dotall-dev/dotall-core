@@ -12,6 +12,9 @@ brainstorming notes live elsewhere.
 
 - `docs/specs/dotall-overview.md` — product thesis, architecture, `.all/` model.
 - `docs/specs/xlsx-engine-v0.md` — the current milestone: XLSX engine, CLI-first.
+- `docs/superpowers/specs/2026-07-21-mcp-agent-interface-design.md` — MCP tools,
+  flush-on-close, capabilities discovery.
+- `skills/xlsx/SKILL.md` — agent workflow for `.xlsx` via Dotall MCP.
 
 Specs are the source of truth. If code and spec disagree, fix one deliberately —
 don't silently drift.
@@ -39,7 +42,7 @@ dotall/
 │   ├── dotall-core/         # store, registry, pipeline, read, history, orchestration
 │   ├── dotall-xlsx/         # typed model, processors, views, edits, OOXML writer
 │   ├── dotall-cli/          # bin: `dotall`
-│   └── dotall-mcp/          # bin: stdio MCP server (added later)
+│   └── dotall-mcp/          # bin: stdio MCP server (`dotall-mcp`)
 ```
 
 Core concerns begin as strict internal modules. Promote one to a separate crate only
@@ -108,12 +111,25 @@ target parts in the `.xlsx` ZIP and leave every untouched part byte-for-byte. Th
 the moat — "agents break spreadsheets, we don't." Guard it with golden round-trip
 tests.
 
+## MCP (agents)
+
+Stdio MCP server over the same `Engine` as the CLI. Run from the workspace root:
+
+```bash
+cargo run -p dotall-mcp
+```
+
+Register the built binary in your MCP client. Before editing `.xlsx` files, read
+`skills/xlsx/SKILL.md` — discover capabilities at runtime, stage edits, apply
+explicitly or via flush-on-close (default).
+
 ## Build & test
 
 ```bash
 cargo build
 cargo test
 cargo run -p dotall-cli -- <args>
+cargo run -p dotall-mcp
 cargo fmt && cargo clippy
 ```
 
