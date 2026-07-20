@@ -19,6 +19,7 @@ pub(super) fn patch(xml: &[u8], operations: &[XlsxEditOp]) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
     let mut replacements = Vec::new();
     let mut found = BTreeSet::new();
+    let mut protected_formula_ranges = Vec::new();
 
     loop {
         let event = reader
@@ -36,6 +37,18 @@ pub(super) fn patch(xml: &[u8], operations: &[XlsxEditOp]) -> Result<Vec<u8>> {
                     .read_to_end_into(quick_xml::name::QName(&element_name), &mut end_buffer)
                     .map_err(|error| writer_error(format!("invalid cell XML: {error}")))?;
                 let end_offset = reader.buffer_position() as usize;
+                if let Some((formula_type, range)) =
+                    unsupported_formula(&xml[start_offset..end_offset])?
+                {
+                    if let Some(range) = range {
+                        protected_formula_ranges.push(range);
+                    }
+                    if edits.contains_key(address.as_str()) {
+                        return Err(writer_error(format!(
+                            "cannot edit cell `{address}` containing a {formula_type} formula"
+                        )));
+                    }
+                }
                 if let Some(operation) = edits.get(address.as_str()) {
                     replacements.push((
                         start_offset,
@@ -62,6 +75,17 @@ pub(super) fn patch(xml: &[u8], operations: &[XlsxEditOp]) -> Result<Vec<u8>> {
             _ => {}
         }
         buffer.clear();
+    }
+
+    for address in edits.keys() {
+        if protected_formula_ranges
+            .iter()
+            .any(|range| address_in_range(address, range))
+        {
+            return Err(writer_error(format!(
+                "cannot edit cell `{address}` because it belongs to a shared, array, or data table formula range"
+            )));
+        }
     }
 
     let mut patched = Vec::with_capacity(xml.len());
@@ -100,12 +124,7 @@ pub(super) fn patch(xml: &[u8], operations: &[XlsxEditOp]) -> Result<Vec<u8>> {
     }
     let mut new_rows = String::new();
     for (row, cells) in rows {
-        if let Some(row_start) = find_row(&patched, row) {
-            let row_end = patched[row_start..]
-                .windows(b"</row>".len())
-                .position(|window| window == b"</row>")
-                .map(|offset| row_start + offset)
-                .ok_or_else(|| writer_error(format!("worksheet row `{row}` is not closed")))?;
+        if let Some(row_end) = find_row_end(&patched, row)? {
             patched.splice(row_end..row_end, cells.bytes());
         } else {
             new_rows.push_str(&format!(r#"<row r="{row}">{cells}</row>"#));
@@ -168,10 +187,109 @@ fn row_number(address: &str) -> Result<u32> {
         .map_err(|_| writer_error(format!("invalid cell address `{address}`")))
 }
 
-fn find_row(xml: &[u8], row: u32) -> Option<usize> {
-    let prefix = format!(r#"<row r="{row}""#);
-    xml.windows(prefix.len())
-        .position(|window| window == prefix.as_bytes())
+fn find_row_end(xml: &[u8], target_row: u32) -> Result<Option<usize>> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut matching_row_open = false;
+
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| writer_error(format!("invalid worksheet XML: {error}")))?;
+        match event {
+            Event::Start(start) if start.name().as_ref() == b"row" => {
+                matching_row_open = row_reference(&start)? == target_row;
+            }
+            Event::Empty(start) if start.name().as_ref() == b"row" => {
+                if row_reference(&start)? == target_row {
+                    return Err(writer_error(format!(
+                        "cannot add a cell to self-closing worksheet row `{target_row}`"
+                    )));
+                }
+            }
+            Event::End(end) if end.name().as_ref() == b"row" && matching_row_open => {
+                let end_offset = reader.buffer_position() as usize;
+                return Ok(Some(end_offset - end.name().as_ref().len() - 3));
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn row_reference(start: &quick_xml::events::BytesStart<'_>) -> Result<u32> {
+    start
+        .attributes()
+        .filter_map(|attribute| attribute.ok())
+        .find(|attribute| attribute.key.as_ref() == b"r")
+        .map(|attribute| String::from_utf8_lossy(attribute.value.as_ref()).parse())
+        .ok_or_else(|| writer_error("worksheet row is missing its reference"))?
+        .map_err(|_| writer_error("worksheet row has an invalid reference"))
+}
+
+fn unsupported_formula(xml: &[u8]) -> Result<Option<(String, Option<String>)>> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| writer_error(format!("invalid cell XML: {error}")))?
+        {
+            Event::Start(start) | Event::Empty(start) if start.name().as_ref() == b"f" => {
+                let mut formula_type = None;
+                let mut range = None;
+                for attribute in start.attributes().flatten() {
+                    match attribute.key.as_ref() {
+                        b"t" => {
+                            formula_type =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
+                        b"ref" => {
+                            range =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(formula_type @ ("shared" | "array" | "dataTable")) =
+                    formula_type.as_deref()
+                {
+                    return Ok(Some((formula_type.to_owned(), range)));
+                }
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn address_in_range(address: &str, range: &str) -> bool {
+    let Some((start, end)) = range.split_once(':') else {
+        return address == range;
+    };
+    let Some((column, row)) = split_address(address) else {
+        return false;
+    };
+    let (Some((start_column, start_row)), Some((end_column, end_row))) =
+        (split_address(start), split_address(end))
+    else {
+        return false;
+    };
+    column >= start_column && column <= end_column && row >= start_row && row <= end_row
+}
+
+fn split_address(address: &str) -> Option<(u32, u32)> {
+    let letters = address
+        .chars()
+        .take_while(|character| character.is_ascii_alphabetic())
+        .collect::<String>();
+    let row = address.get(letters.len()..)?.parse().ok()?;
+    let column = letters.chars().try_fold(0_u32, |column, character| {
+        Some(column.checked_mul(26)? + (character.to_ascii_uppercase() as u32 - 'A' as u32 + 1))
+    })?;
+    Some((column, row))
 }
 
 fn render_cell_parts(
