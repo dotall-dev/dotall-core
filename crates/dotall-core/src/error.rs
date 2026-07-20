@@ -36,6 +36,13 @@ pub enum DotallError {
     #[error("source changed while it was being hashed: {0}")]
     SourceChangedDuringRead(PathBuf),
 
+    #[error("source hash mismatch for {path}: expected {expected}, found {actual}")]
+    SourceHashMismatch {
+        path: PathBuf,
+        expected: String,
+        actual: String,
+    },
+
     #[error("unsupported file format: {0}")]
     UnsupportedFormat(PathBuf),
 
