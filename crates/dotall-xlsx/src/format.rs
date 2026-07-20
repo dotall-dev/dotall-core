@@ -199,12 +199,8 @@ impl FormatHandler for XlsxFormat {
         edits::validate(model, operations)
     }
 
-    fn apply_edit(&self, _source: &Path, _edit: &ValidatedEdit) -> Result<PatchedOutput> {
-        Err(DotallError::UnsupportedCapability {
-            format_id: FORMAT_ID.into(),
-            capability: "apply_edit".into(),
-            available: AVAILABLE_READS.iter().map(|cap| (*cap).into()).collect(),
-        })
+    fn apply_edit(&self, source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
+        edits::writer::apply(source, edit)
     }
 }
 
