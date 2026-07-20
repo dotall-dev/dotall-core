@@ -48,7 +48,7 @@
    - Exit gate met: each operation is advertised only after its cross-part golden
      tests pass.
 
-6. [`2026-07-18-mcp-agent-interface.md`](2026-07-18-mcp-agent-interface.md)
+6. **Next — MCP** [`2026-07-21-mcp-agent-interface.md`](2026-07-21-mcp-agent-interface.md) (supersedes (2026-07-18-mcp-agent-interface.md)
    - Discoverable local stdio tools over the same core with structured errors and
      end-to-end agent-session tests.
    - Can start after plan 4; plan 5 capabilities appear automatically when ready.
