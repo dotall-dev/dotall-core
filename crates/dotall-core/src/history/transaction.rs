@@ -3,6 +3,23 @@ use uuid::Uuid;
 
 use crate::registry::{Actor, SemanticOperation, ValidatedEdit};
 
+/// Audit record written when a staged edit is discarded without apply.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CancelAudit {
+    #[serde(rename = "tx_id")]
+    pub tx_id: Uuid,
+    pub status: CancelStatus,
+    pub timestamp: String,
+    pub actor: Actor,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CancelStatus {
+    Cancelled,
+}
+
 /// Agent request to stage one or more semantic operations against a tracked object.
 ///
 /// Staging is the default path; apply is a separate Engine call. There is no

@@ -10,7 +10,7 @@ mod transaction;
 pub use lock::ApplyLock;
 pub(crate) use record::history_version_file_name;
 pub use record::{HistoryRecord, HistoryStatus, HistorySummary};
-pub use transaction::{EditRequest, StagedEdit};
+pub use transaction::{CancelAudit, CancelStatus, EditRequest, StagedEdit};
 
 #[cfg(test)]
 mod tests {

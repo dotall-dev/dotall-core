@@ -39,6 +39,60 @@ fn edit_stages_without_mutating_source() {
 }
 
 #[test]
+fn discard_writes_cancel_audit_and_clears_staged() {
+    let mut fixture = Fixture::new();
+    let hash = fixture.source_hash();
+    fixture
+        .engine
+        .edit("sample.stub", &request(hash, "updated", tx(1)))
+        .expect("stage");
+
+    fixture
+        .engine
+        .discard("sample.stub", tx(1))
+        .expect("discard");
+
+    assert!(
+        fixture
+            .engine
+            .staged("sample.stub")
+            .expect("staged")
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .engine
+            .history("sample.stub")
+            .expect("history")
+            .is_empty()
+    );
+
+    let cancel_path = fixture.root.join(format!(
+        ".all/objects/sample.stub/state/transactions/{}.cancel.json",
+        tx(1)
+    ));
+    assert!(cancel_path.is_file());
+    let audit: dotall_core::CancelAudit =
+        serde_json::from_slice(&fs::read(&cancel_path).expect("read cancel audit"))
+            .expect("parse cancel audit");
+    assert_eq!(audit.tx_id, tx(1));
+    assert_eq!(audit.status, dotall_core::CancelStatus::Cancelled);
+    assert_eq!(audit.reason, "discard");
+}
+
+#[test]
+fn discard_missing_transaction_errors() {
+    let mut fixture = Fixture::new();
+    let _ = fixture.source_hash();
+    let err = fixture
+        .engine
+        .discard("sample.stub", tx(1))
+        .expect_err("discard missing");
+
+    assert!(matches!(err, DotallError::StagedMissing { .. }));
+}
+
+#[test]
 fn apply_updates_source_history_and_model() {
     let mut fixture = Fixture::new();
     let hash = fixture.source_hash();

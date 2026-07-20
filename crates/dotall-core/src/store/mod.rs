@@ -10,7 +10,8 @@ use uuid::Uuid;
 use crate::error::{DotallError, Result};
 use crate::fingerprint::{Freshness, check_freshness, fingerprint};
 use crate::history::{
-    ApplyLock, HistoryRecord, HistorySummary, StagedEdit, history_version_file_name,
+    ApplyLock, CancelAudit, CancelStatus, HistoryRecord, HistorySummary, StagedEdit,
+    history_version_file_name,
 };
 use crate::manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 use crate::pipeline::{CachedArtifact, CachedDerived, CachedView, DerivationRecipe};
@@ -356,6 +357,28 @@ impl DotallStore {
     pub fn discard_staged(&self, relative_path: &str, tx_id: Uuid) -> Result<()> {
         let (key, _) = self.tracked_source(relative_path)?;
         let path = self.staging_path(&key, tx_id);
+        let Some(staged) = read_cached_json::<StagedEdit>(&path)? else {
+            return Err(DotallError::StagedMissing {
+                path: Path::new(relative_path).to_path_buf(),
+                tx_id: tx_id.to_string(),
+            });
+        };
+
+        let audit = CancelAudit {
+            tx_id,
+            status: CancelStatus::Cancelled,
+            timestamp: crate::read::now_unix_ms()?.to_string(),
+            actor: staged.actor,
+            reason: "discard".into(),
+        };
+        write_json(&self.cancel_path(&key, tx_id), &audit)?;
+        fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))
+    }
+
+    /// Removes a staged edit file without writing a cancel audit.
+    pub(crate) fn remove_staged(&self, relative_path: &str, tx_id: Uuid) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.staging_path(&key, tx_id);
         if path.is_file() {
             fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))?;
         }
@@ -446,9 +469,16 @@ impl DotallStore {
         {
             let entry = entry.map_err(|source| DotallError::io(&directory, source))?;
             let path = entry.path();
-            if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
-                records.push(read_required_json(&path, "transaction journal")?);
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
             }
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if file_name.ends_with(".cancel.json") {
+                continue;
+            }
+            records.push(read_required_json(&path, "transaction journal")?);
         }
         Ok(records)
     }
@@ -586,6 +616,11 @@ impl DotallStore {
 
     fn journal_path(&self, key: &str, tx_id: Uuid) -> PathBuf {
         self.transaction_dir(key).join(format!("{tx_id}.json"))
+    }
+
+    fn cancel_path(&self, key: &str, tx_id: Uuid) -> PathBuf {
+        self.transaction_dir(key)
+            .join(format!("{tx_id}.cancel.json"))
     }
 
     fn snapshot_path(&self, key: &str, hash: &str) -> PathBuf {

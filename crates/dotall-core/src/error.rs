@@ -77,6 +77,9 @@ pub enum DotallError {
     #[error("staged edit {tx_id} for {path} conflicts with an existing staged payload")]
     StagedConflict { path: PathBuf, tx_id: String },
 
+    #[error("staged edit {tx_id} is missing for {path}")]
+    StagedMissing { path: PathBuf, tx_id: String },
+
     #[error("apply lock is held for {path}")]
     LockBusy { path: PathBuf },
 
