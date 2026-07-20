@@ -1,7 +1,7 @@
 # XLSX Write + History Design
 
 **Date:** 2026-07-20  
-**Status:** Approved for planning  
+**Status:** Merge 1 implemented (polish complete); Merge 2 pending  
 **Related:**  
 - `docs/superpowers/specs/2026-07-19-xlsx-translation-ast-design.md`  
 - `docs/superpowers/plans/2026-07-18-xlsx-formula-dependencies.md`  

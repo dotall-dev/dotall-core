@@ -1,7 +1,7 @@
 # XLSX Merge 1 Polish Design
 
 **Date:** 2026-07-20  
-**Status:** Approved  
+**Status:** Complete  
 **PR:** https://github.com/dotall-dev/dotall-core/pull/4  
 **Related:** `docs/superpowers/specs/2026-07-20-xlsx-write-history-design.md`
 

@@ -46,9 +46,9 @@
 
 **Files:** roadmap / write-history notes; `tests/transactions.rs` if discard Engine path thin
 
-- [ ] **Step 1: Tests** — Engine discard leaves cancel audit and empty staged list.
-- [ ] **Step 2: Docs** — mark Merge 1 + polish done; next = Merge 2 broaden plan.
-- [ ] **Step 3: Commit** `docs: mark Merge 1 polish complete`
+- [x] **Step 1: Tests** — Engine discard leaves cancel audit and empty staged list (`transactions.rs::discard_writes_cancel_audit_and_clears_staged`).
+- [x] **Step 2: Docs** — mark Merge 1 + polish done; next = Merge 2 broaden plan.
+- [x] **Step 3: Commit** `docs: mark Merge 1 polish complete`
 
 ---
 
