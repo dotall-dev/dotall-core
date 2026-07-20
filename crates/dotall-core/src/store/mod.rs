@@ -371,8 +371,8 @@ impl DotallStore {
             actor: staged.actor,
             reason: "discard".into(),
         };
-        write_json(&self.cancel_path(&key, tx_id), &audit)?;
-        fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))
+        fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))?;
+        write_json(&self.cancel_path(&key, tx_id), &audit)
     }
 
     /// Removes a staged edit file without writing a cancel audit.
@@ -381,6 +381,10 @@ impl DotallStore {
         let path = self.staging_path(&key, tx_id);
         if path.is_file() {
             fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))?;
+        }
+        let cancel_path = self.cancel_path(&key, tx_id);
+        if cancel_path.is_file() {
+            fs::remove_file(&cancel_path).map_err(|source| DotallError::io(&cancel_path, source))?;
         }
         Ok(())
     }
