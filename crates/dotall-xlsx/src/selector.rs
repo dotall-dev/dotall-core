@@ -65,6 +65,10 @@ fn parse_range(value: &str) -> std::result::Result<(String, CellAddress, CellAdd
     ))
 }
 
+pub fn parse_cell_address(value: &str) -> std::result::Result<CellAddress, String> {
+    parse_address(value)
+}
+
 fn parse_address(value: &str) -> std::result::Result<CellAddress, String> {
     let value = value.trim().trim_matches('$');
     let letters = value
