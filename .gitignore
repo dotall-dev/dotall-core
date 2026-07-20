@@ -18,3 +18,4 @@
 # Env
 .env
 .env.*
+.worktrees/
