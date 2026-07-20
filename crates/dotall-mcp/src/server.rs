@@ -3,14 +3,18 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use clap::Parser;
-use dotall_core::registry::{Capability, FormatRegistry, ReadRequest, ReadSelector};
-use dotall_core::{DotallError, DotallStore, Engine, Result as DotallResult};
+use dotall_core::registry::{
+    Actor, ActorKind, Capability, FormatRegistry, ReadRequest, ReadSelector, SemanticOperation,
+};
+use dotall_core::{DotallError, DotallStore, EditRequest, Engine, Result as DotallResult};
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use serde_json::json;
+use uuid::Uuid;
 
 use crate::params::{
-    CapabilitiesParams, DepsParams, FileParams, InitParams, ReadParams, StatusParams,
+    ApplyParams, CapabilitiesParams, DepsParams, DiffParams, DiscardParams, EditParams, FileParams,
+    HistoryParams, InitParams, ReadParams, RevertParams, StagedParams, StatusParams,
 };
 use crate::response::{JsonResult, ToolResponse};
 use crate::tools::{blocking, relative_path_for_file};
@@ -289,6 +293,206 @@ impl DotallServer {
             .await,
         )
     }
+
+    #[tool(
+        name = "dotall_edit",
+        description = "Stage semantic edit operations only; this never applies source changes. Call capabilities or inspect first, use its operation names and payload examples, supply its required source hash, and reuse transaction_id for retries. Call staged then apply, or use the exact revert route returned after apply."
+    )]
+    pub async fn dotall_edit(
+        &self,
+        Parameters(params): Parameters<EditParams>,
+    ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
+        Json(
+            blocking(move || {
+                let session = server.session();
+                let mut session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
+                let request = EditRequest {
+                    transaction_id: optional_transaction_id(params.transaction_id)?,
+                    expected_source_hash: params.expected_source_hash,
+                    actor: Actor {
+                        kind: ActorKind::Mcp,
+                        id: Some(params.actor_id),
+                    },
+                    operations: params
+                        .operations
+                        .into_iter()
+                        .map(|operation| SemanticOperation {
+                            kind: operation.kind,
+                            payload: operation.payload,
+                        })
+                        .collect(),
+                };
+                json_result(
+                    serde_json::to_value(session.engine.edit(&relative, &request)?)
+                        .map_err(serialization_error)?,
+                )
+            })
+            .await,
+        )
+    }
+
+    #[tool(
+        name = "dotall_staged",
+        description = "List staged transactions for a file. Staged edits have not changed the source; apply one, apply all, discard, or leave them for flush-on-close."
+    )]
+    pub async fn dotall_staged(
+        &self,
+        Parameters(params): Parameters<StagedParams>,
+    ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
+        Json(
+            blocking(move || {
+                let session = server.session();
+                let session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
+                json_result(json!({ "edits": session.engine.staged(&relative)? }))
+            })
+            .await,
+        )
+    }
+
+    #[tool(
+        name = "dotall_apply",
+        description = "Apply exactly one staged transaction or all staged transactions for a file, creating immutable versions. Set exactly one of transaction_id or all: true."
+    )]
+    pub async fn dotall_apply(
+        &self,
+        Parameters(params): Parameters<ApplyParams>,
+    ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
+        Json(
+            blocking(move || {
+                let session = server.session();
+                let mut session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
+                match (params.transaction_id, params.all) {
+                    (Some(transaction_id), false) => {
+                        let transaction_id = parse_transaction_id(&transaction_id, "<apply>")?;
+                        json_result(
+                            serde_json::to_value(session.engine.apply(&relative, transaction_id)?)
+                                .map_err(serialization_error)?,
+                        )
+                    }
+                    (None, true) => {
+                        let staged = session.engine.staged(&relative)?;
+                        let mut applied = Vec::with_capacity(staged.len());
+                        for edit in staged {
+                            applied.push(session.engine.apply(&relative, edit.tx_id)?);
+                        }
+                        json_result(json!({ "applied": applied }))
+                    }
+                    _ => Err(invalid_request(
+                        "<apply>",
+                        "apply requires exactly one of transaction_id or all: true",
+                    )),
+                }
+            })
+            .await,
+        )
+    }
+
+    #[tool(
+        name = "dotall_discard",
+        description = "Discard one staged transaction without changing source bytes or committed history."
+    )]
+    pub async fn dotall_discard(
+        &self,
+        Parameters(params): Parameters<DiscardParams>,
+    ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
+        Json(
+            blocking(move || {
+                let session = server.session();
+                let session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
+                let transaction_id = parse_transaction_id(&params.transaction_id, "<discard>")?;
+                session.engine.discard(&relative, transaction_id)?;
+                json_result(json!({ "discarded": transaction_id }))
+            })
+            .await,
+        )
+    }
+
+    #[tool(
+        name = "dotall_history",
+        description = "List immutable committed versions for a file, including actor, hashes, and semantic-change summaries."
+    )]
+    pub async fn dotall_history(
+        &self,
+        Parameters(params): Parameters<HistoryParams>,
+    ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
+        Json(
+            blocking(move || {
+                let session = server.session();
+                let session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
+                json_result(json!({ "entries": session.engine.history(&relative)? }))
+            })
+            .await,
+        )
+    }
+
+    #[tool(
+        name = "dotall_diff",
+        description = "Return the ordered semantic changes recorded for one committed version."
+    )]
+    pub async fn dotall_diff(
+        &self,
+        Parameters(params): Parameters<DiffParams>,
+    ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
+        Json(
+            blocking(move || {
+                let session = server.session();
+                let session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
+                json_result(
+                    serde_json::to_value(session.engine.diff(&relative, params.version)?)
+                        .map_err(serialization_error)?,
+                )
+            })
+            .await,
+        )
+    }
+
+    #[tool(
+        name = "dotall_revert",
+        description = "Stage restoration of a committed version's pre-edit snapshot. This does not apply source changes: call apply with the returned transaction_id, or let flush-on-close apply it."
+    )]
+    pub async fn dotall_revert(
+        &self,
+        Parameters(params): Parameters<RevertParams>,
+    ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
+        Json(
+            blocking(move || {
+                let session = server.session();
+                let mut session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
+                let current = session.engine.inspect(&relative)?.source_hash;
+                if current != params.expected_source_hash {
+                    return Err(DotallError::SourceHashMismatch {
+                        path: PathBuf::from(&relative),
+                        expected: params.expected_source_hash,
+                        actual: current,
+                    });
+                }
+                let transaction_id = optional_transaction_id(params.transaction_id)?;
+                json_result(
+                    serde_json::to_value(session.engine.revert(
+                        &relative,
+                        params.version,
+                        transaction_id,
+                    )?)
+                    .map_err(serialization_error)?,
+                )
+            })
+            .await,
+        )
+    }
 }
 
 #[tool_handler(
@@ -314,6 +518,18 @@ fn invalid_request(path: impl Into<PathBuf>, reason: impl Into<String>) -> Dotal
         path: path.into(),
         reason: reason.into(),
     }
+}
+
+fn optional_transaction_id(transaction_id: Option<String>) -> DotallResult<Uuid> {
+    match transaction_id {
+        Some(transaction_id) => parse_transaction_id(&transaction_id, "<transaction_id>"),
+        None => Ok(Uuid::new_v4()),
+    }
+}
+
+fn parse_transaction_id(transaction_id: &str, path: &str) -> DotallResult<Uuid> {
+    Uuid::parse_str(transaction_id)
+        .map_err(|_| invalid_request(path, "transaction_id must be a UUID"))
 }
 
 fn lock_error<T>(_: std::sync::PoisonError<T>) -> DotallError {

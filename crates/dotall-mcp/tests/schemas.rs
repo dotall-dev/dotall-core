@@ -52,6 +52,19 @@ fn apply_schema_exposes_transaction_and_all_fields() {
 }
 
 #[test]
+fn diff_schema_matches_engine_version_lookup() {
+    let json = serde_json::to_value(schemars::schema_for!(DiffParams)).expect("schema JSON");
+    let properties = json["properties"].as_object().expect("properties");
+    let required = json["required"].as_array().expect("required");
+
+    assert!(properties.contains_key("file"));
+    assert!(properties.contains_key("version"));
+    assert!(!properties.contains_key("from_version"));
+    assert!(!properties.contains_key("to_version"));
+    assert!(required.iter().any(|value| value == "version"));
+}
+
+#[test]
 fn tool_response_schema_is_tagged_envelope() {
     let json =
         serde_json::to_value(schemars::schema_for!(ToolResponse<JsonResult>)).expect("schema JSON");

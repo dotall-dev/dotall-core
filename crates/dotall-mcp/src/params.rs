@@ -99,8 +99,8 @@ pub struct HistoryParams {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub struct DiffParams {
     pub file: String,
-    pub from_version: u64,
-    pub to_version: u64,
+    #[schemars(description = "Committed version whose semantic changes to return")]
+    pub version: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
