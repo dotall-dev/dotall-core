@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::registry::{Actor, DependencyImpact, SemanticChange, SemanticOperation};
 
 /// Compact agent-facing history entry returned by [`crate::DotallStore::list_history`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HistorySummary {
     pub version: u64,
     pub timestamp: String,
