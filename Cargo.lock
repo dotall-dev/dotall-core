@@ -399,6 +399,7 @@ dependencies = [
  "dotall-core",
  "dotall-xlsx",
  "rmcp",
+ "rust_xlsxwriter",
  "schemars",
  "serde",
  "serde_json",
