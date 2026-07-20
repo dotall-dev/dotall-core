@@ -9,6 +9,7 @@ use dotall_core::{DotallError, Result};
 use serde_json::json;
 
 use crate::detection;
+use crate::edits;
 use crate::model::{SCHEMA_ID, SCHEMA_VERSION, WorkbookModel};
 use crate::{FORMAT_ID, parser, projection, selector, structure};
 
@@ -192,14 +193,10 @@ impl FormatHandler for XlsxFormat {
 
     fn validate_edit(
         &self,
-        _model: &ArtifactEnvelope,
-        _operations: &[SemanticOperation],
+        model: &ArtifactEnvelope,
+        operations: &[SemanticOperation],
     ) -> Result<ValidatedEdit> {
-        Err(DotallError::UnsupportedCapability {
-            format_id: FORMAT_ID.into(),
-            capability: "validate_edit".into(),
-            available: AVAILABLE_READS.iter().map(|cap| (*cap).into()).collect(),
-        })
+        edits::validate(model, operations)
     }
 
     fn apply_edit(&self, _source: &Path, _edit: &ValidatedEdit) -> Result<PatchedOutput> {
