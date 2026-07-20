@@ -399,7 +399,7 @@ impl Engine {
         journal: &ApplyJournal,
     ) -> Result<AppliedEdit> {
         if let Some(record) = self.history_for_transaction(relative, staged.tx_id)? {
-            self.store.discard_staged(relative, staged.tx_id)?;
+            self.store.remove_staged(relative, staged.tx_id)?;
             self.store.discard_journal(relative, staged.tx_id)?;
             return Ok(applied_from_record(&record));
         }
@@ -424,7 +424,7 @@ impl Engine {
             revert_of: revert_of(&staged.preview),
         };
         let version = self.store.append_history(relative, &record)?;
-        self.store.discard_staged(relative, staged.tx_id)?;
+        self.store.remove_staged(relative, staged.tx_id)?;
         self.store.discard_journal(relative, staged.tx_id)?;
         Ok(AppliedEdit {
             tx_id: staged.tx_id,

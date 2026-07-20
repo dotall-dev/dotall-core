@@ -1,8 +1,8 @@
 use std::fs;
 
 use dotall_core::{
-    Actor, ActorKind, DependencyImpact, DotallError, DotallStore, HistoryRecord, HistoryStatus,
-    SemanticChange, SemanticOperation, StagedEdit, ValidatedEdit,
+    Actor, ActorKind, CancelAudit, CancelStatus, DependencyImpact, DotallError, DotallStore,
+    HistoryRecord, HistoryStatus, SemanticChange, SemanticOperation, StagedEdit, ValidatedEdit,
 };
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -140,6 +140,51 @@ fn list_and_discard_staged_edits() {
             .read_staged("book.xlsx", other_id)
             .expect("read other")
             .is_some()
+    );
+}
+
+#[test]
+fn discard_staged_writes_cancel_audit() {
+    let (temp, store, tx_id) = init_store_with_source();
+    let staged = sample_staged(tx_id, "hash_v1", "=A1*1.1");
+
+    store.stage_edit("book.xlsx", &staged).expect("stage");
+    store.discard_staged("book.xlsx", tx_id).expect("discard");
+
+    let cancel_path = temp.path().join(format!(
+        ".all/objects/book.xlsx/state/transactions/{tx_id}.cancel.json"
+    ));
+    assert!(cancel_path.is_file());
+    let audit: CancelAudit =
+        serde_json::from_slice(&fs::read(&cancel_path).expect("read cancel audit"))
+            .expect("parse cancel audit");
+    assert_eq!(audit.tx_id, tx_id);
+    assert_eq!(audit.status, CancelStatus::Cancelled);
+    assert_eq!(audit.actor, staged.actor);
+    assert_eq!(audit.reason, "discard");
+    assert!(!audit.timestamp.is_empty());
+
+    let history = store.list_history("book.xlsx").expect("list history");
+    assert!(history.is_empty());
+}
+
+#[test]
+fn discard_missing_staged_edit_errors() {
+    let (_temp, store, tx_id) = init_store_with_source();
+    let err = store
+        .discard_staged("book.xlsx", tx_id)
+        .expect_err("discard missing");
+
+    assert!(
+        matches!(
+            err,
+            DotallError::StagedMissing {
+                ref path,
+                ref tx_id
+            } if path == &std::path::PathBuf::from("book.xlsx")
+                && tx_id == "550e8400-e29b-41d4-a716-446655440000"
+        ),
+        "expected StagedMissing, got {err:?}"
     );
 }
 
