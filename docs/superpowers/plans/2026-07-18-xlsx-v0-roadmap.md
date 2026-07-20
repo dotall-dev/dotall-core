@@ -42,17 +42,17 @@
    - Exit gate met.
 
 5. **Done — Merge 2**
-   [`2026-07-18-broaden-xlsx-edit-operations.md`](2026-07-18-broaden-xlsx-edit-operations.md)
-   - Merge 2: `set_range`, row/column insertion/deletion, and sheet add/rename/delete
-     on the same transaction/history spine.
-   - Exit gate met: each operation is advertised only after its cross-part golden
-     tests pass.
+   [`2026-07-20-xlsx-merge2-structural.md`](2026-07-20-xlsx-merge2-structural.md)
+   - Structural ops on the transaction/history spine.
+   - Exit gate met.
 
-6. **Next — MCP** [`2026-07-21-mcp-agent-interface.md`](2026-07-21-mcp-agent-interface.md) (supersedes (2026-07-18-mcp-agent-interface.md)
-   - Discoverable local stdio tools over the same core with structured errors and
-     end-to-end agent-session tests.
-   - Can start after plan 4; plan 5 capabilities appear automatically when ready.
-   - Exit gate: an MCP client completes inspect → read → edit → history → revert
+6. **Next — MCP**
+   [`2026-07-21-mcp-agent-interface.md`](2026-07-21-mcp-agent-interface.md)
+   (supersedes [`2026-07-18-mcp-agent-interface.md`](2026-07-18-mcp-agent-interface.md);
+   design: [`2026-07-21-mcp-agent-interface-design.md`](../specs/2026-07-21-mcp-agent-interface-design.md))
+   - Stdio MCP over Engine; `capabilities` + `inspect`; flush-on-close default;
+     `skills/xlsx/` agent skill.
+   - Exit gate: MCP client completes inspect → read → edit → history → revert
      without protocol pollution.
 
 ## Revision checkpoints
