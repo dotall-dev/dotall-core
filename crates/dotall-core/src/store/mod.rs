@@ -9,7 +9,9 @@ use uuid::Uuid;
 
 use crate::error::{DotallError, Result};
 use crate::fingerprint::{Freshness, check_freshness, fingerprint};
-use crate::history::{ApplyLock, StagedEdit};
+use crate::history::{
+    ApplyLock, HistoryRecord, HistorySummary, StagedEdit, history_version_file_name,
+};
 use crate::manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 use crate::pipeline::{CachedArtifact, CachedDerived, CachedView, DerivationRecipe};
 use crate::read::AccessRecord;
@@ -387,6 +389,86 @@ impl DotallStore {
         Ok(hash)
     }
 
+    /// Appends one forensic history version under `state/edits/history/vNNN.json`.
+    ///
+    /// Versions are sequential starting at 1. The stored record's `version` field is
+    /// assigned from the manifest; callers may pass `0` as a placeholder.
+    pub fn append_history(&mut self, relative_path: &str, record: &HistoryRecord) -> Result<u64> {
+        let (key, object) = self.tracked_source(relative_path)?;
+        let next_version = object.version_count.saturating_add(1);
+        let history_dir = self.history_dir(&key);
+        fs::create_dir_all(&history_dir).map_err(|source| DotallError::io(&history_dir, source))?;
+
+        let path = self.history_version_path(&key, next_version);
+        if path.is_file() {
+            return Err(DotallError::HistoryVersionExists {
+                path: Path::new(relative_path).to_path_buf(),
+                version: next_version,
+            });
+        }
+
+        let persisted = HistoryRecord {
+            version: next_version,
+            ..record.clone()
+        };
+        write_json(&path, &persisted)?;
+
+        let mut next_manifest = self.manifest.clone();
+        let tracked =
+            next_manifest
+                .objects
+                .get_mut(&key)
+                .ok_or_else(|| DotallError::InvalidSourcePath {
+                    path: Path::new(relative_path).to_path_buf(),
+                    reason: "source is not tracked".to_owned(),
+                })?;
+        tracked.version_count = next_version;
+        write_json(&self.workspace.manifest_path(), &next_manifest)?;
+        self.manifest = next_manifest;
+        Ok(next_version)
+    }
+
+    /// Returns compact agent-facing history summaries in ascending version order.
+    pub fn list_history(&self, relative_path: &str) -> Result<Vec<HistorySummary>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let directory = self.history_dir(&key);
+        if !directory.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let mut summaries = Vec::new();
+        for entry in
+            fs::read_dir(&directory).map_err(|source| DotallError::io(&directory, source))?
+        {
+            let entry = entry.map_err(|source| DotallError::io(&directory, source))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !file_name.starts_with('v') {
+                continue;
+            }
+            let record: HistoryRecord = read_required_json(&path, "history record")?;
+            summaries.push(record.summary());
+        }
+
+        summaries.sort_by_key(|summary| summary.version);
+        Ok(summaries)
+    }
+
+    /// Loads one full forensic history record by version number.
+    pub fn get_history(&self, relative_path: &str, version: u64) -> Result<HistoryRecord> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.history_version_path(&key, version);
+        read_cached_json(&path)?.ok_or_else(|| DotallError::HistoryVersionMissing {
+            path: Path::new(relative_path).to_path_buf(),
+            version,
+        })
+    }
+
     fn tracked_source(&self, relative_path: &str) -> Result<(String, &TrackedObject)> {
         let (key, _) = resolve_source(&self.workspace, Path::new(relative_path))?;
         let object =
@@ -428,6 +510,15 @@ impl DotallStore {
         self.object_dir(key)
             .join("state/edits/history/snapshots")
             .join(format!("{hash}.bin"))
+    }
+
+    fn history_dir(&self, key: &str) -> PathBuf {
+        self.object_dir(key).join("state/edits/history")
+    }
+
+    fn history_version_path(&self, key: &str, version: u64) -> PathBuf {
+        self.history_dir(key)
+            .join(history_version_file_name(version))
     }
 }
 

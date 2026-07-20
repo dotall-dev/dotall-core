@@ -75,6 +75,12 @@ pub enum DotallError {
 
     #[error("snapshot {hash} is missing for {path}")]
     SnapshotMissing { path: PathBuf, hash: String },
+
+    #[error("history version {version} already exists for {path}")]
+    HistoryVersionExists { path: PathBuf, version: u64 },
+
+    #[error("history version {version} is missing for {path}")]
+    HistoryVersionMissing { path: PathBuf, version: u64 },
 }
 
 impl DotallError {

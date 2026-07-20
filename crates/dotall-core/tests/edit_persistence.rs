@@ -1,8 +1,8 @@
 use std::fs;
 
 use dotall_core::{
-    Actor, ActorKind, DependencyImpact, DotallError, DotallStore, SemanticChange,
-    SemanticOperation, StagedEdit, ValidatedEdit,
+    Actor, ActorKind, DependencyImpact, DotallError, DotallStore, HistoryRecord, HistoryStatus,
+    SemanticChange, SemanticOperation, StagedEdit, ValidatedEdit,
 };
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -188,4 +188,170 @@ fn write_snapshot_is_content_addressed_and_idempotent() {
     .expect("read snapshots dir")
     .collect();
     assert_eq!(entries.len(), 1);
+}
+
+fn sample_history_record(
+    version: u64,
+    tx_id: Uuid,
+    formula: &str,
+    timestamp: &str,
+    before_hash: &str,
+    after_hash: &str,
+) -> HistoryRecord {
+    HistoryRecord {
+        version,
+        tx_id,
+        status: HistoryStatus::Applied,
+        timestamp: timestamp.into(),
+        actor: Actor {
+            kind: ActorKind::Cli,
+            id: Some("dotall".into()),
+        },
+        ops: vec![SemanticOperation {
+            kind: "set_cell_formula".into(),
+            payload: serde_json::json!({
+                "sheet": "Revenue",
+                "address": "B12",
+                "formula": formula
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: "Revenue!B12".into(),
+            element_id: "c_rev_b12".into(),
+            change: "formula".into(),
+            before: Some("=A1".into()),
+            after: Some(formula.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: vec!["Revenue!C12".into()],
+            notes: vec![],
+        },
+        before_source_hash: before_hash.into(),
+        after_source_hash: after_hash.into(),
+        snapshot_ref: "snap_hash".into(),
+        revert_of: None,
+    }
+}
+
+#[test]
+fn append_history_writes_sequential_versions() {
+    let (temp, mut store, tx_id) = init_store_with_source();
+    let v1 = sample_history_record(
+        0,
+        tx_id,
+        "=A1*1.1",
+        "2026-07-20T10:15:30Z",
+        "abc123",
+        "def456",
+    );
+
+    let version = store.append_history("book.xlsx", &v1).expect("append v1");
+    assert_eq!(version, 1);
+
+    let other_id = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").expect("uuid");
+    let v2 = sample_history_record(
+        0,
+        other_id,
+        "=A1*2.0",
+        "2026-07-20T11:00:00Z",
+        "def456",
+        "ghi789",
+    );
+    let version2 = store.append_history("book.xlsx", &v2).expect("append v2");
+    assert_eq!(version2, 2);
+
+    assert!(
+        temp.path()
+            .join(".all/objects/book.xlsx/state/edits/history/v001.json")
+            .is_file()
+    );
+    assert!(
+        temp.path()
+            .join(".all/objects/book.xlsx/state/edits/history/v002.json")
+            .is_file()
+    );
+    assert_eq!(
+        store
+            .manifest()
+            .objects
+            .get("book.xlsx")
+            .expect("tracked")
+            .version_count,
+        2
+    );
+}
+
+#[test]
+fn list_history_returns_compact_summaries() {
+    let (_temp, mut store, tx_id) = init_store_with_source();
+    let v1 = sample_history_record(
+        0,
+        tx_id,
+        "=A1*1.1",
+        "2026-07-20T10:15:30Z",
+        "abc123",
+        "def456",
+    );
+    let other_id = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").expect("uuid");
+    let v2 = sample_history_record(
+        0,
+        other_id,
+        "=A1*2.0",
+        "2026-07-20T11:00:00Z",
+        "def456",
+        "ghi789",
+    );
+
+    store.append_history("book.xlsx", &v1).expect("append v1");
+    store.append_history("book.xlsx", &v2).expect("append v2");
+
+    let summaries = store.list_history("book.xlsx").expect("list history");
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(summaries[0].version, 1);
+    assert_eq!(summaries[0].timestamp, "2026-07-20T10:15:30Z");
+    assert_eq!(summaries[0].actor.kind, ActorKind::Cli);
+    assert_eq!(summaries[0].op_count, 1);
+    assert_eq!(summaries[0].summary, "set_cell_formula Revenue!B12");
+    assert_eq!(summaries[1].version, 2);
+    assert_eq!(summaries[1].summary, "set_cell_formula Revenue!B12");
+}
+
+#[test]
+fn get_history_returns_forensic_record() {
+    let (_temp, mut store, tx_id) = init_store_with_source();
+    let v1 = sample_history_record(
+        0,
+        tx_id,
+        "=A1*1.1",
+        "2026-07-20T10:15:30Z",
+        "abc123",
+        "def456",
+    );
+    store.append_history("book.xlsx", &v1).expect("append v1");
+
+    let loaded = store.get_history("book.xlsx", 1).expect("get history");
+    assert_eq!(loaded.version, 1);
+    assert_eq!(loaded.tx_id, tx_id);
+    assert_eq!(loaded.status, HistoryStatus::Applied);
+    assert_eq!(loaded.timestamp, "2026-07-20T10:15:30Z");
+    assert_eq!(loaded.ops, v1.ops);
+    assert_eq!(loaded.semantic_diff, v1.semantic_diff);
+    assert_eq!(loaded.dependency_impact, v1.dependency_impact);
+    assert_eq!(loaded.before_source_hash, "abc123");
+    assert_eq!(loaded.after_source_hash, "def456");
+    assert_eq!(loaded.snapshot_ref, "snap_hash");
+}
+
+#[test]
+fn discard_staged_does_not_append_history() {
+    let (_temp, store, tx_id) = init_store_with_source();
+    let staged = sample_staged(tx_id, "hash_v1", "=A1*1.1");
+
+    store.stage_edit("book.xlsx", &staged).expect("stage");
+    store
+        .discard_staged("book.xlsx", tx_id)
+        .expect("discard staged");
+
+    let history = store.list_history("book.xlsx").expect("list history");
+    assert!(history.is_empty());
 }
