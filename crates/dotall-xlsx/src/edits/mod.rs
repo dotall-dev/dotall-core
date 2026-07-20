@@ -1,9 +1,10 @@
+pub mod impact;
 mod ops;
 mod validate;
 pub(crate) mod writer;
 
 pub use ops::{EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp, format_cell_value};
-pub use validate::validate;
+pub use validate::{validate, validate_with_source};
 
 pub(crate) fn parse_validated_operations(
     operations: &[dotall_core::SemanticOperation],
@@ -36,11 +37,29 @@ pub(crate) fn parse_validated_operations(
                 element_id: required_string(operation, "element_id")?,
                 formula: required_string(operation, "formula")?,
             }),
+            "insert_row" => Ok(XlsxEditOp::InsertRow {
+                sheet: required_string(operation, "sheet")?,
+                at: required_positive_u32(operation, "at")?,
+                count: required_positive_u32(operation, "count")?,
+            }),
             kind => Err(invalid_operation(format!(
                 "unsupported validated edit operation `{kind}`"
             ))),
         })
         .collect()
+}
+
+fn required_positive_u32(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<u32> {
+    operation
+        .payload
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| invalid_operation(format!("validated edit operation requires positive `{field}`")))
 }
 
 fn required_string(

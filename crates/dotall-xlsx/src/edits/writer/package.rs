@@ -25,13 +25,22 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
 
     let original = fs::read(source).map_err(|error| source_error(source, error))?;
     let operations = parse_validated_operations(&edit.operations)?;
+    if operations
+        .iter()
+        .any(|operation| matches!(operation, XlsxEditOp::InsertRow { .. }))
+    {
+        return Err(DotallError::UnsupportedCapability {
+            format_id: FORMAT_ID.into(),
+            capability: "insert_row".into(),
+            available: vec!["set_cell_value".into(), "set_cell_formula".into()],
+        });
+    }
     let worksheet_paths = worksheet_paths(&original)?;
     let mut grouped = BTreeMap::<String, Vec<XlsxEditOp>>::new();
     for operation in operations {
         let sheet = match &operation {
-            XlsxEditOp::SetCellValue { sheet, .. } | XlsxEditOp::SetCellFormula { sheet, .. } => {
-                sheet
-            }
+            XlsxEditOp::SetCellValue { sheet, .. } | XlsxEditOp::SetCellFormula { sheet, .. } => sheet,
+            XlsxEditOp::InsertRow { .. } => unreachable!("structural operations return above"),
         };
         grouped.entry(sheet.clone()).or_default().push(operation);
     }

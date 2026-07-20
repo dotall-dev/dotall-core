@@ -20,6 +20,11 @@ pub enum XlsxEditOp {
         element_id: String,
         formula: String,
     },
+    InsertRow {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

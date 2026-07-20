@@ -10,11 +10,21 @@ pub struct DetectionProbe<'a> {
     pub prefix: &'a [u8],
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FormatDescriptor {
     pub id: String,
     pub version: String,
     pub capabilities: Vec<Capability>,
+    pub edit_capabilities: Vec<EditCapability>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditCapability {
+    pub operation: String,
+    pub schema_version: u32,
+    pub description: String,
+    pub example: serde_json::Value,
+    pub safety: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +55,7 @@ pub struct Inspection {
     pub format_id: String,
     pub summary: serde_json::Value,
     pub capabilities: Vec<Capability>,
+    pub edit_capabilities: Vec<EditCapability>,
     pub suggested_reads: Vec<ReadSuggestion>,
 }
 

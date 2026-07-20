@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 use dotall_core::{
@@ -8,6 +10,7 @@ use dotall_core::{
 use serde_json::Value;
 
 use crate::dependencies::{DependencyGraph, build};
+use crate::edits::impact::{ImpactOperation, validate_impact};
 use crate::edits::ops::{
     EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp, format_cell_value, format_editable_value,
 };
@@ -53,6 +56,80 @@ pub fn validate(
             .collect(),
         semantic_diff,
         dependency_impact,
+    })
+}
+
+/// Validates operations that require package-level impact analysis before staging.
+///
+/// Cell edits remain model-only. Structural operations additionally inspect the
+/// source OOXML package so they can reject unsupported impacted parts before the
+/// transaction is journaled.
+pub fn validate_with_source(
+    source: &Path,
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.iter().all(|operation| operation.kind != "insert_row") {
+        return validate(model, operations);
+    }
+    if operations.len() != 1 || operations[0].kind != "insert_row" {
+        return Err(format_error(
+            "insert_row cannot be combined with other operations until structural apply is implemented",
+        ));
+    }
+
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    let sheet = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("insert_row requires a non-empty `sheet` field"))?;
+    find_sheet(&workbook, sheet)?;
+    let at = required_positive_u32(&operation.payload, "at")?;
+    let count = required_positive_u32(&operation.payload, "count")?;
+    if at > 1_048_576 {
+        return Err(format_error("insert_row `at` must not exceed 1048576"));
+    }
+    let package = fs::read(source).map_err(|error| DotallError::Format {
+        format_id: FORMAT_ID.into(),
+        path: source.into(),
+        message: error.to_string(),
+    })?;
+    validate_impact(
+        &package,
+        &ImpactOperation::InsertRow {
+            sheet: sheet.into(),
+            at,
+            count,
+        },
+    )?;
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_row".into(),
+            payload: serde_json::json!({
+                "sheet": sheet,
+                "at": at,
+                "count": count,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{sheet}!row:{at}"),
+            element_id: format!("row:{sheet}:{at}"),
+            change: "insert_row".into(),
+            before: None,
+            after: Some(count.to_string()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: vec!["structural apply is not implemented; impact inventory passed".into()],
+        },
     })
 }
 
@@ -308,6 +385,15 @@ fn parse_editable_value(value: &Value) -> Result<EditableValue> {
     }
 }
 
+fn required_positive_u32(payload: &Value, field: &str) -> Result<u32> {
+    payload
+        .get(field)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| format_error(format!("insert_row requires a positive integer `{field}`")))
+}
+
 fn normalize_formula(formula: &str) -> String {
     let trimmed = formula.trim();
     if trimmed.starts_with('=') {
@@ -335,6 +421,7 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
                 before: operation.resolved.formula.clone(),
                 after: Some(formula.clone()),
             },
+            XlsxEditOp::InsertRow { .. } => unreachable!("structural edits are validated separately"),
         })
         .collect()
 }
@@ -425,6 +512,7 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
                 "formula": formula,
             }),
         },
+        XlsxEditOp::InsertRow { .. } => unreachable!("structural edits are validated separately"),
     }
 }
 

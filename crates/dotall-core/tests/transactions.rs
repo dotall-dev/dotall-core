@@ -365,6 +365,7 @@ impl FormatHandler for StubFormat {
             id: "stub".into(),
             version: "1".into(),
             capabilities: vec![Capability::Inspect, Capability::ReadFull],
+            edit_capabilities: Vec::new(),
         }
     }
 

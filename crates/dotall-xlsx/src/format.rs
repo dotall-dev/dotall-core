@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use dotall_core::registry::{
-    ArtifactEnvelope, ArtifactSchema, Capability, DetectionProbe, DetectionScore, FormatDescriptor,
-    FormatHandler, Inspection, PatchedOutput, ReadRequest, ReadResponse, ReadSelector,
+    ArtifactEnvelope, ArtifactSchema, Capability, DetectionProbe, DetectionScore, EditCapability,
+    FormatDescriptor, FormatHandler, Inspection, PatchedOutput, ReadRequest, ReadResponse, ReadSelector,
     ReadSuggestion, SemanticOperation, ValidatedEdit,
 };
 use dotall_core::{DotallError, Result};
@@ -26,6 +26,7 @@ impl FormatHandler for XlsxFormat {
             id: FORMAT_ID.into(),
             version: SCHEMA_VERSION.to_string(),
             capabilities: capabilities(),
+            edit_capabilities: edit_capabilities(),
         }
     }
 
@@ -105,6 +106,7 @@ impl FormatHandler for XlsxFormat {
                 "structure": structure,
             }),
             capabilities: capabilities(),
+            edit_capabilities: edit_capabilities(),
             suggested_reads,
         })
     }
@@ -199,6 +201,15 @@ impl FormatHandler for XlsxFormat {
         edits::validate(model, operations)
     }
 
+    fn validate_edit_with_source(
+        &self,
+        source: &Path,
+        model: &ArtifactEnvelope,
+        operations: &[SemanticOperation],
+    ) -> Result<ValidatedEdit> {
+        edits::validate_with_source(source, model, operations)
+    }
+
     fn apply_edit(&self, source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
         edits::writer::apply(source, edit)
     }
@@ -255,6 +266,33 @@ fn capabilities() -> Vec<Capability> {
         },
         Capability::ReadSelector {
             kind: "ast_range".into(),
+        },
+    ]
+}
+
+fn edit_capabilities() -> Vec<EditCapability> {
+    vec![
+        EditCapability {
+            operation: "set_cell_value".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set a cell to a string, number, boolean, or blank value.".into(),
+            example: json!({
+                "kind": "set_cell_value",
+                "payload": { "sheet": "Sheet1", "address": "A1", "value": 42 }
+            }),
+            safety: "Surgically patches the target worksheet and preserves unrelated OOXML parts."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_cell_formula".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set a cell formula without evaluating it.".into(),
+            example: json!({
+                "kind": "set_cell_formula",
+                "payload": { "sheet": "Sheet1", "address": "B1", "formula": "=A1*2" }
+            }),
+            safety: "Surgically patches the target worksheet and preserves unrelated OOXML parts."
+                .into(),
         },
     ]
 }

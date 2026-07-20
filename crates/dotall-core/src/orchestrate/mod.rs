@@ -187,9 +187,10 @@ impl Engine {
             });
         }
 
+        let (_, source) = resolve_source(self.store.workspace(), Path::new(relative))?;
         let preview = loaded
             .handler
-            .validate_edit(&loaded.model, &request.operations)?;
+            .validate_edit_with_source(&source, &loaded.model, &request.operations)?;
         let staged = StagedEdit {
             tx_id: request.transaction_id,
             preview,

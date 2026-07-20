@@ -26,6 +26,18 @@ pub trait FormatHandler: Send + Sync {
         operations: &[SemanticOperation],
     ) -> Result<ValidatedEdit>;
 
+    /// Allows formats with package-level safety checks to inspect source bytes
+    /// while preserving model-only validation for formats that do not need it.
+    fn validate_edit_with_source(
+        &self,
+        source: &Path,
+        model: &ArtifactEnvelope,
+        operations: &[SemanticOperation],
+    ) -> Result<ValidatedEdit> {
+        let _ = source;
+        self.validate_edit(model, operations)
+    }
+
     fn apply_edit(&self, source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput>;
 }
 
@@ -67,6 +79,7 @@ mod tests {
                 id: self.0.into(),
                 version: "1".into(),
                 capabilities: vec![Capability::Inspect],
+                edit_capabilities: Vec::new(),
             }
         }
 

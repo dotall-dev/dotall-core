@@ -102,6 +102,14 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
     assert_eq!(inspection.summary["sheets"][0]["formula_count"], 1);
     assert_eq!(inspection.summary["preserved"][0], "charts");
     assert_eq!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .map(|capability| capability.operation.as_str())
+            .collect::<Vec<_>>(),
+        vec!["set_cell_value", "set_cell_formula"]
+    );
+    assert_eq!(
         inspection.summary["structure"]["sheets"][0]["header_row"],
         1
     );
