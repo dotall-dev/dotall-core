@@ -42,12 +42,15 @@ pub fn inventory(package: &[u8], operation: &ImpactOperation) -> Result<ImpactIn
     let workbook_relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
     let relationship_targets = relationships(&workbook_relationships)?;
     let sheets = workbook_sheets(&workbook)?;
-    let sheet_relationship_id = sheets
-        .get(sheet)
-        .ok_or_else(|| impact_error(format!("unknown sheet `{sheet}`")))?;
+    let defined_names = workbook_defined_names(&workbook)?;
+    let (canonical_sheet, sheet_relationship_id) = find_workbook_sheet(&sheets, sheet)?;
     let worksheet_target = relationship_targets
         .get(sheet_relationship_id)
-        .ok_or_else(|| impact_error(format!("worksheet relationship `{sheet_relationship_id}` is missing")))?;
+        .ok_or_else(|| {
+            impact_error(format!(
+                "worksheet relationship `{sheet_relationship_id}` is missing"
+            ))
+        })?;
     let worksheet = resolve_target("xl/workbook.xml", &worksheet_target.target);
 
     let mut tables = BTreeSet::new();
@@ -68,14 +71,30 @@ pub fn inventory(package: &[u8], operation: &ImpactOperation) -> Result<ImpactIn
     }
 
     for relationship in relationships_for_part(package, "xl/workbook.xml")? {
-        if relationship.kind.ends_with("/pivotCacheDefinition")
-            && pivot_source_sheet(&entry_bytes(package, &relationship.target)?)?.as_deref() == Some(sheet)
-        {
-            unsupported.insert(UnsupportedImpact {
-                part: relationship.target,
-                construct: "pivot source reference".into(),
-                reason: format!("{operation_name} changes rows referenced by the pivot cache"),
-            });
+        if !relationship.kind.ends_with("/pivotCacheDefinition") {
+            continue;
+        }
+        let pivot_xml = entry_bytes(package, &relationship.target)?;
+        match pivot_source_sheet(&pivot_xml, &defined_names)? {
+            PivotSourceResolution::Sheet(source_sheet)
+                if source_sheet.eq_ignore_ascii_case(canonical_sheet) =>
+            {
+                unsupported.insert(UnsupportedImpact {
+                    part: relationship.target,
+                    construct: "pivot source reference".into(),
+                    reason: format!("{operation_name} changes rows referenced by the pivot cache"),
+                });
+            }
+            PivotSourceResolution::UnresolvedDefinedName(name) => {
+                unsupported.insert(UnsupportedImpact {
+                    part: relationship.target,
+                    construct: "pivot source reference".into(),
+                    reason: format!(
+                        "{operation_name} cannot verify pivot cache source: defined name `{name}` could not be resolved to a worksheet"
+                    ),
+                });
+            }
+            PivotSourceResolution::Sheet(_) | PivotSourceResolution::Missing => {}
         }
     }
 
@@ -100,8 +119,8 @@ pub fn validate_impact(package: &[u8], operation: &ImpactOperation) -> Result<Im
             ImpactOperation::InsertRow { .. } => "insert_row",
         };
         return Err(impact_error(format!(
-            "{operation_name} is unsafe: unsupported {} in {}",
-            unsupported.construct, unsupported.part
+            "{operation_name} is unsafe: unsupported {} in {} ({})",
+            unsupported.construct, unsupported.part, unsupported.reason
         )));
     }
     Ok(inventory)
@@ -113,6 +132,24 @@ struct Relationship {
     target: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PivotSourceResolution {
+    Sheet(String),
+    UnresolvedDefinedName(String),
+    Missing,
+}
+
+fn find_workbook_sheet<'a>(
+    sheets: &'a BTreeMap<String, String>,
+    name: &str,
+) -> Result<(&'a str, &'a str)> {
+    sheets
+        .iter()
+        .find(|(sheet_name, _)| sheet_name.eq_ignore_ascii_case(name))
+        .map(|(sheet_name, relationship_id)| (sheet_name.as_str(), relationship_id.as_str()))
+        .ok_or_else(|| impact_error(format!("unknown sheet `{name}`")))
+}
+
 fn workbook_sheets(xml: &[u8]) -> Result<BTreeMap<String, String>> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
@@ -122,7 +159,9 @@ fn workbook_sheets(xml: &[u8]) -> Result<BTreeMap<String, String>> {
             .read_event_into(&mut buffer)
             .map_err(|error| impact_error(format!("invalid workbook XML: {error}")))?
         {
-            Event::Empty(element) | Event::Start(element) if element.name().as_ref() == b"sheet" => {
+            Event::Empty(element) | Event::Start(element)
+                if element.name().as_ref() == b"sheet" =>
+            {
                 let attributes = attributes(&element)?;
                 if let (Some(name), Some(id)) = (attributes.get("name"), attributes.get("r:id")) {
                     sheets.insert(name.clone(), id.clone());
@@ -142,8 +181,8 @@ fn relationships_for_part(package: &[u8], part: &str) -> Result<Vec<Relationship
     }
     let xml = entry_bytes(package, &relationship_part)?;
     relationships(&xml)?
-        .into_iter()
-        .map(|(_, relationship)| {
+        .into_values()
+        .map(|relationship| {
             Ok(Relationship {
                 kind: relationship.kind,
                 target: resolve_target(part, &relationship.target),
@@ -192,7 +231,51 @@ fn relationships(xml: &[u8]) -> Result<BTreeMap<String, RawRelationship>> {
     }
 }
 
-fn pivot_source_sheet(xml: &[u8]) -> Result<Option<String>> {
+fn workbook_defined_names(xml: &[u8]) -> Result<BTreeMap<String, String>> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut defined_names = BTreeMap::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| impact_error(format!("invalid workbook XML: {error}")))?
+        {
+            Event::Start(element) if element.name().as_ref() == b"definedName" => {
+                let attributes = attributes(&element)?;
+                let name = attributes.get("name").cloned();
+                let mut formula = String::new();
+                loop {
+                    match reader
+                        .read_event_into(&mut buffer)
+                        .map_err(|error| impact_error(format!("invalid workbook XML: {error}")))?
+                    {
+                        Event::Text(text) => {
+                            formula.push_str(&String::from_utf8_lossy(text.as_ref()));
+                        }
+                        Event::CData(text) => {
+                            formula.push_str(&String::from_utf8_lossy(text.as_ref()));
+                        }
+                        Event::End(end) if end.name().as_ref() == b"definedName" => break,
+                        Event::Eof => break,
+                        _ => {}
+                    }
+                    buffer.clear();
+                }
+                if let Some(name) = name {
+                    defined_names.insert(name, formula);
+                }
+            }
+            Event::Eof => return Ok(defined_names),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn pivot_source_sheet(
+    xml: &[u8],
+    defined_names: &BTreeMap<String, String>,
+) -> Result<PivotSourceResolution> {
     let mut reader = Reader::from_reader(xml);
     let mut buffer = Vec::new();
     loop {
@@ -203,12 +286,46 @@ fn pivot_source_sheet(xml: &[u8]) -> Result<Option<String>> {
             Event::Empty(element) | Event::Start(element)
                 if element.name().as_ref() == b"worksheetSource" =>
             {
-                return Ok(attributes(&element)?.get("sheet").cloned());
+                let attributes = attributes(&element)?;
+                if let Some(sheet) = attributes.get("sheet") {
+                    return Ok(PivotSourceResolution::Sheet(sheet.clone()));
+                }
+                if let Some(name) = attributes.get("name") {
+                    return Ok(resolve_defined_name_sheet(defined_names, name)
+                        .map(PivotSourceResolution::Sheet)
+                        .unwrap_or_else(|| {
+                            PivotSourceResolution::UnresolvedDefinedName(name.clone())
+                        }));
+                }
+                return Ok(PivotSourceResolution::Missing);
             }
-            Event::Eof => return Ok(None),
+            Event::Eof => return Ok(PivotSourceResolution::Missing),
             _ => {}
         }
         buffer.clear();
+    }
+}
+
+fn resolve_defined_name_sheet(
+    defined_names: &BTreeMap<String, String>,
+    name: &str,
+) -> Option<String> {
+    defined_names
+        .iter()
+        .find(|(defined_name, _)| defined_name.eq_ignore_ascii_case(name))
+        .and_then(|(_, formula)| sheet_from_defined_name_formula(formula))
+}
+
+fn sheet_from_defined_name_formula(formula: &str) -> Option<String> {
+    let formula = formula.trim();
+    let (sheet_part, _) = formula.rsplit_once('!')?;
+    let sheet = sheet_part.trim();
+    if sheet.starts_with('\'') && sheet.ends_with('\'') && sheet.len() >= 2 {
+        Some(sheet[1..sheet.len() - 1].replace("''", "'"))
+    } else if !sheet.is_empty() {
+        Some(sheet.to_owned())
+    } else {
+        None
     }
 }
 
@@ -216,8 +333,8 @@ fn attributes(element: &BytesStart<'_>) -> Result<BTreeMap<String, String>> {
     element
         .attributes()
         .map(|attribute| {
-            let attribute =
-                attribute.map_err(|error| impact_error(format!("invalid XML attribute: {error}")))?;
+            let attribute = attribute
+                .map_err(|error| impact_error(format!("invalid XML attribute: {error}")))?;
             Ok((
                 String::from_utf8_lossy(attribute.key.as_ref()).into_owned(),
                 String::from_utf8_lossy(attribute.value.as_ref()).into_owned(),
@@ -240,7 +357,10 @@ fn resolve_target(part: &str, target: &str) -> String {
         return target.trim_start_matches('/').into();
     }
     let base = part.rsplit_once('/').map_or("", |(directory, _)| directory);
-    let mut components = base.split('/').filter(|component| !component.is_empty()).collect::<Vec<_>>();
+    let mut components = base
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>();
     for component in target.split('/') {
         match component {
             "" | "." => {}

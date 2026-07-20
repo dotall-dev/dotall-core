@@ -69,7 +69,10 @@ pub fn validate_with_source(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
-    if operations.iter().all(|operation| operation.kind != "insert_row") {
+    if operations
+        .iter()
+        .all(|operation| operation.kind != "insert_row")
+    {
         return validate(model, operations);
     }
     if operations.len() != 1 || operations[0].kind != "insert_row" {
@@ -87,7 +90,8 @@ pub fn validate_with_source(
         .map(str::trim)
         .filter(|sheet| !sheet.is_empty())
         .ok_or_else(|| format_error("insert_row requires a non-empty `sheet` field"))?;
-    find_sheet(&workbook, sheet)?;
+    let sheet_model = find_sheet(&workbook, sheet)?;
+    let canonical_sheet = sheet_model.name.clone();
     let at = required_positive_u32(&operation.payload, "at")?;
     let count = required_positive_u32(&operation.payload, "count")?;
     if at > 1_048_576 {
@@ -101,7 +105,7 @@ pub fn validate_with_source(
     validate_impact(
         &package,
         &ImpactOperation::InsertRow {
-            sheet: sheet.into(),
+            sheet: canonical_sheet.clone(),
             at,
             count,
         },
@@ -114,14 +118,14 @@ pub fn validate_with_source(
         operations: vec![SemanticOperation {
             kind: "insert_row".into(),
             payload: serde_json::json!({
-                "sheet": sheet,
+                "sheet": canonical_sheet,
                 "at": at,
                 "count": count,
             }),
         }],
         semantic_diff: vec![SemanticChange {
-            target: format!("{sheet}!row:{at}"),
-            element_id: format!("row:{sheet}:{at}"),
+            target: format!("{canonical_sheet}!row:{at}"),
+            element_id: format!("row:{canonical_sheet}:{at}"),
             change: "insert_row".into(),
             before: None,
             after: Some(count.to_string()),
@@ -421,7 +425,9 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
                 before: operation.resolved.formula.clone(),
                 after: Some(formula.clone()),
             },
-            XlsxEditOp::InsertRow { .. } => unreachable!("structural edits are validated separately"),
+            XlsxEditOp::InsertRow { .. } => {
+                unreachable!("structural edits are validated separately")
+            }
         })
         .collect()
 }
