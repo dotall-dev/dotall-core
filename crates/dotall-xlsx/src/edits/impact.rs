@@ -7,6 +7,7 @@ use quick_xml::events::{BytesStart, Event};
 use zip::ZipArchive;
 
 use crate::FORMAT_ID;
+use crate::dependencies::reference_spans;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImpactInventory {
@@ -64,6 +65,13 @@ pub fn inventory(package: &[u8], operation: &ImpactOperation) -> Result<ImpactIn
     let mut charts = BTreeSet::new();
     let mut drawings = BTreeSet::new();
     let mut unsupported = BTreeSet::new();
+    for name in defined_names_referencing_sheet(&workbook, canonical_sheet)? {
+        unsupported.insert(UnsupportedImpact {
+            part: "xl/workbook.xml".into(),
+            construct: "defined name reference".into(),
+            reason: format!("{operation_name} requires rewriting defined name `{name}` references"),
+        });
+    }
     for relationship in relationships_for_part(package, &worksheet)? {
         if relationship.kind.ends_with("/table") {
             tables.insert(relationship.target.clone());
@@ -329,6 +337,84 @@ fn workbook_defined_names(xml: &[u8]) -> Result<BTreeMap<String, String>> {
                 }
             }
             Event::Eof => return Ok(defined_names),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn defined_names_referencing_sheet(xml: &[u8], sheet: &str) -> Result<Vec<String>> {
+    let sheet_order = workbook_sheet_order(xml)?;
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut names = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| impact_error(format!("invalid workbook XML: {error}")))?
+        {
+            Event::Start(element) if element.name().as_ref() == b"definedName" => {
+                let attributes = attributes(&element)?;
+                let name = attributes.get("name").cloned().unwrap_or_default();
+                let local_sheet_matches = attributes
+                    .get("localSheetId")
+                    .and_then(|id| id.parse::<usize>().ok())
+                    .and_then(|id| sheet_order.get(id))
+                    .is_some_and(|name| name.eq_ignore_ascii_case(sheet));
+                let mut formula = String::new();
+                loop {
+                    match reader
+                        .read_event_into(&mut buffer)
+                        .map_err(|error| impact_error(format!("invalid workbook XML: {error}")))?
+                    {
+                        Event::Text(text) => {
+                            formula.push_str(&String::from_utf8_lossy(text.as_ref()));
+                        }
+                        Event::CData(text) => {
+                            formula.push_str(&String::from_utf8_lossy(text.as_ref()));
+                        }
+                        Event::End(end) if end.name().as_ref() == b"definedName" => break,
+                        Event::Eof => break,
+                        _ => {}
+                    }
+                    buffer.clear();
+                }
+                if local_sheet_matches
+                    || reference_spans(&formula).iter().any(|reference| {
+                        reference
+                            .reference
+                            .sheet
+                            .as_deref()
+                            .is_some_and(|name| name.eq_ignore_ascii_case(sheet))
+                    })
+                {
+                    names.push(name);
+                }
+            }
+            Event::Eof => return Ok(names),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
+fn workbook_sheet_order(xml: &[u8]) -> Result<Vec<String>> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut sheets = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| impact_error(format!("invalid workbook XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if element.name().as_ref() == b"sheet" =>
+            {
+                if let Some(name) = attributes(&element)?.get("name") {
+                    sheets.push(name.clone());
+                }
+            }
+            Event::Eof => return Ok(sheets),
             _ => {}
         }
         buffer.clear();

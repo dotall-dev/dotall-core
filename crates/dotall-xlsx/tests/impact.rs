@@ -63,12 +63,18 @@ fn insert_row_rejects_when_pivot_source_resolves_defined_name_to_target_sheet() 
     };
 
     let inventory = inventory(&package, &operation).expect("inventory package");
-    assert_eq!(inventory.unsupported.len(), 1);
+    assert_eq!(inventory.unsupported.len(), 2);
     assert!(
-        inventory.unsupported[0]
+        inventory
+            .unsupported
+            .iter()
+            .any(|impact| impact.construct == "defined name reference")
+    );
+    assert!(inventory.unsupported.iter().any(|impact| {
+        impact
             .reason
             .contains("changes rows referenced by the pivot cache")
-    );
+    }));
 }
 
 #[test]
@@ -114,6 +120,41 @@ fn insert_row_allows_sheet_unrelated_to_pivot_source() {
     let inventory = inventory(&package, &operation).expect("inventory package");
     assert!(inventory.unsupported.is_empty());
     validate_impact(&package, &operation).expect("unrelated pivot must not block insert");
+}
+
+#[test]
+fn insert_row_rejects_defined_name_referencing_the_edited_sheet() {
+    let package = defined_name_fixture("Inputs!$A$1:$A$10", None);
+    let error = validate_impact(
+        &package,
+        &ImpactOperation::InsertRow {
+            sheet: "Inputs".into(),
+            at: 2,
+            count: 1,
+        },
+    )
+    .expect_err("defined names require a rewrite before structural edits");
+
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported defined name reference in xl/workbook.xml"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn insert_row_rejects_local_defined_name_on_the_edited_sheet() {
+    let package = defined_name_fixture("$A$1:$A$10", Some(0));
+    validate_impact(
+        &package,
+        &ImpactOperation::InsertRow {
+            sheet: "Inputs".into(),
+            at: 2,
+            count: 1,
+        },
+    )
+    .expect_err("local defined names require a rewrite before structural edits");
 }
 
 #[test]
@@ -283,6 +324,40 @@ fn pivot_fixture_entries(
         ),
         ("xl/pivotCache/pivotCacheDefinition1.xml", pivot_cache_xml.into()),
     ]
+}
+
+fn defined_name_fixture(formula: &str, local_sheet_id: Option<u32>) -> Vec<u8> {
+    let mut writer = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    for (path, xml) in [
+        (
+            "xl/workbook.xml",
+            format!(
+                r#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Inputs" sheetId="1" r:id="rId1"/><sheet name="Summary" sheetId="2" r:id="rId2"/></sheets><definedNames><definedName name="InputRange"{}>{formula}</definedName></definedNames></workbook>"#,
+                local_sheet_id.map(|id| format!(r#" localSheetId="{id}""#)).unwrap_or_default(),
+            ),
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>"#.into(),
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>"#.into(),
+        ),
+        (
+            "xl/worksheets/sheet2.xml",
+            r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>"#.into(),
+        ),
+    ] {
+        writer
+            .start_file(path, options)
+            .expect("start fixture entry");
+        writer
+            .write_all(xml.as_bytes())
+            .expect("write fixture entry");
+    }
+    writer.finish().expect("finish fixture").into_inner()
 }
 
 fn structural_feature_fixture() -> Vec<u8> {

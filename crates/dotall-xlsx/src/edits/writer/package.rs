@@ -88,6 +88,13 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 "[Content_Types].xml".into(),
                 remove_calc_chain_override(&entry_bytes(&original, "[Content_Types].xml")?)?,
             );
+            replacements.insert(
+                "xl/_rels/workbook.xml.rels".into(),
+                remove_calc_chain_relationship(&entry_bytes(
+                    &original,
+                    "xl/_rels/workbook.xml.rels",
+                )?)?,
+            );
         }
         let bytes = rebuild_package(&original, &replacements, &removals)?;
         return Ok(PatchedOutput {
@@ -412,6 +419,30 @@ fn remove_calc_chain_override(xml: &[u8]) -> Result<Vec<u8>> {
             .ok_or_else(|| writer_error("unterminated content types Override"))?;
         let tag = &source[start..=end];
         if !tag.contains(r#"PartName="/xl/calcChain.xml""#) {
+            output.push_str(tag);
+        }
+        cursor = end + 1;
+    }
+    output.push_str(&source[cursor..]);
+    Ok(output.into_bytes())
+}
+
+fn remove_calc_chain_relationship(xml: &[u8]) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml).map_err(|error| {
+        writer_error(format!("workbook relationships XML is not UTF-8: {error}"))
+    })?;
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    while let Some(relative) = source[cursor..].find("<Relationship") {
+        let start = cursor + relative;
+        output.push_str(&source[cursor..start]);
+        let end = source[start..]
+            .find('>')
+            .map(|offset| start + offset)
+            .ok_or_else(|| writer_error("unterminated workbook Relationship"))?;
+        let tag = &source[start..=end];
+        if !tag.contains(r#"Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain""#)
+        {
             output.push_str(tag);
         }
         cursor = end + 1;
