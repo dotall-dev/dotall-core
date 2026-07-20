@@ -85,8 +85,15 @@ fn parse_sheets(xml: &[u8]) -> Result<Vec<(String, String)>> {
                 for attribute in element.attributes().flatten() {
                     match attribute.key.as_ref() {
                         b"name" => {
-                            name =
-                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                            name = Some(
+                                quick_xml::escape::unescape(&String::from_utf8_lossy(
+                                    attribute.value.as_ref(),
+                                ))
+                                .map_err(|error| {
+                                    writer_error(format!("invalid worksheet name: {error}"))
+                                })?
+                                .into_owned(),
+                            )
                         }
                         b"r:id" => {
                             relationship_id =
