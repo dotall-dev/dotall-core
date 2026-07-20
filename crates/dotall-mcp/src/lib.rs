@@ -3,6 +3,8 @@ pub const SERVER_NAME: &str = "dotall";
 pub mod error;
 pub mod params;
 pub mod response;
+pub mod server;
+pub mod tools;
 
 #[cfg(test)]
 mod tests {

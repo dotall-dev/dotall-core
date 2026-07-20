@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+clap = { version = "4.6.3", features = ["derive"] }
 dotall-core = { version = "0.1.0", path = "../dotall-core" }
 dotall-xlsx = { version = "0.1.0", path = "../dotall-xlsx", optional = true }
 rmcp = { version = "2.2.0", features = ["server", "macros", "transport-io"] }
