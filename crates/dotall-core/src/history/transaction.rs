@@ -47,6 +47,18 @@ pub struct StagedEdit {
 }
 
 impl StagedEdit {
+    /// Operations to revalidate during apply-all rebase.
+    ///
+    /// Pre-`operations`-field staged JSON deserializes with an empty top-level
+    /// vector; those edits retain the agent ops only in [`Self::preview`].
+    pub fn effective_operations(&self) -> Vec<SemanticOperation> {
+        if self.operations.is_empty() {
+            self.preview.operations.clone()
+        } else {
+            self.operations.clone()
+        }
+    }
+
     /// Whether two staged envelopes carry the same durable payload for idempotent retries.
     pub fn same_payload(&self, other: &Self) -> bool {
         self.tx_id == other.tx_id

@@ -283,12 +283,14 @@ impl Engine {
                 let current_hash = fingerprint(&source)?.blake3;
                 if edit.expected_source_hash != current_hash {
                     let loaded = self.model(relative)?;
+                    let operations = edit.effective_operations();
                     let preview = loaded.handler.validate_edit_with_source(
                         &source,
                         &loaded.model,
-                        &edit.operations,
+                        &operations,
                     )?;
                     edit.expected_source_hash = loaded.source_hash;
+                    edit.operations = operations;
                     edit.preview = preview;
                     self.store.replace_staged(relative, &edit)?;
                 }
@@ -694,4 +696,255 @@ fn read_prefix(source: &Path) -> Result<Vec<u8>> {
         .map_err(|source_error| DotallError::io(source, source_error))?;
     prefix.truncate(count);
     Ok(prefix)
+}
+
+#[cfg(test)]
+mod apply_all_tests {
+    use std::fs;
+    use std::path::Path;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tempfile::tempdir;
+    use uuid::Uuid;
+
+    use crate::registry::{
+        ArtifactSchema, Capability, DetectionProbe, DetectionScore, FormatDescriptor,
+        FormatHandler, FormatRegistry, Inspection, PatchedOutput, ReadRequest,
+    };
+    use crate::{
+        Actor, ActorKind, ArtifactEnvelope, DependencyImpact, DotallStore, EditRequest, Engine,
+        ReadResponse, Result, SemanticChange, SemanticOperation, StagedEdit, ValidatedEdit,
+    };
+
+    #[test]
+    fn apply_all_rebases_legacy_staged_edits_without_top_level_operations() {
+        let mut fixture = Fixture::new();
+        let hash = fixture.source_hash();
+        fixture
+            .engine
+            .edit(
+                "sample.stub",
+                &append_request(hash.clone(), "-first", tx(1)),
+            )
+            .expect("stage first edit");
+        fixture
+            .engine
+            .edit("sample.stub", &append_request(hash, "-second", tx(2)))
+            .expect("stage second edit");
+
+        for id in [tx(1), tx(2)] {
+            let path = fixture.staged_path(id);
+            let staged = fixture
+                .engine
+                .staged("sample.stub")
+                .expect("list staged")
+                .into_iter()
+                .find(|edit| edit.tx_id == id)
+                .expect("staged edit");
+            write_legacy_staged_json(&path, &staged);
+            let legacy_json = fs::read_to_string(&path).expect("read legacy staged JSON");
+            let legacy: StagedEdit =
+                serde_json::from_str(&legacy_json).expect("deserialize legacy staged edit");
+            assert!(
+                legacy.operations.is_empty(),
+                "legacy staged JSON should deserialize with empty top-level operations"
+            );
+            assert_eq!(legacy.effective_operations(), staged.preview.operations);
+        }
+
+        let applied = fixture
+            .engine
+            .apply_all("sample.stub")
+            .expect("apply all should rebase legacy staged edits");
+
+        assert_eq!(
+            applied.iter().map(|edit| edit.tx_id).collect::<Vec<_>>(),
+            vec![tx(1), tx(2)]
+        );
+        assert_eq!(
+            fs::read(fixture.source()).expect("source"),
+            b"initial-first-second"
+        );
+    }
+
+    fn write_legacy_staged_json(path: &Path, staged: &StagedEdit) {
+        let mut value =
+            serde_json::to_value(staged).expect("serialize staged edit for legacy rewrite");
+        value
+            .as_object_mut()
+            .expect("staged edit JSON object")
+            .remove("operations");
+        fs::write(
+            path,
+            serde_json::to_string_pretty(&value).expect("legacy staged JSON"),
+        )
+        .expect("write legacy staged edit");
+    }
+
+    struct Fixture {
+        _workspace: tempfile::TempDir,
+        engine: Engine,
+        root: std::path::PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let workspace = tempdir().expect("workspace");
+            let root = workspace.path().to_path_buf();
+            fs::write(root.join("sample.stub"), b"initial").expect("source");
+            let store = DotallStore::init(&root).expect("store");
+            let parse_count = Arc::new(AtomicUsize::new(0));
+            let mut registry = FormatRegistry::default();
+            registry.register(Arc::new(StubFormat {
+                parse_count: Arc::clone(&parse_count),
+            }));
+            Self {
+                _workspace: workspace,
+                engine: Engine::new(store, registry),
+                root,
+            }
+        }
+
+        fn source(&self) -> std::path::PathBuf {
+            self.root.join("sample.stub")
+        }
+
+        fn staged_path(&self, tx_id: Uuid) -> std::path::PathBuf {
+            self.root.join(format!(
+                ".all/objects/sample.stub/state/edits/staging/{tx_id}.json"
+            ))
+        }
+
+        fn source_hash(&mut self) -> String {
+            self.engine
+                .load_model("sample.stub")
+                .expect("load model")
+                .source_hash
+        }
+    }
+
+    fn tx(value: u128) -> Uuid {
+        Uuid::from_u128(value)
+    }
+
+    fn append_request(
+        expected_source_hash: String,
+        suffix: &str,
+        transaction_id: Uuid,
+    ) -> EditRequest {
+        EditRequest {
+            transaction_id,
+            expected_source_hash,
+            actor: Actor {
+                kind: ActorKind::Cli,
+                id: Some("test".into()),
+            },
+            operations: vec![SemanticOperation {
+                kind: "append".into(),
+                payload: serde_json::json!({ "suffix": suffix }),
+            }],
+        }
+    }
+
+    struct StubFormat {
+        parse_count: Arc<AtomicUsize>,
+    }
+
+    impl FormatHandler for StubFormat {
+        fn descriptor(&self) -> FormatDescriptor {
+            FormatDescriptor {
+                id: "stub".into(),
+                version: "1".into(),
+                capabilities: vec![Capability::Inspect, Capability::ReadFull],
+                edit_capabilities: Vec::new(),
+            }
+        }
+
+        fn artifact_schema(&self) -> ArtifactSchema {
+            ArtifactSchema {
+                format_id: "stub".into(),
+                schema_id: "stub.document".into(),
+                schema_version: 1,
+            }
+        }
+
+        fn detect(&self, probe: &DetectionProbe<'_>) -> DetectionScore {
+            DetectionScore((probe.path.extension() == Some("stub".as_ref())) as u16)
+        }
+
+        fn parse(&self, source: &Path) -> Result<ArtifactEnvelope> {
+            self.parse_count.fetch_add(1, Ordering::SeqCst);
+            let content = String::from_utf8(fs::read(source).expect("test source"))
+                .expect("test source UTF-8");
+            Ok(ArtifactEnvelope {
+                format_id: "stub".into(),
+                schema_id: "stub.document".into(),
+                schema_version: 1,
+                payload: serde_json::json!({ "content": content }),
+            })
+        }
+
+        fn inspect(&self, _model: &ArtifactEnvelope) -> Result<Inspection> {
+            unreachable!("apply_all legacy rebase test only")
+        }
+
+        fn read(&self, _model: &ArtifactEnvelope, _request: &ReadRequest) -> Result<ReadResponse> {
+            unreachable!("apply_all legacy rebase test only")
+        }
+
+        fn validate_edit(
+            &self,
+            model: &ArtifactEnvelope,
+            operations: &[SemanticOperation],
+        ) -> Result<ValidatedEdit> {
+            let operation = &operations[0];
+            let content = model.payload["content"].as_str().expect("content");
+            let value = match operation.kind.as_str() {
+                "append" => format!(
+                    "{content}{}",
+                    operation.payload["suffix"].as_str().expect("suffix")
+                ),
+                other => panic!("unsupported test operation: {other}"),
+            };
+            Ok(ValidatedEdit {
+                format_id: "stub".into(),
+                schema_id: "stub.edits".into(),
+                schema_version: 1,
+                operations: operations.to_vec(),
+                semantic_diff: vec![SemanticChange {
+                    target: "content".into(),
+                    element_id: "content".into(),
+                    change: operation.kind.clone(),
+                    before: Some(content.into()),
+                    after: Some(value),
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: Vec::new(),
+                },
+            })
+        }
+
+        fn apply_edit(&self, source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
+            let operation = &edit.operations[0];
+            let bytes = match operation.kind.as_str() {
+                "append" => {
+                    let mut bytes = fs::read(source).expect("test source");
+                    bytes.extend_from_slice(
+                        operation.payload["suffix"]
+                            .as_str()
+                            .expect("suffix")
+                            .as_bytes(),
+                    );
+                    bytes
+                }
+                other => panic!("unsupported test operation: {other}"),
+            };
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
+    }
 }
