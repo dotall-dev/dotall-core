@@ -313,10 +313,12 @@ dependencies = [
  "blake3",
  "calamine",
  "dotall-core",
+ "quick-xml",
  "rust_xlsxwriter",
  "serde",
  "serde_json",
  "tempfile",
+ "zip 8.6.0",
 ]
 
 [[package]]
