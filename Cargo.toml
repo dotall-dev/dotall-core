@@ -3,6 +3,7 @@ members = [
     "crates/dotall-core",
     "crates/dotall-xlsx",
     "crates/dotall-cli",
+    "crates/dotall-mcp",
 ]
 resolver = "2"
 
