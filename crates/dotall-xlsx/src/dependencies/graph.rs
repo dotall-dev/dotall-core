@@ -203,11 +203,23 @@ impl DependencyGraph {
             return Vec::new();
         };
 
+        self.reverse_at(&source.sheet, &source.address)
+    }
+
+    pub fn reverse_at(&self, sheet: &str, address: &str) -> Vec<&DependencyEdge> {
+        let source = CellLocation {
+            sheet: sheet.to_owned(),
+            address: address.to_ascii_uppercase(),
+        };
+
         self.edges
             .iter()
             .filter(|edge| match &edge.to {
-                DependencyTarget::Element { element_id: target } => target == element_id,
-                DependencyTarget::Selector { selector } => selector_contains(selector, source),
+                DependencyTarget::Element { element_id: target } => self
+                    .cell_locations
+                    .get(target)
+                    .is_some_and(|location| location_matches(location, &source)),
+                DependencyTarget::Selector { selector } => selector_contains(selector, &source),
                 DependencyTarget::NamedRange { .. } => false,
             })
             .collect()
@@ -318,6 +330,11 @@ fn reference_target(
 
 fn address(reference: &CellReference) -> String {
     format!("{}{}", reference.column, reference.row)
+}
+
+fn location_matches(location: &CellLocation, source: &CellLocation) -> bool {
+    location.sheet.eq_ignore_ascii_case(&source.sheet)
+        && location.address.eq_ignore_ascii_case(&source.address)
 }
 
 fn selector_contains(selector: &str, source: &CellLocation) -> bool {

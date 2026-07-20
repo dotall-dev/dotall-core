@@ -348,7 +348,7 @@ fn build_dependency_impact(
     let mut forward = BTreeSet::new();
 
     for operation in parsed {
-        for edge in graph.reverse(&operation.resolved.element_id) {
+        for edge in graph.reverse_at(&operation.resolved.sheet, &operation.resolved.address) {
             if let Some((sheet, address)) = locations.get(&edge.from_element_id) {
                 forward.insert(format!("{sheet}!{address}"));
             }
@@ -378,6 +378,23 @@ fn cell_locations(
         .collect()
 }
 
+fn editable_value_to_json(value: &EditableValue) -> Value {
+    match value {
+        EditableValue::Blank => Value::Null,
+        EditableValue::Boolean(value) => Value::Bool(*value),
+        EditableValue::Number(value) => {
+            if value.fract() == 0.0 && value.abs() <= i64::MAX as f64 {
+                Value::Number(serde_json::Number::from(*value as i64))
+            } else {
+                serde_json::Number::from_f64(*value)
+                    .map(Value::Number)
+                    .unwrap_or(Value::Null)
+            }
+        }
+        EditableValue::String(value) => Value::String(value.clone()),
+    }
+}
+
 fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
     match op {
         XlsxEditOp::SetCellValue {
@@ -391,7 +408,7 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
                 "sheet": sheet,
                 "address": address,
                 "element_id": element_id,
-                "value": value,
+                "value": editable_value_to_json(value),
             }),
         },
         XlsxEditOp::SetCellFormula {
@@ -502,6 +519,54 @@ mod tests {
             schema_version: MODEL_SCHEMA_VERSION,
             payload: serde_json::to_value(model).expect("serialize workbook"),
         }
+    }
+
+    #[test]
+    fn validated_operations_round_trip_through_revalidation() {
+        let envelope = envelope(workbook_fixture());
+        let validated = validate(
+            &envelope,
+            &[SemanticOperation {
+                kind: "set_cell_value".into(),
+                payload: serde_json::json!({
+                    "sheet": "Inputs",
+                    "address": "A1",
+                    "value": 42
+                }),
+            }],
+        )
+        .expect("valid edit");
+
+        assert_eq!(
+            validated.operations[0].payload["value"],
+            serde_json::json!(42)
+        );
+
+        let revalidated = validate(&envelope, &validated.operations).expect("round-trip edit");
+        assert_eq!(revalidated.operations, validated.operations);
+        assert_eq!(revalidated.semantic_diff, validated.semantic_diff);
+    }
+
+    #[test]
+    fn sparse_cell_edit_finds_range_dependents() {
+        let validated = validate(
+            &envelope(workbook_fixture()),
+            &[SemanticOperation {
+                kind: "set_cell_value".into(),
+                payload: serde_json::json!({
+                    "sheet": "Inputs",
+                    "address": "A5",
+                    "value": 10
+                }),
+            }],
+        )
+        .expect("valid edit");
+
+        assert_eq!(validated.semantic_diff[0].target, "Inputs!A5");
+        assert_eq!(
+            validated.dependency_impact.forward,
+            vec!["Summary!C2".to_string()]
+        );
     }
 
     #[test]
