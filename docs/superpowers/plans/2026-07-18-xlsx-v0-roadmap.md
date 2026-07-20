@@ -41,12 +41,12 @@
      cancel audit, shared-strings surgical writes, strengthened ZIP goldens.
    - Exit gate met.
 
-5. **Next — Merge 2**
+5. **Done — Merge 2**
    [`2026-07-18-broaden-xlsx-edit-operations.md`](2026-07-18-broaden-xlsx-edit-operations.md)
    - Merge 2: `set_range`, row/column insertion/deletion, and sheet add/rename/delete
      on the same transaction/history spine.
-   - Exit gate: each operation is advertised only after its cross-part golden tests
-     pass.
+   - Exit gate met: each operation is advertised only after its cross-part golden
+     tests pass.
 
 6. [`2026-07-18-mcp-agent-interface.md`](2026-07-18-mcp-agent-interface.md)
    - Discoverable local stdio tools over the same core with structured errors and
