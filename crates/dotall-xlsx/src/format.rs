@@ -2,12 +2,14 @@ use std::path::{Path, PathBuf};
 
 use dotall_core::registry::{
     ArtifactEnvelope, ArtifactSchema, Capability, DetectionProbe, DetectionScore, FormatDescriptor,
-    FormatHandler, Inspection, ReadRequest, ReadResponse, ReadSelector, ReadSuggestion,
+    FormatHandler, Inspection, PatchedOutput, ReadRequest, ReadResponse, ReadSelector,
+    ReadSuggestion, SemanticOperation, ValidatedEdit,
 };
 use dotall_core::{DotallError, Result};
 use serde_json::json;
 
 use crate::detection;
+use crate::edits;
 use crate::model::{SCHEMA_ID, SCHEMA_VERSION, WorkbookModel};
 use crate::{FORMAT_ID, parser, projection, selector, structure};
 
@@ -187,6 +189,18 @@ impl FormatHandler for XlsxFormat {
             continuation: None,
             next_actions,
         })
+    }
+
+    fn validate_edit(
+        &self,
+        model: &ArtifactEnvelope,
+        operations: &[SemanticOperation],
+    ) -> Result<ValidatedEdit> {
+        edits::validate(model, operations)
+    }
+
+    fn apply_edit(&self, source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
+        edits::writer::apply(source, edit)
     }
 }
 

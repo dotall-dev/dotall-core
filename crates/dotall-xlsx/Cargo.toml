@@ -7,8 +7,10 @@ edition = "2024"
 blake3 = "1.8.5"
 calamine = "0.36.0"
 dotall-core = { version = "0.1.0", path = "../dotall-core" }
+quick-xml = "0.41.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 rust_xlsxwriter = "0.96.0"

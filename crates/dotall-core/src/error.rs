@@ -36,6 +36,13 @@ pub enum DotallError {
     #[error("source changed while it was being hashed: {0}")]
     SourceChangedDuringRead(PathBuf),
 
+    #[error("source hash mismatch for {path}: expected {expected}, found {actual}")]
+    SourceHashMismatch {
+        path: PathBuf,
+        expected: String,
+        actual: String,
+    },
+
     #[error("unsupported file format: {0}")]
     UnsupportedFormat(PathBuf),
 
@@ -66,6 +73,24 @@ pub enum DotallError {
         #[source]
         source: serde_json::Error,
     },
+
+    #[error("staged edit {tx_id} for {path} conflicts with an existing staged payload")]
+    StagedConflict { path: PathBuf, tx_id: String },
+
+    #[error("staged edit {tx_id} is missing for {path}")]
+    StagedMissing { path: PathBuf, tx_id: String },
+
+    #[error("apply lock is held for {path}")]
+    LockBusy { path: PathBuf },
+
+    #[error("snapshot {hash} is missing for {path}")]
+    SnapshotMissing { path: PathBuf, hash: String },
+
+    #[error("history version {version} already exists for {path}")]
+    HistoryVersionExists { path: PathBuf, version: u64 },
+
+    #[error("history version {version} is missing for {path}")]
+    HistoryVersionMissing { path: PathBuf, version: u64 },
 }
 
 impl DotallError {

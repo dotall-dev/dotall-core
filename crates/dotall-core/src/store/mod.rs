@@ -2,12 +2,17 @@ mod atomic;
 
 use std::fs;
 use std::io::Write;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
-use serde::de::DeserializeOwned;
+use serde::{Serialize, de::DeserializeOwned};
+use uuid::Uuid;
 
 use crate::error::{DotallError, Result};
 use crate::fingerprint::{Freshness, check_freshness, fingerprint};
+use crate::history::{
+    ApplyLock, CancelAudit, CancelStatus, HistoryRecord, HistorySummary, StagedEdit,
+    history_version_file_name,
+};
 use crate::manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 use crate::pipeline::{CachedArtifact, CachedDerived, CachedView, DerivationRecipe};
 use crate::read::AccessRecord;
@@ -15,7 +20,7 @@ use crate::registry::{ArtifactEnvelope, ArtifactSchema};
 use crate::status::{ObjectState, ObjectStatus};
 use crate::workspace::Workspace;
 
-use atomic::write_json;
+use atomic::{write_bytes, write_json, write_json_new};
 
 #[derive(Debug)]
 pub struct DotallStore {
@@ -303,6 +308,276 @@ impl DotallStore {
             .map_err(|source| DotallError::io(&path, source))
     }
 
+    /// Persists a staged edit under `state/edits/staging/<tx_id>.json`.
+    ///
+    /// Retrying with the same transaction id and payload is idempotent. A conflicting
+    /// payload for the same transaction id returns [`DotallError::StagedConflict`].
+    pub fn stage_edit(&self, relative_path: &str, staged: &StagedEdit) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.staging_path(&key, staged.tx_id);
+        if path.is_file() {
+            let existing: StagedEdit = read_required_json(&path, "staged edit")?;
+            if existing.same_payload(staged) {
+                return Ok(());
+            }
+            return Err(DotallError::StagedConflict {
+                path: Path::new(relative_path).to_path_buf(),
+                tx_id: staged.tx_id.to_string(),
+            });
+        }
+        write_json(&path, staged)
+    }
+
+    pub fn read_staged(&self, relative_path: &str, tx_id: Uuid) -> Result<Option<StagedEdit>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        read_cached_json(&self.staging_path(&key, tx_id))
+    }
+
+    pub fn list_staged(&self, relative_path: &str) -> Result<Vec<StagedEdit>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let directory = self.staging_dir(&key);
+        if !directory.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let mut staged = Vec::new();
+        for entry in
+            fs::read_dir(&directory).map_err(|source| DotallError::io(&directory, source))?
+        {
+            let entry = entry.map_err(|source| DotallError::io(&directory, source))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            staged.push(read_required_json(&path, "staged edit")?);
+        }
+        Ok(staged)
+    }
+
+    pub fn discard_staged(&self, relative_path: &str, tx_id: Uuid) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.staging_path(&key, tx_id);
+        let Some(staged) = read_cached_json::<StagedEdit>(&path)? else {
+            return Err(DotallError::StagedMissing {
+                path: Path::new(relative_path).to_path_buf(),
+                tx_id: tx_id.to_string(),
+            });
+        };
+
+        let audit = CancelAudit {
+            tx_id,
+            status: CancelStatus::Cancelled,
+            timestamp: crate::read::now_unix_ms()?.to_string(),
+            actor: staged.actor,
+            reason: "discard".into(),
+        };
+        fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))?;
+        write_json(&self.cancel_path(&key, tx_id), &audit)
+    }
+
+    /// Removes a staged edit file without writing a cancel audit.
+    pub(crate) fn remove_staged(&self, relative_path: &str, tx_id: Uuid) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.staging_path(&key, tx_id);
+        if path.is_file() {
+            fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))?;
+        }
+        let cancel_path = self.cancel_path(&key, tx_id);
+        if cancel_path.is_file() {
+            fs::remove_file(&cancel_path)
+                .map_err(|source| DotallError::io(&cancel_path, source))?;
+        }
+        Ok(())
+    }
+
+    /// Acquires the per-object apply lock at `state/edits/.apply.lock`.
+    pub fn acquire_apply_lock(&self, relative_path: &str) -> Result<ApplyLock> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        ApplyLock::acquire(&self.apply_lock_path(&key))
+    }
+
+    /// Stores content-addressed snapshot bytes under `state/edits/history/snapshots/<hash>.bin`.
+    ///
+    /// Journals for apply recovery live under `state/transactions/` (created at register time).
+    pub fn write_snapshot(&self, relative_path: &str, bytes: &[u8]) -> Result<String> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let hash = blake3::hash(bytes).to_hex().to_string();
+        let path = self.snapshot_path(&key, &hash);
+        if path.is_file() {
+            let existing = fs::read(&path).map_err(|source| DotallError::io(&path, source))?;
+            if existing == bytes {
+                return Ok(hash);
+            }
+            return Err(DotallError::InvalidSourcePath {
+                path: path.clone(),
+                reason: "snapshot path exists with different content".to_owned(),
+            });
+        }
+        write_bytes(&path, bytes)?;
+        Ok(hash)
+    }
+
+    pub fn read_snapshot(&self, relative_path: &str, hash: &str) -> Result<Vec<u8>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.snapshot_path(&key, hash);
+        fs::read(&path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                DotallError::SnapshotMissing {
+                    path: Path::new(relative_path).to_path_buf(),
+                    hash: hash.to_owned(),
+                }
+            } else {
+                DotallError::io(&path, source)
+            }
+        })
+    }
+
+    /// Replaces a tracked source atomically on its own filesystem.
+    pub fn replace_source(&self, relative_path: &str, bytes: &[u8]) -> Result<()> {
+        let (_, source) = resolve_source(&self.workspace, Path::new(relative_path))?;
+        write_bytes(&source, bytes)
+    }
+
+    /// Removes regenerable model, derived, and view artifacts after a source mutation.
+    pub fn invalidate_cache(&self, relative_path: &str) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let cache = self.object_dir(&key).join("cache");
+        if cache.exists() {
+            fs::remove_dir_all(&cache).map_err(|source| DotallError::io(&cache, source))?;
+        }
+        for directory in ["model", "derived", "views"] {
+            let path = cache.join(directory);
+            fs::create_dir_all(&path).map_err(|source| DotallError::io(&path, source))?;
+        }
+        Ok(())
+    }
+
+    pub fn write_journal<T: Serialize>(
+        &self,
+        relative_path: &str,
+        tx_id: Uuid,
+        record: &T,
+    ) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        write_json(&self.journal_path(&key, tx_id), record)
+    }
+
+    pub fn read_journals<T: DeserializeOwned>(&self, relative_path: &str) -> Result<Vec<T>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let directory = self.transaction_dir(&key);
+        if !directory.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut records = Vec::new();
+        for entry in
+            fs::read_dir(&directory).map_err(|source| DotallError::io(&directory, source))?
+        {
+            let entry = entry.map_err(|source| DotallError::io(&directory, source))?;
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if file_name.ends_with(".cancel.json") {
+                continue;
+            }
+            records.push(read_required_json(&path, "transaction journal")?);
+        }
+        Ok(records)
+    }
+
+    pub fn discard_journal(&self, relative_path: &str, tx_id: Uuid) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.journal_path(&key, tx_id);
+        if path.is_file() {
+            fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))?;
+        }
+        Ok(())
+    }
+
+    /// Appends one forensic history version under `state/edits/history/vNNN.json`.
+    ///
+    /// Versions are sequential starting at 1. The stored record's `version` field is
+    /// assigned from the manifest; callers may pass `0` as a placeholder.
+    ///
+    /// Callers must hold [`ApplyLock`] for the source so concurrent appends cannot
+    /// race on version allocation or history file creation.
+    pub fn append_history(&mut self, relative_path: &str, record: &HistoryRecord) -> Result<u64> {
+        let (key, object) = self.tracked_source(relative_path)?;
+        let next_version = object.version_count.saturating_add(1);
+        let history_dir = self.history_dir(&key);
+        fs::create_dir_all(&history_dir).map_err(|source| DotallError::io(&history_dir, source))?;
+
+        let path = self.history_version_path(&key, next_version);
+        let persisted = HistoryRecord {
+            version: next_version,
+            ..record.clone()
+        };
+        if let Err(err) = write_json_new(&path, &persisted) {
+            return Err(map_history_version_exists(relative_path, next_version, err));
+        }
+
+        let mut next_manifest = self.manifest.clone();
+        let tracked =
+            next_manifest
+                .objects
+                .get_mut(&key)
+                .ok_or_else(|| DotallError::InvalidSourcePath {
+                    path: Path::new(relative_path).to_path_buf(),
+                    reason: "source is not tracked".to_owned(),
+                })?;
+        tracked.version_count = next_version;
+        if let Err(err) = write_json(&self.workspace.manifest_path(), &next_manifest) {
+            let _ = fs::remove_file(&path);
+            return Err(err);
+        }
+        self.manifest = next_manifest;
+        Ok(next_version)
+    }
+
+    /// Returns compact agent-facing history summaries in ascending version order.
+    pub fn list_history(&self, relative_path: &str) -> Result<Vec<HistorySummary>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let directory = self.history_dir(&key);
+        if !directory.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let mut summaries = Vec::new();
+        for entry in
+            fs::read_dir(&directory).map_err(|source| DotallError::io(&directory, source))?
+        {
+            let entry = entry.map_err(|source| DotallError::io(&directory, source))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !file_name.starts_with('v') {
+                continue;
+            }
+            let record: HistoryRecord = read_required_json(&path, "history record")?;
+            summaries.push(record.summary());
+        }
+
+        summaries.sort_by_key(|summary| summary.version);
+        Ok(summaries)
+    }
+
+    /// Loads one full forensic history record by version number.
+    pub fn get_history(&self, relative_path: &str, version: u64) -> Result<HistoryRecord> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.history_version_path(&key, version);
+        read_cached_json(&path)?.ok_or_else(|| DotallError::HistoryVersionMissing {
+            path: Path::new(relative_path).to_path_buf(),
+            version,
+        })
+    }
+
     fn tracked_source(&self, relative_path: &str) -> Result<(String, &TrackedObject)> {
         let (key, _) = resolve_source(&self.workspace, Path::new(relative_path))?;
         let object =
@@ -322,6 +597,50 @@ impl DotallStore {
             .join(key)
             .join("cache")
             .join(suffix)
+    }
+
+    fn object_dir(&self, key: &str) -> PathBuf {
+        self.workspace.objects_dir().join(key)
+    }
+
+    fn staging_dir(&self, key: &str) -> PathBuf {
+        self.object_dir(key).join("state/edits/staging")
+    }
+
+    fn staging_path(&self, key: &str, tx_id: Uuid) -> PathBuf {
+        self.staging_dir(key).join(format!("{tx_id}.json"))
+    }
+
+    fn apply_lock_path(&self, key: &str) -> PathBuf {
+        self.object_dir(key).join("state/edits/.apply.lock")
+    }
+
+    fn transaction_dir(&self, key: &str) -> PathBuf {
+        self.object_dir(key).join("state/transactions")
+    }
+
+    fn journal_path(&self, key: &str, tx_id: Uuid) -> PathBuf {
+        self.transaction_dir(key).join(format!("{tx_id}.json"))
+    }
+
+    fn cancel_path(&self, key: &str, tx_id: Uuid) -> PathBuf {
+        self.transaction_dir(key)
+            .join(format!("{tx_id}.cancel.json"))
+    }
+
+    fn snapshot_path(&self, key: &str, hash: &str) -> PathBuf {
+        self.object_dir(key)
+            .join("state/edits/history/snapshots")
+            .join(format!("{hash}.bin"))
+    }
+
+    fn history_dir(&self, key: &str) -> PathBuf {
+        self.object_dir(key).join("state/edits/history")
+    }
+
+    fn history_version_path(&self, key: &str, version: u64) -> PathBuf {
+        self.history_dir(key)
+            .join(history_version_file_name(version))
     }
 }
 
@@ -349,6 +668,13 @@ fn read_cached_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
             context: format!("cached artifact at {}", path.display()),
             source,
         })
+}
+
+fn read_required_json<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T> {
+    read_cached_json(path)?.ok_or_else(|| DotallError::InvalidSourcePath {
+        path: path.to_path_buf(),
+        reason: format!("missing {label}"),
+    })
 }
 
 fn cache_name<'a>(name: &'a str, label: &str) -> Result<&'a str> {
@@ -422,4 +748,18 @@ pub(crate) fn resolve_source(
         });
     }
     Ok((key, source))
+}
+
+fn map_history_version_exists(relative_path: &str, version: u64, err: DotallError) -> DotallError {
+    if matches!(
+        &err,
+        DotallError::Io { source, .. } if source.kind() == std::io::ErrorKind::AlreadyExists
+    ) {
+        DotallError::HistoryVersionExists {
+            path: Path::new(relative_path).to_path_buf(),
+            version,
+        }
+    } else {
+        err
+    }
 }

@@ -1,6 +1,7 @@
 //! Format registration and discovery contracts.
 //!
-//! Edit operations are intentionally omitted until the dedicated edit plan lands.
+//! Stage/apply orchestration is owned by [`crate::orchestrate::Engine`]; handlers
+//! only validate semantic operations and surgically patch source bytes.
 
 mod types;
 
@@ -18,6 +19,14 @@ pub trait FormatHandler: Send + Sync {
     fn parse(&self, source: &Path) -> Result<ArtifactEnvelope>;
     fn inspect(&self, model: &ArtifactEnvelope) -> Result<Inspection>;
     fn read(&self, model: &ArtifactEnvelope, request: &ReadRequest) -> Result<ReadResponse>;
+
+    fn validate_edit(
+        &self,
+        model: &ArtifactEnvelope,
+        operations: &[SemanticOperation],
+    ) -> Result<ValidatedEdit>;
+
+    fn apply_edit(&self, source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput>;
 }
 
 #[derive(Default)]
@@ -83,6 +92,18 @@ mod tests {
 
         fn read(&self, _model: &ArtifactEnvelope, _request: &ReadRequest) -> Result<ReadResponse> {
             unreachable!("selection test does not read")
+        }
+
+        fn validate_edit(
+            &self,
+            _model: &ArtifactEnvelope,
+            _operations: &[SemanticOperation],
+        ) -> Result<ValidatedEdit> {
+            unreachable!("selection test does not validate edits")
+        }
+
+        fn apply_edit(&self, _source: &Path, _edit: &ValidatedEdit) -> Result<PatchedOutput> {
+            unreachable!("selection test does not apply edits")
         }
     }
 

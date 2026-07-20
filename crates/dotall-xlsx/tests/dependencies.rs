@@ -61,6 +61,13 @@ fn builds_forward_and_reverse_dependencies_without_expanding_ranges() {
             .iter()
             .any(|edge| edge.from_element_id == range_dependent.element_id)
     );
+
+    let sparse_reverse = graph.reverse_at("Inputs", "A5");
+    assert_eq!(sparse_reverse.len(), 1);
+    assert_eq!(
+        sparse_reverse[0].from_element_id,
+        range_dependent.element_id
+    );
 }
 
 #[test]

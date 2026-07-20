@@ -1,5 +1,6 @@
 pub mod dependencies;
 pub mod detection;
+pub mod edits;
 pub mod format;
 pub mod ids;
 pub mod model;
