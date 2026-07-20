@@ -1,4 +1,7 @@
-use dotall_mcp::params::{CapabilitiesParams, DepsParams, FileParams, ReadParams, StatusParams};
+use dotall_core::DotallStore;
+use dotall_mcp::params::{
+    CapabilitiesParams, DepsParams, FileParams, InitParams, ReadParams, StatusParams,
+};
 use dotall_mcp::response::ToolResponse;
 use dotall_mcp::server::{DotallServer, FlushOnClose};
 use rmcp::handler::server::wrapper::Parameters;
@@ -122,4 +125,69 @@ async fn inspect_read_status_and_deps_return_engine_data() {
     assert_eq!(status.data["tracked_count"], 1);
     assert!(status.data["objects"][0]["source_hash"].is_string());
     assert_eq!(status.data["objects"][0]["version_count"], 0);
+}
+
+#[tokio::test]
+async fn init_rebinds_the_session_for_subsequent_file_tools() {
+    let workspace_a = tempdir().expect("workspace A");
+    let workspace_b = tempdir().expect("workspace B");
+    let file_b = workspace_b.path().join("financials.xlsx");
+    workbook_fixture(&file_b);
+    let server =
+        DotallServer::open_or_init(workspace_a.path(), FlushOnClose::default()).expect("server");
+
+    let init = server
+        .dotall_init(Parameters(InitParams {
+            workspace: workspace_b.path().display().to_string(),
+        }))
+        .await
+        .0;
+    assert!(matches!(init, ToolResponse::Success { .. }));
+
+    let inspect = server
+        .dotall_inspect(Parameters(FileParams {
+            file: file_b.display().to_string(),
+        }))
+        .await
+        .0;
+    let ToolResponse::Success {
+        result: inspect, ..
+    } = inspect
+    else {
+        panic!("inspect should use workspace B after init");
+    };
+    assert_eq!(inspect.data["inspection"]["format_id"], "xlsx");
+}
+
+#[tokio::test]
+async fn status_rebinds_the_session_for_subsequent_file_tools() {
+    let workspace_a = tempdir().expect("workspace A");
+    let workspace_b = tempdir().expect("workspace B");
+    let file_b = workspace_b.path().join("financials.xlsx");
+    workbook_fixture(&file_b);
+    DotallStore::init(workspace_b.path()).expect("initialize workspace B");
+    let server =
+        DotallServer::open_or_init(workspace_a.path(), FlushOnClose::default()).expect("server");
+
+    let status = server
+        .dotall_status(Parameters(StatusParams {
+            workspace: workspace_b.path().display().to_string(),
+        }))
+        .await
+        .0;
+    assert!(matches!(status, ToolResponse::Success { .. }));
+
+    let inspect = server
+        .dotall_inspect(Parameters(FileParams {
+            file: file_b.display().to_string(),
+        }))
+        .await
+        .0;
+    let ToolResponse::Success {
+        result: inspect, ..
+    } = inspect
+    else {
+        panic!("inspect should use workspace B after status");
+    };
+    assert_eq!(inspect.data["inspection"]["format_id"], "xlsx");
 }

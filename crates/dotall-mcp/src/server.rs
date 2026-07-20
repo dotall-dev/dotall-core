@@ -64,9 +64,23 @@ impl ServerOptions {
 /// Per-connection state shared by future MCP tool handlers.
 #[derive(Clone)]
 pub struct DotallServer {
-    engine: Arc<Mutex<Engine>>,
-    workspace_root: PathBuf,
+    session: Arc<Mutex<SessionInner>>,
     flush_on_close: FlushOnClose,
+}
+
+struct SessionInner {
+    engine: Engine,
+    workspace_root: PathBuf,
+}
+
+impl SessionInner {
+    fn from_store(store: DotallStore) -> Self {
+        let workspace_root = store.workspace().root().to_path_buf();
+        Self {
+            engine: Engine::new(store, registry()),
+            workspace_root,
+        }
+    }
 }
 
 impl DotallServer {
@@ -80,10 +94,8 @@ impl DotallServer {
     }
 
     pub fn from_store(store: DotallStore, flush_on_close: FlushOnClose) -> Self {
-        let workspace_root = store.workspace().root().to_path_buf();
         Self {
-            engine: Arc::new(Mutex::new(Engine::new(store, registry()))),
-            workspace_root,
+            session: Arc::new(Mutex::new(SessionInner::from_store(store))),
             flush_on_close,
         }
     }
@@ -92,12 +104,8 @@ impl DotallServer {
         self.flush_on_close
     }
 
-    pub fn engine(&self) -> Arc<Mutex<Engine>> {
-        Arc::clone(&self.engine)
-    }
-
-    pub fn workspace_root(&self) -> &Path {
-        &self.workspace_root
+    fn session(&self) -> Arc<Mutex<SessionInner>> {
+        Arc::clone(&self.session)
     }
 }
 
@@ -111,13 +119,18 @@ impl DotallServer {
         &self,
         Parameters(params): Parameters<InitParams>,
     ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
         Json(
             blocking(move || {
-                let path = PathBuf::from(params.workspace);
-                let initialized = !path.join(".all/manifest.json").is_file();
-                let store = DotallStore::init(&path)?;
+                let workspace = canonical_workspace(&params.workspace)?;
+                let initialized = !workspace.join(".all/manifest.json").is_file();
+                let session = server.session();
+                let mut session = session.lock().map_err(lock_error)?;
+                if session.workspace_root != workspace {
+                    *session = SessionInner::from_store(DotallStore::init(&workspace)?);
+                }
                 json_result(json!({
-                    "workspace": store.workspace().root(),
+                    "workspace": session.workspace_root,
                     "initialized": initialized,
                 }))
             })
@@ -133,25 +146,18 @@ impl DotallServer {
         &self,
         Parameters(params): Parameters<StatusParams>,
     ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
         Json(
             blocking(move || {
-                let store = DotallStore::open(params.workspace)?;
-                let objects = store.status()?;
-                let objects = objects
-                    .into_iter()
-                    .map(|object| {
-                        let tracked = &store.manifest().objects[&object.path];
-                        json!({
-                            "path": object.path,
-                            "format_id": object.format_id,
-                            "state": object.state,
-                            "source_hash": tracked.fingerprint.blake3,
-                            "version_count": tracked.version_count,
-                        })
-                    })
-                    .collect::<Vec<_>>();
+                let workspace = canonical_workspace(&params.workspace)?;
+                let session = server.session();
+                let mut session = session.lock().map_err(lock_error)?;
+                if session.workspace_root != workspace {
+                    *session = SessionInner::from_store(DotallStore::open(&workspace)?);
+                }
+                let objects = session.engine.status()?;
                 json_result(json!({
-                    "workspace": store.workspace().root(),
+                    "workspace": session.workspace_root,
                     "tracked_count": objects.len(),
                     "objects": objects,
                 }))
@@ -171,11 +177,11 @@ impl DotallServer {
         let server = self.clone();
         Json(
             blocking(move || {
-                let relative = relative_path_for_file(&server, params.file)?;
-                let engine = server.engine();
-                let mut engine = engine.lock().map_err(lock_error)?;
+                let session = server.session();
+                let mut session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
                 json_result(
-                    serde_json::to_value(engine.inspect(&relative)?)
+                    serde_json::to_value(session.engine.inspect(&relative)?)
                         .map_err(serialization_error)?,
                 )
             })
@@ -194,10 +200,10 @@ impl DotallServer {
         let server = self.clone();
         Json(
             blocking(move || {
-                let relative = relative_path_for_file(&server, params.file)?;
-                let engine = server.engine();
-                let mut engine = engine.lock().map_err(lock_error)?;
-                let inspection = engine.inspect(&relative)?;
+                let session = server.session();
+                let mut session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
+                let inspection = session.engine.inspect(&relative)?;
                 let selectors = inspection
                     .inspection
                     .capabilities
@@ -230,7 +236,6 @@ impl DotallServer {
         let server = self.clone();
         Json(
             blocking(move || {
-                let relative = relative_path_for_file(&server, params.file)?;
                 let selector = match (params.selector_kind, params.selector) {
                     (Some(kind), Some(value)) => Some(ReadSelector { kind, value }),
                     (None, None) => None,
@@ -249,10 +254,11 @@ impl DotallServer {
                     max_tokens: params.max_tokens.unwrap_or(1_500),
                     continuation: params.continuation,
                 };
-                let engine = server.engine();
-                let mut engine = engine.lock().map_err(lock_error)?;
+                let session = server.session();
+                let mut session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
                 json_result(
-                    serde_json::to_value(engine.read(&relative, &request)?)
+                    serde_json::to_value(session.engine.read(&relative, &request)?)
                         .map_err(serialization_error)?,
                 )
             })
@@ -269,7 +275,19 @@ impl DotallServer {
         Parameters(params): Parameters<DepsParams>,
     ) -> Json<ToolResponse<JsonResult>> {
         let server = self.clone();
-        Json(blocking(move || deps(&server, params)).await)
+        Json(
+            blocking(move || {
+                let session = server.session();
+                let mut session = session.lock().map_err(lock_error)?;
+                let relative = relative_path_for_file(&session.workspace_root, params.file)?;
+                json_result(
+                    session
+                        .engine
+                        .deps(&relative, &params.cell, params.dependents)?,
+                )
+            })
+            .await,
+        )
     }
 }
 
@@ -302,78 +320,12 @@ fn lock_error<T>(_: std::sync::PoisonError<T>) -> DotallError {
     invalid_request("<session>", "MCP engine session lock is poisoned")
 }
 
-#[cfg(feature = "xlsx")]
-fn deps(server: &DotallServer, params: DepsParams) -> DotallResult<JsonResult> {
-    use dotall_xlsx::WorkbookModel;
-    use dotall_xlsx::dependencies::{DependencyDirection, ensure_and_query};
-
-    let relative = relative_path_for_file(server, &params.file)?;
-    let engine = server.engine();
-    let mut engine = engine.lock().map_err(lock_error)?;
-    let model = engine.load_model(&relative)?;
-    drop(engine);
-
-    let workbook: WorkbookModel =
-        serde_json::from_value(model.envelope.payload.clone()).map_err(|source| {
-            DotallError::Serialization {
-                context: "XLSX workbook artifact payload".into(),
-                source,
-            }
-        })?;
-    let element_id = cell_element_id(&workbook, &params.cell)?;
-    let direction = if params.dependents {
-        DependencyDirection::Reverse
-    } else {
-        DependencyDirection::Forward
-    };
-    let store = DotallStore::open(server.workspace_root())?;
-    let result = ensure_and_query(
-        &store,
-        &relative,
-        &model.envelope,
-        &model.source_hash,
-        &element_id,
-        direction,
-    )?;
-    json_result(serde_json::to_value(result).map_err(serialization_error)?)
-}
-
-#[cfg(not(feature = "xlsx"))]
-fn deps(_server: &DotallServer, _params: DepsParams) -> DotallResult<JsonResult> {
-    Err(DotallError::UnsupportedCapability {
-        format_id: "dotall-mcp".into(),
-        capability: "deps".into(),
-        available: vec!["Rebuild dotall-mcp with the xlsx feature.".into()],
+fn canonical_workspace(workspace: &str) -> DotallResult<PathBuf> {
+    let path = Path::new(workspace);
+    path.canonicalize().map_err(|source| DotallError::Io {
+        path: path.to_path_buf(),
+        source,
     })
-}
-
-#[cfg(feature = "xlsx")]
-fn cell_element_id(workbook: &dotall_xlsx::WorkbookModel, selector: &str) -> DotallResult<String> {
-    let (sheet_name, address) =
-        selector
-            .rsplit_once('!')
-            .ok_or_else(|| DotallError::UnsupportedCapability {
-                format_id: "xlsx".into(),
-                capability: "invalid cell selector".into(),
-                available: vec!["use Sheet!A1".into()],
-            })?;
-    let address = address.to_ascii_uppercase();
-    workbook
-        .sheets
-        .iter()
-        .find(|sheet| sheet.name.eq_ignore_ascii_case(sheet_name))
-        .and_then(|sheet| {
-            sheet
-                .cells
-                .iter()
-                .find(|cell| cell.address.eq_ignore_ascii_case(&address))
-        })
-        .map(|cell| cell.element_id.clone())
-        .ok_or_else(|| DotallError::UnsupportedCapability {
-            format_id: "xlsx".into(),
-            capability: format!("unknown cell selector {selector}"),
-            available: vec!["use an existing Sheet!A1 cell address".into()],
-        })
 }
 
 #[cfg(feature = "xlsx")]

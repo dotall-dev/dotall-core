@@ -31,6 +31,15 @@ pub struct FileReadResult {
     pub response: ReadResponse,
 }
 
+#[derive(Debug, Serialize)]
+pub struct EngineStatus {
+    pub path: String,
+    pub format_id: String,
+    pub state: ObjectState,
+    pub source_hash: String,
+    pub version_count: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ModelLoadResult {
     pub envelope: ArtifactEnvelope,
@@ -117,6 +126,46 @@ impl Engine {
             source_hash,
             model_cache_hit,
         })
+    }
+
+    pub fn status(&self) -> Result<Vec<EngineStatus>> {
+        self.store
+            .status()?
+            .into_iter()
+            .map(|object| {
+                let tracked = &self.store.manifest().objects[&object.path];
+                Ok(EngineStatus {
+                    path: object.path,
+                    format_id: object.format_id,
+                    state: object.state,
+                    source_hash: tracked.fingerprint.blake3.clone(),
+                    version_count: tracked.version_count,
+                })
+            })
+            .collect()
+    }
+
+    pub fn deps(
+        &mut self,
+        relative: &str,
+        selector: &str,
+        dependents: bool,
+    ) -> Result<serde_json::Value> {
+        let LoadedModel {
+            key,
+            handler,
+            model,
+            source_hash,
+            ..
+        } = self.model(relative)?;
+        handler.query_dependencies(
+            &self.store,
+            &key,
+            &model,
+            &source_hash,
+            selector,
+            dependents,
+        )
     }
 
     pub fn read(&mut self, relative: &str, request: &ReadRequest) -> Result<FileReadResult> {

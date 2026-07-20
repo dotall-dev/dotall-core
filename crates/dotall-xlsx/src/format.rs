@@ -5,7 +5,7 @@ use dotall_core::registry::{
     FormatDescriptor, FormatHandler, Inspection, PatchedOutput, ReadRequest, ReadResponse,
     ReadSelector, ReadSuggestion, SemanticOperation, ValidatedEdit,
 };
-use dotall_core::{DotallError, Result};
+use dotall_core::{DotallError, DotallStore, Result};
 use serde_json::json;
 
 use crate::detection;
@@ -190,6 +190,36 @@ impl FormatHandler for XlsxFormat {
             truncated: false,
             continuation: None,
             next_actions,
+        })
+    }
+
+    fn query_dependencies(
+        &self,
+        store: &DotallStore,
+        relative: &str,
+        model: &ArtifactEnvelope,
+        source_hash: &str,
+        selector: &str,
+        dependents: bool,
+    ) -> Result<serde_json::Value> {
+        let workbook = decode(model)?;
+        let element_id = resolve_cell_element_id(&workbook, selector)?;
+        let direction = if dependents {
+            crate::dependencies::DependencyDirection::Reverse
+        } else {
+            crate::dependencies::DependencyDirection::Forward
+        };
+        let result = crate::dependencies::ensure_and_query(
+            store,
+            relative,
+            model,
+            source_hash,
+            &element_id,
+            direction,
+        )?;
+        serde_json::to_value(result).map_err(|source| DotallError::Serialization {
+            context: "XLSX dependency query".into(),
+            source,
         })
     }
 
@@ -393,6 +423,35 @@ fn decode(model: &ArtifactEnvelope) -> Result<WorkbookModel> {
         context: "XLSX workbook artifact payload".into(),
         source,
     })
+}
+
+fn resolve_cell_element_id(workbook: &WorkbookModel, selector: &str) -> Result<String> {
+    let (sheet_name, address) =
+        selector
+            .rsplit_once('!')
+            .ok_or_else(|| DotallError::UnsupportedCapability {
+                format_id: FORMAT_ID.into(),
+                capability: "invalid cell selector".into(),
+                available: vec!["use Sheet!A1".into()],
+            })?;
+    let address = address.to_ascii_uppercase();
+
+    workbook
+        .sheets
+        .iter()
+        .find(|sheet| sheet.name.eq_ignore_ascii_case(sheet_name))
+        .and_then(|sheet| {
+            sheet
+                .cells
+                .iter()
+                .find(|cell| cell.address.eq_ignore_ascii_case(&address))
+        })
+        .map(|cell| cell.element_id.clone())
+        .ok_or_else(|| DotallError::UnsupportedCapability {
+            format_id: FORMAT_ID.into(),
+            capability: format!("unknown cell selector {selector}"),
+            available: vec!["use an existing Sheet!A1 cell address".into()],
+        })
 }
 
 fn find_sheet<'a>(workbook: &'a WorkbookModel, name: &str) -> Result<&'a crate::model::SheetModel> {

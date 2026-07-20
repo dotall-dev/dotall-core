@@ -9,10 +9,6 @@ use dotall_core::{
     Actor, ActorKind, AppliedEdit, DotallError, DotallStore, EditRequest, Engine, HistoryRecord,
     HistorySummary, ObjectStatus, StagedEdit,
 };
-#[cfg(feature = "xlsx")]
-use dotall_xlsx::WorkbookModel;
-#[cfg(feature = "xlsx")]
-use dotall_xlsx::dependencies::{DependencyDirection, ensure_and_query};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -636,67 +632,10 @@ fn selector_from_args(
 }
 
 #[cfg(feature = "xlsx")]
-fn resolve_cell_element_id(
-    model: &dotall_core::ArtifactEnvelope,
-    selector: &str,
-) -> dotall_core::Result<String> {
-    let (sheet_name, address) =
-        selector
-            .rsplit_once('!')
-            .ok_or_else(|| DotallError::UnsupportedCapability {
-                format_id: "xlsx".into(),
-                capability: "invalid cell selector".into(),
-                available: vec!["use Sheet!A1".into()],
-            })?;
-    let workbook: WorkbookModel =
-        serde_json::from_value(model.payload.clone()).map_err(|source| {
-            DotallError::Serialization {
-                context: "XLSX workbook artifact payload".into(),
-                source,
-            }
-        })?;
-    let address = address.to_ascii_uppercase();
-
-    workbook
-        .sheets
-        .iter()
-        .find(|sheet| sheet.name.eq_ignore_ascii_case(sheet_name))
-        .and_then(|sheet| {
-            sheet
-                .cells
-                .iter()
-                .find(|cell| cell.address.eq_ignore_ascii_case(&address))
-        })
-        .map(|cell| cell.element_id.clone())
-        .ok_or_else(|| DotallError::UnsupportedCapability {
-            format_id: "xlsx".into(),
-            capability: format!("unknown cell selector {selector}"),
-            available: vec!["use an existing Sheet!A1 cell address".into()],
-        })
-}
-
-#[cfg(feature = "xlsx")]
 fn run_deps(path: &Path, cell: &str, dependents: bool) -> dotall_core::Result<()> {
     let (store, relative) = open_file_workspace(path)?;
     let mut engine = Engine::new(store, default_registry());
-    let model = engine.load_model(&relative)?;
-    drop(engine);
-
-    let store = DotallStore::open(path)?;
-    let element_id = resolve_cell_element_id(&model.envelope, cell)?;
-    let direction = if dependents {
-        DependencyDirection::Reverse
-    } else {
-        DependencyDirection::Forward
-    };
-    let output = ensure_and_query(
-        &store,
-        &relative,
-        &model.envelope,
-        &model.source_hash,
-        &element_id,
-        direction,
-    )?;
+    let output = engine.deps(&relative, cell, dependents)?;
     print_json(&output);
     Ok(())
 }

@@ -3,21 +3,21 @@ use std::path::Path;
 use dotall_core::{DotallError, Result};
 
 use crate::response::ToolResponse;
-use crate::server::DotallServer;
 
 /// Resolves an absolute or workspace-relative file path to a UTF-8 workspace key.
-pub fn relative_path_for_file(server: &DotallServer, file: impl AsRef<Path>) -> Result<String> {
+pub fn relative_path_for_file(workspace_root: &Path, file: impl AsRef<Path>) -> Result<String> {
     let file = file.as_ref();
     let canonical = file.canonicalize().map_err(|source| DotallError::Io {
         path: file.to_path_buf(),
         source,
     })?;
-    let relative = canonical
-        .strip_prefix(server.workspace_root())
-        .map_err(|_| DotallError::InvalidSourcePath {
-            path: canonical.clone(),
-            reason: "file is outside the Dotall workspace".into(),
-        })?;
+    let relative =
+        canonical
+            .strip_prefix(workspace_root)
+            .map_err(|_| DotallError::InvalidSourcePath {
+                path: canonical.clone(),
+                reason: "file is outside the Dotall workspace".into(),
+            })?;
     relative_path_from_stripped(relative, &canonical)
 }
 
@@ -64,13 +64,10 @@ where
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::sync::MutexGuard;
 
-    use dotall_core::Engine;
     use tempfile::tempdir;
 
     use super::*;
-    use crate::server::{DotallServer, FlushOnClose};
 
     #[test]
     fn relative_path_for_file_strips_workspace_root() {
@@ -80,24 +77,9 @@ mod tests {
         let file = nested.join("book.xlsx");
         fs::write(&file, b"data").expect("source file");
 
-        let server =
-            DotallServer::open_or_init(temp.path(), FlushOnClose::default()).expect("init");
-
-        let relative = relative_path_for_file(&server, &file).expect("relative path");
+        let root = temp.path().canonicalize().expect("workspace root");
+        let relative = relative_path_for_file(&root, &file).expect("relative path");
 
         assert_eq!(relative, "docs/book.xlsx");
-    }
-
-    #[test]
-    fn open_or_init_wires_usable_engine() {
-        let temp = tempdir().expect("tempdir");
-        let server =
-            DotallServer::open_or_init(temp.path(), FlushOnClose::default()).expect("init");
-
-        assert!(temp.path().join(".all/manifest.json").is_file());
-
-        let engine = server.engine();
-        let guard: MutexGuard<'_, Engine> = engine.lock().expect("engine mutex");
-        drop(guard);
     }
 }
