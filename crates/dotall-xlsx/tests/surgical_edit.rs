@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Cursor, Read, Write};
 
-use dotall_core::registry::FormatHandler;
 use dotall_core::SemanticOperation;
-use dotall_xlsx::{parse_workbook, XlsxFormat};
+use dotall_core::registry::FormatHandler;
+use dotall_xlsx::{XlsxFormat, parse_workbook};
 use rust_xlsxwriter::Workbook;
 use tempfile::tempdir;
 use zip::write::SimpleFileOptions;
@@ -128,8 +128,10 @@ fn patches_string_cells_inline_when_workbook_has_no_shared_strings() {
         .apply_edit(&source, &edit)
         .expect("apply string edit");
 
-    assert!(worksheet_xml(&patched.bytes, "xl/worksheets/sheet1.xml")
-        .contains(r#"<c r="A1" t="inlineStr"><is><t>inline</t></is></c>"#));
+    assert!(
+        worksheet_xml(&patched.bytes, "xl/worksheets/sheet1.xml")
+            .contains(r#"<c r="A1" t="inlineStr"><is><t>inline</t></is></c>"#)
+    );
     assert!(!zip_entries(&patched.bytes).contains_key("xl/sharedStrings.xml"));
     assert_untouched_entries_are_identical(&before, &patched.bytes, &["xl/worksheets/sheet1.xml"]);
 }

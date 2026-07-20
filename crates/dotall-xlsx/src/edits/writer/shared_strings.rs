@@ -234,6 +234,14 @@ fn escape_attribute(value: &str) -> String {
     quick_xml::escape::escape(value).into_owned()
 }
 
+fn writer_error(message: impl Into<String>) -> DotallError {
+    DotallError::Format {
+        format_id: FORMAT_ID.into(),
+        path: "<xlsx shared strings writer>".into(),
+        message: message.into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::patch;
@@ -293,13 +301,5 @@ mod tests {
                 .windows(b"<si><t>third</t></si>".len())
                 .any(|window| window == b"<si><t>third</t></si>")
         );
-    }
-}
-
-fn writer_error(message: impl Into<String>) -> DotallError {
-    DotallError::Format {
-        format_id: FORMAT_ID.into(),
-        path: "<xlsx shared strings writer>".into(),
-        message: message.into(),
     }
 }

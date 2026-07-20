@@ -4,13 +4,13 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use dotall_core::{DotallError, PatchedOutput, Result, ValidatedEdit};
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
-use crate::edits::{parse_validated_operations, EditableValue, XlsxEditOp};
 use crate::FORMAT_ID;
+use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
 use super::shared_strings;
 use super::worksheet;
