@@ -108,6 +108,53 @@ impl DotallServer {
         self.flush_on_close
     }
 
+    /// Best-effort applies every pending transaction when the session closes.
+    ///
+    /// A failure for one file is reported to stderr and does not prevent other
+    /// tracked files from being flushed.
+    pub fn flush_staged(&self) {
+        if !self.flush_on_close.enabled() {
+            return;
+        }
+
+        let session = self.session();
+        let Ok(mut session) = session.lock() else {
+            eprintln!("dotall-mcp: unable to flush staged edits: session lock is poisoned");
+            return;
+        };
+
+        let tracked = match session.engine.status() {
+            Ok(tracked) => tracked,
+            Err(error) => {
+                eprintln!("dotall-mcp: unable to enumerate staged edits: {error}");
+                return;
+            }
+        };
+
+        for object in tracked {
+            let staged = match session.engine.staged(&object.path) {
+                Ok(staged) => staged,
+                Err(error) => {
+                    eprintln!(
+                        "dotall-mcp: unable to inspect staged edits for {}: {error}",
+                        object.path
+                    );
+                    continue;
+                }
+            };
+            if staged.is_empty() {
+                continue;
+            }
+
+            if let Err(error) = session.engine.apply_all(&object.path) {
+                eprintln!(
+                    "dotall-mcp: unable to flush staged edits for {}: {error}",
+                    object.path
+                );
+            }
+        }
+    }
+
     fn session(&self) -> Arc<Mutex<SessionInner>> {
         Arc::clone(&self.session)
     }

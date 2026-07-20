@@ -3,6 +3,7 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
+#[schemars(extend("type" = "object"))]
 pub enum ToolResponse<T> {
     Success {
         result: T,
