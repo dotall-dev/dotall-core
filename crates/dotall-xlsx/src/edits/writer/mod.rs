@@ -17,3 +17,10 @@ pub(crate) fn apply(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
 pub(crate) fn validate_rename_safety(package: &[u8], from: &str) -> Result<()> {
     workbook::validate_rename_safety(package, from)
 }
+
+pub(crate) fn delete_sheet_references(
+    package: &[u8],
+    name: &str,
+) -> Result<workbook::DeleteSheetReferences> {
+    workbook::delete_sheet_references(package, name)
+}

@@ -12,8 +12,8 @@ use serde_json::Value;
 use crate::dependencies::{DependencyGraph, build};
 use crate::edits::impact::{ImpactOperation, validate_impact};
 use crate::edits::ops::{
-    EditableCell, EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp, format_cell_value,
-    format_editable_value,
+    DeleteSheetPolicy, EditableCell, EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp,
+    format_cell_value, format_editable_value,
 };
 use crate::ids;
 use crate::model::{CellModel, CellValue, SCHEMA_ID as MODEL_SCHEMA_ID, WorkbookModel};
@@ -71,7 +71,10 @@ pub fn validate_with_source(
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
     if operations.iter().any(|operation| {
-        matches!(operation.kind.as_str(), "add_sheet" | "rename_sheet")
+        matches!(
+            operation.kind.as_str(),
+            "add_sheet" | "rename_sheet" | "delete_sheet"
+        )
     }) {
         return validate_sheet_operation(source, model, operations);
     }
@@ -261,7 +264,65 @@ fn validate_sheet_operation(
                 },
             })
         }
+        "delete_sheet" => {
+            let name = required_sheet_name(&operation.payload, "name")?;
+            let canonical_name = find_sheet(&workbook, &name)?.name.clone();
+            let dependency_policy = parse_delete_sheet_policy(&operation.payload)?;
+            let references =
+                crate::edits::writer::delete_sheet_references(&package, &canonical_name)?;
+            if dependency_policy == DeleteSheetPolicy::RejectIfReferenced
+                && (!references.formula_cells.is_empty() || !references.defined_names.is_empty())
+            {
+                let mut inbound = references.formula_cells;
+                inbound.extend(references.defined_names);
+                return Err(format_error(format!(
+                    "delete_sheet `{canonical_name}` is referenced by: {}",
+                    inbound.join(", ")
+                )));
+            }
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "delete_sheet".into(),
+                    payload: serde_json::json!({
+                        "name": canonical_name,
+                        "dependency_policy": match dependency_policy {
+                            DeleteSheetPolicy::RejectIfReferenced => "reject_if_referenced",
+                            DeleteSheetPolicy::ReplaceReferencesWithRefError =>
+                                "replace_references_with_ref_error",
+                        },
+                    }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: canonical_name.clone(),
+                    element_id: format!("sheet:{canonical_name}"),
+                    change: "delete_sheet".into(),
+                    before: Some(canonical_name),
+                    after: None,
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["references are rewritten to #REF! on apply".into()],
+                },
+            })
+        }
         _ => Err(format_error("unsupported sheet structural edit")),
+    }
+}
+
+fn parse_delete_sheet_policy(payload: &Value) -> Result<DeleteSheetPolicy> {
+    match payload
+        .get("dependency_policy")
+        .and_then(Value::as_str)
+        .unwrap_or("reject_if_referenced")
+    {
+        "reject_if_referenced" => Ok(DeleteSheetPolicy::RejectIfReferenced),
+        "replace_references_with_ref_error" => Ok(DeleteSheetPolicy::ReplaceReferencesWithRefError),
+        value => Err(format_error(format!(
+            "delete_sheet has unsupported dependency_policy `{value}`"
+        ))),
     }
 }
 
@@ -691,7 +752,10 @@ fn validate_sheet_name(name: &str) -> Result<()> {
             "Excel sheet names cannot begin or end with an apostrophe",
         ));
     }
-    if name.chars().any(|character| matches!(character, '[' | ']' | ':' | '*' | '?' | '/' | '\\')) {
+    if name
+        .chars()
+        .any(|character| matches!(character, '[' | ']' | ':' | '*' | '?' | '/' | '\\'))
+    {
         return Err(format_error(
             "Excel sheet names cannot contain []:*?/\\ characters",
         ));
@@ -754,7 +818,9 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             XlsxEditOp::SetRange { .. } => {
                 unreachable!("set_range is expanded into cell edits during validation")
             }
-            XlsxEditOp::AddSheet { .. } | XlsxEditOp::RenameSheet { .. } => {
+            XlsxEditOp::AddSheet { .. }
+            | XlsxEditOp::RenameSheet { .. }
+            | XlsxEditOp::DeleteSheet { .. } => {
                 unreachable!("sheet edits are validated separately")
             }
         })
@@ -855,7 +921,9 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         XlsxEditOp::SetRange { .. } => {
             unreachable!("set_range is expanded into cell edits during validation")
         }
-        XlsxEditOp::AddSheet { .. } | XlsxEditOp::RenameSheet { .. } => {
+        XlsxEditOp::AddSheet { .. }
+        | XlsxEditOp::RenameSheet { .. }
+        | XlsxEditOp::DeleteSheet { .. } => {
             unreachable!("sheet edits are validated separately")
         }
     }

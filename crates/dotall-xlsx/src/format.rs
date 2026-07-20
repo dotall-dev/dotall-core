@@ -360,6 +360,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Rejects charts, tables, defined names, and other unsupported parts that reference the renamed sheet."
                 .into(),
         },
+        EditCapability {
+            operation: "delete_sheet".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Delete a worksheet after checking inbound formula and defined-name references.".into(),
+            example: json!({
+                "kind": "delete_sheet",
+                "payload": {
+                    "name": "Sheet1",
+                    "dependency_policy": "reject_if_referenced"
+                }
+            }),
+            safety: "Rejects the last visible sheet; either lists inbound references or rewrites them to #REF! while removing only orphaned drawings and charts."
+                .into(),
+        },
     ]
 }
 

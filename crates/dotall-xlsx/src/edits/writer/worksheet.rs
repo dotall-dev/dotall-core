@@ -23,6 +23,7 @@ pub(super) fn patch(
             | XlsxEditOp::DeleteColumn { .. }
             | XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
+            | XlsxEditOp::DeleteSheet { .. }
             | XlsxEditOp::SetRange { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
@@ -122,6 +123,7 @@ pub(super) fn patch(
                 | XlsxEditOp::DeleteColumn { .. }
                 | XlsxEditOp::AddSheet { .. }
                 | XlsxEditOp::RenameSheet { .. }
+                | XlsxEditOp::DeleteSheet { .. }
                 | XlsxEditOp::SetRange { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
@@ -144,6 +146,7 @@ pub(super) fn patch(
             | XlsxEditOp::DeleteColumn { .. }
             | XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
+            | XlsxEditOp::DeleteSheet { .. }
             | XlsxEditOp::SetRange { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
@@ -266,6 +269,7 @@ fn render_new_cell(
         | XlsxEditOp::DeleteColumn { .. }
         | XlsxEditOp::AddSheet { .. }
         | XlsxEditOp::RenameSheet { .. }
+        | XlsxEditOp::DeleteSheet { .. }
         | XlsxEditOp::SetRange { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
@@ -433,6 +437,7 @@ fn render_cell_parts(
         | XlsxEditOp::DeleteColumn { .. }
         | XlsxEditOp::AddSheet { .. }
         | XlsxEditOp::RenameSheet { .. }
+        | XlsxEditOp::DeleteSheet { .. }
         | XlsxEditOp::SetRange { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }

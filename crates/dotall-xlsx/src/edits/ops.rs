@@ -53,6 +53,19 @@ pub enum XlsxEditOp {
         from: String,
         to: String,
     },
+    DeleteSheet {
+        name: String,
+        #[serde(default)]
+        dependency_policy: DeleteSheetPolicy,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteSheetPolicy {
+    #[default]
+    RejectIfReferenced,
+    ReplaceReferencesWithRefError,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

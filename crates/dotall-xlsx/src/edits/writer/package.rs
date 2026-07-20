@@ -33,7 +33,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
         let bytes = rebuild_package(
             &original,
             &patch.replacements,
-            &BTreeSet::new(),
+            &patch.removals,
             &patch.additions,
         )?;
         return Ok(PatchedOutput {
@@ -46,7 +46,20 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
         let bytes = rebuild_package(
             &original,
             &patch.replacements,
-            &BTreeSet::new(),
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [XlsxEditOp::DeleteSheet { name, .. }] = operations.as_slice() {
+        let patch = workbook::delete_sheet(&original, name)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
             &patch.additions,
         )?;
         return Ok(PatchedOutput {
@@ -138,6 +151,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::DeleteColumn { .. }
                 | XlsxEditOp::AddSheet { .. }
                 | XlsxEditOp::RenameSheet { .. }
+                | XlsxEditOp::DeleteSheet { .. }
                 | XlsxEditOp::SetRange { .. }
         )
     }) {
@@ -160,6 +174,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::DeleteColumn { .. }
             | XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
+            | XlsxEditOp::DeleteSheet { .. }
             | XlsxEditOp::SetRange { .. } => {
                 unreachable!("structural operations return above")
             }

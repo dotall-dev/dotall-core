@@ -5,7 +5,8 @@ mod validate;
 pub(crate) mod writer;
 
 pub use ops::{
-    EditableCell, EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp, format_cell_value,
+    DeleteSheetPolicy, EditableCell, EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp,
+    format_cell_value,
 };
 pub use validate::{validate, validate_with_source};
 
@@ -67,6 +68,25 @@ pub(crate) fn parse_validated_operations(
             "rename_sheet" => Ok(XlsxEditOp::RenameSheet {
                 from: required_string(operation, "from")?,
                 to: required_string(operation, "to")?,
+            }),
+            "delete_sheet" => Ok(XlsxEditOp::DeleteSheet {
+                name: required_string(operation, "name")?,
+                dependency_policy: match operation
+                    .payload
+                    .get("dependency_policy")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("reject_if_referenced")
+                {
+                    "reject_if_referenced" => DeleteSheetPolicy::RejectIfReferenced,
+                    "replace_references_with_ref_error" => {
+                        DeleteSheetPolicy::ReplaceReferencesWithRefError
+                    }
+                    value => {
+                        return Err(invalid_operation(format!(
+                            "unsupported delete_sheet dependency_policy `{value}`"
+                        )));
+                    }
+                },
             }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",

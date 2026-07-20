@@ -12,6 +12,7 @@ use crate::dependencies::reference_spans;
 pub(super) struct PackagePatch {
     pub replacements: BTreeMap<String, Vec<u8>>,
     pub additions: BTreeMap<String, Vec<u8>>,
+    pub removals: BTreeSet<String>,
 }
 
 pub(super) fn add_sheet(package: &[u8], name: &str, after: Option<&str>) -> Result<PackagePatch> {
@@ -83,6 +84,7 @@ pub(super) fn add_sheet(package: &[u8], name: &str, after: Option<&str>) -> Resu
             format!("xl/worksheets/sheet{part_number}.xml"),
             br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData/></worksheet>"#.to_vec(),
         )]),
+        removals: BTreeSet::new(),
     })
 }
 
@@ -114,6 +116,97 @@ pub(super) fn rename_sheet(package: &[u8], from: &str, to: &str) -> Result<Packa
     Ok(PackagePatch {
         replacements,
         additions: BTreeMap::new(),
+        removals: BTreeSet::new(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeleteSheetReferences {
+    pub sheet_name: String,
+    pub formula_cells: Vec<String>,
+    pub defined_names: Vec<String>,
+}
+
+pub(crate) fn delete_sheet_references(package: &[u8], name: &str) -> Result<DeleteSheetReferences> {
+    let workbook = entry_bytes(package, "xl/workbook.xml")?;
+    let sheets = sheets(&workbook)?;
+    let sheet = find_sheet(&sheets, name)?;
+    if sheets.iter().filter(|sheet| sheet.visible).count() <= 1 && sheet.visible {
+        return Err(writer_error("cannot delete the last visible sheet"));
+    }
+    let mut formula_cells = Vec::new();
+    for (sheet_name, path) in worksheet_paths_with_names(package, &workbook)? {
+        for address in formula_cells_referencing_sheet(&entry_bytes(package, &path)?, &sheet.name)?
+        {
+            formula_cells.push(format!("{sheet_name}!{address}"));
+        }
+    }
+    let defined_names = defined_names_referencing_sheet(&workbook, &sheet.name)?;
+    Ok(DeleteSheetReferences {
+        sheet_name: sheet.name.clone(),
+        formula_cells,
+        defined_names,
+    })
+}
+
+pub(super) fn delete_sheet(package: &[u8], name: &str) -> Result<PackagePatch> {
+    let workbook = entry_bytes(package, "xl/workbook.xml")?;
+    let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
+    let content_types = entry_bytes(package, "[Content_Types].xml")?;
+    let sheets = sheets(&workbook)?;
+    let sheet = find_sheet(&sheets, name)?;
+    if sheets.iter().filter(|sheet| sheet.visible).count() <= 1 && sheet.visible {
+        return Err(writer_error("cannot delete the last visible sheet"));
+    }
+    let worksheet = relationship_targets(&relationships)?
+        .get(&sheet.relationship_id)
+        .map(|target| normalize_target(target))
+        .ok_or_else(|| {
+            writer_error(format!(
+                "workbook relationship `{}` is missing",
+                sheet.relationship_id
+            ))
+        })?;
+    let worksheet_relationships = relationship_part_name(&worksheet);
+    let mut removals = BTreeSet::from([worksheet.clone(), worksheet_relationships.clone()]);
+    removals.extend(orphaned_visual_parts(package, &worksheet_relationships)?);
+    let mut replacements = BTreeMap::new();
+    replacements.insert(
+        "xl/workbook.xml".into(),
+        rewrite_defined_name_formulas(
+            &remove_span(&workbook, sheet.tag_start, sheet.tag_end)?,
+            &sheet.name,
+        )?,
+    );
+    replacements.insert(
+        "xl/_rels/workbook.xml.rels".into(),
+        remove_relationship(&relationships, &sheet.relationship_id)?,
+    );
+    replacements.insert(
+        "[Content_Types].xml".into(),
+        remove_content_type_overrides(&content_types, &removals)?,
+    );
+    if has_entry(package, "docProps/app.xml")? {
+        replacements.insert(
+            "docProps/app.xml".into(),
+            remove_app_sheet_title(&entry_bytes(package, "docProps/app.xml")?, &sheet.name)?,
+        );
+    }
+    for (sheet_name, path) in worksheet_paths_with_names(package, &workbook)? {
+        if sheet_name.eq_ignore_ascii_case(&sheet.name) {
+            continue;
+        }
+        let xml = entry_bytes(package, &path)?;
+        let patched = rewrite_worksheet_formulas(&xml, &sheet.name, "#REF!")?;
+        if patched != xml {
+            replacements.insert(path, patched);
+        }
+    }
+
+    Ok(PackagePatch {
+        replacements,
+        additions: BTreeMap::new(),
+        removals,
     })
 }
 
@@ -147,6 +240,7 @@ struct Sheet {
     name: String,
     sheet_id: u32,
     relationship_id: String,
+    visible: bool,
     tag_start: usize,
     tag_end: usize,
 }
@@ -175,16 +269,28 @@ fn sheets(xml: &[u8]) -> Result<Vec<Sheet>> {
             .ok_or_else(|| writer_error("workbook sheet is missing its sheetId"))?;
         let relationship_id = tag_attribute(tag, "r:id")
             .ok_or_else(|| writer_error("workbook sheet is missing its relationship ID"))?;
+        let visible = !matches!(
+            tag_attribute(tag, "state").as_deref(),
+            Some("hidden" | "veryHidden")
+        );
         sheets.push(Sheet {
             name: unescape_xml(&name)?,
             sheet_id,
             relationship_id,
+            visible,
             tag_start,
             tag_end,
         });
         cursor = tag_end;
     }
     Ok(sheets)
+}
+
+fn find_sheet<'a>(sheets: &'a [Sheet], name: &str) -> Result<&'a Sheet> {
+    sheets
+        .iter()
+        .find(|sheet| sheet.name.eq_ignore_ascii_case(name))
+        .ok_or_else(|| writer_error(format!("worksheet `{name}` was not found")))
 }
 
 fn worksheet_paths(package: &[u8], workbook: &[u8]) -> Result<Vec<String>> {
@@ -202,6 +308,23 @@ fn worksheet_paths(package: &[u8], workbook: &[u8]) -> Result<Vec<String>> {
                         sheet.relationship_id
                     ))
                 })
+        })
+        .collect()
+}
+
+fn worksheet_paths_with_names(package: &[u8], workbook: &[u8]) -> Result<Vec<(String, String)>> {
+    let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
+    let targets = relationship_targets(&relationships)?;
+    sheets(workbook)?
+        .into_iter()
+        .map(|sheet| {
+            let target = targets.get(&sheet.relationship_id).ok_or_else(|| {
+                writer_error(format!(
+                    "workbook relationship `{}` is missing",
+                    sheet.relationship_id
+                ))
+            })?;
+            Ok((sheet.name, normalize_target(target)))
         })
         .collect()
 }
@@ -367,7 +490,9 @@ fn rewrite_formula(formula: &str, from: &str, to: &str) -> String {
         }
         output.push_str(&formula[cursor..reference.span.start]);
         let suffix = &formula[reference.span.start..reference.span.end];
-        if let Some((_, address)) = suffix.split_once('!') {
+        if to == "#REF!" {
+            output.push_str("#REF!");
+        } else if let Some((_, address)) = suffix.split_once('!') {
             output.push_str(&format!(
                 "{}!{address}",
                 sheet_reference_prefix(to).trim_end_matches('!')
@@ -381,11 +506,128 @@ fn rewrite_formula(formula: &str, from: &str, to: &str) -> String {
     output
 }
 
+fn formula_cells_referencing_sheet(xml: &[u8], sheet: &str) -> Result<Vec<String>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("worksheet XML is not UTF-8: {error}")))?;
+    let mut references = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find("<c ") {
+        let cell_start = cursor + offset;
+        let cell_end = text[cell_start..]
+            .find("</c>")
+            .map(|offset| cell_start + offset + "</c>".len())
+            .ok_or_else(|| writer_error("unterminated worksheet cell"))?;
+        let cell = &text[cell_start..cell_end];
+        if let Some(formula_start) = cell.find("<f") {
+            let content_start = cell[formula_start..]
+                .find('>')
+                .map(|offset| cell_start + formula_start + offset + 1)
+                .ok_or_else(|| writer_error("unterminated formula tag"))?;
+            let content_end = text[content_start..cell_end]
+                .find("</f>")
+                .map(|offset| content_start + offset)
+                .ok_or_else(|| writer_error("unterminated formula"))?;
+            if formula_references_sheet(&text[content_start..content_end], sheet) {
+                let tag_end = cell
+                    .find('>')
+                    .map(|offset| cell_start + offset)
+                    .ok_or_else(|| writer_error("unterminated cell tag"))?;
+                if let Some(address) = tag_attribute(&text[cell_start..=tag_end], "r") {
+                    references.push(address);
+                }
+            }
+        }
+        cursor = cell_end;
+    }
+    Ok(references)
+}
+
+fn defined_names_referencing_sheet(xml: &[u8], sheet: &str) -> Result<Vec<String>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
+    let mut names = Vec::new();
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find("<definedName") {
+        let start = cursor + offset;
+        if text[start + "<definedName".len()..].starts_with('s') {
+            cursor = start + "<definedName".len();
+            continue;
+        }
+        let open_end = text[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| writer_error("unterminated defined name"))?;
+        let end = text[open_end..]
+            .find("</definedName>")
+            .map(|offset| open_end + offset)
+            .ok_or_else(|| writer_error("unterminated defined name"))?;
+        if formula_references_sheet(&text[open_end..end], sheet) {
+            names.push(
+                tag_attribute(&text[start..open_end], "name").unwrap_or_else(|| "<unnamed>".into()),
+            );
+        }
+        cursor = end + "</definedName>".len();
+    }
+    Ok(names)
+}
+
+fn formula_references_sheet(formula: &str, sheet: &str) -> bool {
+    reference_spans(formula).iter().any(|reference| {
+        reference
+            .reference
+            .sheet
+            .as_deref()
+            .is_some_and(|referenced| referenced.eq_ignore_ascii_case(sheet))
+    })
+}
+
+fn rewrite_defined_name_formulas(xml: &[u8], from: &str) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find("<definedName") {
+        let start = cursor + offset;
+        if text[start + "<definedName".len()..].starts_with('s') {
+            output.push_str(&text[cursor..start + "<definedName".len()]);
+            cursor = start + "<definedName".len();
+            continue;
+        }
+        let open_end = text[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| writer_error("unterminated defined name"))?;
+        let end = text[open_end..]
+            .find("</definedName>")
+            .map(|offset| open_end + offset)
+            .ok_or_else(|| writer_error("unterminated defined name"))?;
+        output.push_str(&text[cursor..open_end]);
+        output.push_str(&rewrite_formula(&text[open_end..end], from, "#REF!"));
+        output.push_str("</definedName>");
+        cursor = end + "</definedName>".len();
+    }
+    output.push_str(&text[cursor..]);
+    Ok(output.into_bytes())
+}
+
 fn add_app_sheet_title(xml: &[u8], name: &str) -> Result<Vec<u8>> {
     let text = std::str::from_utf8(xml)
         .map_err(|error| writer_error(format!("app properties XML is not UTF-8: {error}")))?;
     patch_app_titles(text, |titles| {
         titles.push(name.to_owned());
+    })
+}
+
+fn remove_app_sheet_title(xml: &[u8], name: &str) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("app properties XML is not UTF-8: {error}")))?;
+    patch_app_titles(text, |titles| {
+        if let Some(index) = titles
+            .iter()
+            .position(|title| title.eq_ignore_ascii_case(name))
+        {
+            titles.remove(index);
+        }
     })
 }
 
@@ -456,6 +698,164 @@ fn replace_attribute(tag: &str, attribute: &str, replacement: &str) -> Result<St
         .map(|offset| start + offset)
         .ok_or_else(|| writer_error(format!("unterminated `{attribute}` attribute")))?;
     Ok(format!("{}{}{}", &tag[..start], replacement, &tag[end..]))
+}
+
+fn remove_span(xml: &[u8], start: usize, end: usize) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("XML is not UTF-8: {error}")))?;
+    Ok(format!("{}{}", &text[..start], &text[end..]).into_bytes())
+}
+
+fn remove_relationship(xml: &[u8], id: &str) -> Result<Vec<u8>> {
+    remove_matching_tag(xml, "Relationship", |tag| {
+        tag_attribute(tag, "Id").as_deref() == Some(id)
+    })
+}
+
+fn remove_content_type_overrides(xml: &[u8], parts: &BTreeSet<String>) -> Result<Vec<u8>> {
+    remove_matching_tag(xml, "Override", |tag| {
+        tag_attribute(tag, "PartName")
+            .is_some_and(|part| parts.contains(part.trim_start_matches('/')))
+    })
+}
+
+fn remove_matching_tag(
+    xml: &[u8],
+    tag_name: &str,
+    matches: impl Fn(&str) -> bool,
+) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("XML is not UTF-8: {error}")))?;
+    let needle = format!("<{tag_name}");
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find(&needle) {
+        let start = cursor + offset;
+        let after_name = &text[start + needle.len()..];
+        if after_name.starts_with(|character: char| character.is_ascii_alphabetic()) {
+            output.push_str(&text[cursor..start + needle.len()]);
+            cursor = start + needle.len();
+            continue;
+        }
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| writer_error(format!("unterminated {tag_name} tag")))?;
+        output.push_str(&text[cursor..start]);
+        if !matches(&text[start..end]) {
+            output.push_str(&text[start..end]);
+        }
+        cursor = end;
+    }
+    output.push_str(&text[cursor..]);
+    Ok(output.into_bytes())
+}
+
+fn relationship_part_name(part: &str) -> String {
+    let (directory, name) = part.rsplit_once('/').unwrap_or(("", part));
+    if directory.is_empty() {
+        format!("_rels/{name}.rels")
+    } else {
+        format!("{directory}/_rels/{name}.rels")
+    }
+}
+
+fn relationship_source(part: &str) -> Option<String> {
+    let (directory, file) = part.rsplit_once("/_rels/")?;
+    let name = file.strip_suffix(".rels")?;
+    Some(format!("{directory}/{name}"))
+}
+
+fn orphaned_visual_parts(package: &[u8], deleted_relationships: &str) -> Result<BTreeSet<String>> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| writer_error(format!("invalid XLSX package: {error}")))?;
+    let mut graph = BTreeMap::<String, Vec<String>>::new();
+    let mut candidates = BTreeSet::new();
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .map_err(|error| writer_error(format!("cannot read ZIP entry: {error}")))?;
+        let relationship_part = entry.name().to_owned();
+        if !relationship_part.ends_with(".rels") {
+            continue;
+        }
+        let Some(source) = relationship_source(&relationship_part) else {
+            continue;
+        };
+        let mut xml = Vec::new();
+        entry
+            .read_to_end(&mut xml)
+            .map_err(|error| writer_error(format!("cannot read `{relationship_part}`: {error}")))?;
+        let targets = relationship_targets(&xml)?
+            .into_values()
+            .map(|target| resolve_relationship_target(&source, &target))
+            .collect::<Vec<_>>();
+        if relationship_part == deleted_relationships {
+            candidates.extend(
+                targets
+                    .iter()
+                    .filter(|target| target.starts_with("xl/drawings/"))
+                    .cloned(),
+            );
+        }
+        graph.insert(source, targets);
+    }
+
+    let deleted_source = relationship_source(deleted_relationships).unwrap_or_default();
+    let mut removals = BTreeSet::new();
+    loop {
+        let mut changed = false;
+        for candidate in candidates.clone() {
+            if removals.contains(&candidate)
+                || graph.iter().any(|(source, targets)| {
+                    !removals.contains(source)
+                        && source != &deleted_source
+                        && targets.iter().any(|target| target == &candidate)
+                })
+            {
+                continue;
+            }
+            removals.insert(candidate.clone());
+            removals.insert(relationship_part_name(&candidate));
+            if let Some(targets) = graph.get(&candidate) {
+                candidates.extend(
+                    targets
+                        .iter()
+                        .filter(|target| {
+                            target.starts_with("xl/drawings/") || target.starts_with("xl/charts/")
+                        })
+                        .cloned(),
+                );
+            }
+            changed = true;
+        }
+        if !changed {
+            return Ok(removals);
+        }
+    }
+}
+
+fn resolve_relationship_target(source: &str, target: &str) -> String {
+    if target.starts_with('/') {
+        return target.trim_start_matches('/').into();
+    }
+    let base = source
+        .rsplit_once('/')
+        .map_or("", |(directory, _)| directory);
+    let mut components = base
+        .split('/')
+        .filter(|component| !component.is_empty())
+        .collect::<Vec<_>>();
+    for component in target.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            component => components.push(component),
+        }
+    }
+    components.join("/")
 }
 
 fn insert_before_close(xml: &[u8], element: &str, insertion: &str) -> Result<Vec<u8>> {
