@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
-use serde::de::DeserializeOwned;
+use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 use crate::error::{DotallError, Result};
@@ -389,6 +389,79 @@ impl DotallStore {
         Ok(hash)
     }
 
+    pub fn read_snapshot(&self, relative_path: &str, hash: &str) -> Result<Vec<u8>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.snapshot_path(&key, hash);
+        fs::read(&path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                DotallError::SnapshotMissing {
+                    path: Path::new(relative_path).to_path_buf(),
+                    hash: hash.to_owned(),
+                }
+            } else {
+                DotallError::io(&path, source)
+            }
+        })
+    }
+
+    /// Replaces a tracked source atomically on its own filesystem.
+    pub fn replace_source(&self, relative_path: &str, bytes: &[u8]) -> Result<()> {
+        let (_, source) = resolve_source(&self.workspace, Path::new(relative_path))?;
+        write_bytes(&source, bytes)
+    }
+
+    /// Removes regenerable model, derived, and view artifacts after a source mutation.
+    pub fn invalidate_cache(&self, relative_path: &str) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let cache = self.object_dir(&key).join("cache");
+        if cache.exists() {
+            fs::remove_dir_all(&cache).map_err(|source| DotallError::io(&cache, source))?;
+        }
+        for directory in ["model", "derived", "views"] {
+            let path = cache.join(directory);
+            fs::create_dir_all(&path).map_err(|source| DotallError::io(&path, source))?;
+        }
+        Ok(())
+    }
+
+    pub fn write_journal<T: Serialize>(
+        &self,
+        relative_path: &str,
+        tx_id: Uuid,
+        record: &T,
+    ) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        write_json(&self.journal_path(&key, tx_id), record)
+    }
+
+    pub fn read_journals<T: DeserializeOwned>(&self, relative_path: &str) -> Result<Vec<T>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let directory = self.transaction_dir(&key);
+        if !directory.is_dir() {
+            return Ok(Vec::new());
+        }
+        let mut records = Vec::new();
+        for entry in
+            fs::read_dir(&directory).map_err(|source| DotallError::io(&directory, source))?
+        {
+            let entry = entry.map_err(|source| DotallError::io(&directory, source))?;
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+                records.push(read_required_json(&path, "transaction journal")?);
+            }
+        }
+        Ok(records)
+    }
+
+    pub fn discard_journal(&self, relative_path: &str, tx_id: Uuid) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.journal_path(&key, tx_id);
+        if path.is_file() {
+            fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))?;
+        }
+        Ok(())
+    }
+
     /// Appends one forensic history version under `state/edits/history/vNNN.json`.
     ///
     /// Versions are sequential starting at 1. The stored record's `version` field is
@@ -505,6 +578,14 @@ impl DotallStore {
 
     fn apply_lock_path(&self, key: &str) -> PathBuf {
         self.object_dir(key).join("state/edits/.apply.lock")
+    }
+
+    fn transaction_dir(&self, key: &str) -> PathBuf {
+        self.object_dir(key).join("state/transactions")
+    }
+
+    fn journal_path(&self, key: &str, tx_id: Uuid) -> PathBuf {
+        self.transaction_dir(key).join(format!("{tx_id}.json"))
     }
 
     fn snapshot_path(&self, key: &str, hash: &str) -> PathBuf {

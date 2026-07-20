@@ -17,7 +17,7 @@ pub use history::{
     ApplyLock, EditRequest, HistoryRecord, HistoryStatus, HistorySummary, StagedEdit,
 };
 pub use manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
-pub use orchestrate::{Engine, FileReadResult, InspectResult, ModelLoadResult};
+pub use orchestrate::{AppliedEdit, Engine, FileReadResult, InspectResult, ModelLoadResult};
 pub use pipeline::{CachedArtifact, CachedDerived, CachedView, DerivationRecipe};
 pub use registry::{
     Actor, ActorKind, ArtifactEnvelope, ArtifactSchema, DependencyImpact, PatchedOutput,
