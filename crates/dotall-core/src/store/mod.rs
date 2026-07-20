@@ -2,12 +2,14 @@ mod atomic;
 
 use std::fs;
 use std::io::Write;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use serde::de::DeserializeOwned;
+use uuid::Uuid;
 
 use crate::error::{DotallError, Result};
 use crate::fingerprint::{Freshness, check_freshness, fingerprint};
+use crate::history::{ApplyLock, StagedEdit};
 use crate::manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 use crate::pipeline::{CachedArtifact, CachedDerived, CachedView, DerivationRecipe};
 use crate::read::AccessRecord;
@@ -15,7 +17,7 @@ use crate::registry::{ArtifactEnvelope, ArtifactSchema};
 use crate::status::{ObjectState, ObjectStatus};
 use crate::workspace::Workspace;
 
-use atomic::write_json;
+use atomic::{write_bytes, write_json};
 
 #[derive(Debug)]
 pub struct DotallStore {
@@ -303,6 +305,88 @@ impl DotallStore {
             .map_err(|source| DotallError::io(&path, source))
     }
 
+    /// Persists a staged edit under `state/edits/staging/<tx_id>.json`.
+    ///
+    /// Retrying with the same transaction id and payload is idempotent. A conflicting
+    /// payload for the same transaction id returns [`DotallError::StagedConflict`].
+    pub fn stage_edit(&self, relative_path: &str, staged: &StagedEdit) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.staging_path(&key, staged.tx_id);
+        if path.is_file() {
+            let existing: StagedEdit = read_required_json(&path, "staged edit")?;
+            if existing.same_payload(staged) {
+                return Ok(());
+            }
+            return Err(DotallError::StagedConflict {
+                path: Path::new(relative_path).to_path_buf(),
+                tx_id: staged.tx_id.to_string(),
+            });
+        }
+        write_json(&path, staged)
+    }
+
+    pub fn read_staged(&self, relative_path: &str, tx_id: Uuid) -> Result<Option<StagedEdit>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        read_cached_json(&self.staging_path(&key, tx_id))
+    }
+
+    pub fn list_staged(&self, relative_path: &str) -> Result<Vec<StagedEdit>> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let directory = self.staging_dir(&key);
+        if !directory.is_dir() {
+            return Ok(Vec::new());
+        }
+
+        let mut staged = Vec::new();
+        for entry in
+            fs::read_dir(&directory).map_err(|source| DotallError::io(&directory, source))?
+        {
+            let entry = entry.map_err(|source| DotallError::io(&directory, source))?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            staged.push(read_required_json(&path, "staged edit")?);
+        }
+        Ok(staged)
+    }
+
+    pub fn discard_staged(&self, relative_path: &str, tx_id: Uuid) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.staging_path(&key, tx_id);
+        if path.is_file() {
+            fs::remove_file(&path).map_err(|source| DotallError::io(&path, source))?;
+        }
+        Ok(())
+    }
+
+    /// Acquires the per-object apply lock at `state/edits/.apply.lock`.
+    pub fn acquire_apply_lock(&self, relative_path: &str) -> Result<ApplyLock> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        ApplyLock::acquire(&self.apply_lock_path(&key))
+    }
+
+    /// Stores content-addressed snapshot bytes under `state/edits/history/snapshots/<hash>.bin`.
+    ///
+    /// Journals for apply recovery live under `state/transactions/` (created at register time).
+    pub fn write_snapshot(&self, relative_path: &str, bytes: &[u8]) -> Result<String> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let hash = blake3::hash(bytes).to_hex().to_string();
+        let path = self.snapshot_path(&key, &hash);
+        if path.is_file() {
+            let existing = fs::read(&path).map_err(|source| DotallError::io(&path, source))?;
+            if existing == bytes {
+                return Ok(hash);
+            }
+            return Err(DotallError::InvalidSourcePath {
+                path: path.clone(),
+                reason: "snapshot path exists with different content".to_owned(),
+            });
+        }
+        write_bytes(&path, bytes)?;
+        Ok(hash)
+    }
+
     fn tracked_source(&self, relative_path: &str) -> Result<(String, &TrackedObject)> {
         let (key, _) = resolve_source(&self.workspace, Path::new(relative_path))?;
         let object =
@@ -322,6 +406,28 @@ impl DotallStore {
             .join(key)
             .join("cache")
             .join(suffix)
+    }
+
+    fn object_dir(&self, key: &str) -> PathBuf {
+        self.workspace.objects_dir().join(key)
+    }
+
+    fn staging_dir(&self, key: &str) -> PathBuf {
+        self.object_dir(key).join("state/edits/staging")
+    }
+
+    fn staging_path(&self, key: &str, tx_id: Uuid) -> PathBuf {
+        self.staging_dir(key).join(format!("{tx_id}.json"))
+    }
+
+    fn apply_lock_path(&self, key: &str) -> PathBuf {
+        self.object_dir(key).join("state/edits/.apply.lock")
+    }
+
+    fn snapshot_path(&self, key: &str, hash: &str) -> PathBuf {
+        self.object_dir(key)
+            .join("state/edits/history/snapshots")
+            .join(format!("{hash}.bin"))
     }
 }
 
@@ -349,6 +455,13 @@ fn read_cached_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
             context: format!("cached artifact at {}", path.display()),
             source,
         })
+}
+
+fn read_required_json<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T> {
+    read_cached_json(path)?.ok_or_else(|| DotallError::InvalidSourcePath {
+        path: path.to_path_buf(),
+        reason: format!("missing {label}"),
+    })
 }
 
 fn cache_name<'a>(name: &'a str, label: &str) -> Result<&'a str> {

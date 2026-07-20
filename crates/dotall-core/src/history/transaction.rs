@@ -25,3 +25,13 @@ pub struct StagedEdit {
     pub expected_source_hash: String,
     pub actor: Actor,
 }
+
+impl StagedEdit {
+    /// Whether two staged envelopes carry the same durable payload for idempotent retries.
+    pub fn same_payload(&self, other: &Self) -> bool {
+        self.tx_id == other.tx_id
+            && self.preview == other.preview
+            && self.expected_source_hash == other.expected_source_hash
+            && self.actor == other.actor
+    }
+}
