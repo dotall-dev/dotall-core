@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CellReference {
@@ -13,6 +14,12 @@ pub struct FormulaReference {
     pub sheet: Option<String>,
     pub start: CellReference,
     pub end: Option<CellReference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpannedFormulaReference {
+    pub reference: FormulaReference,
+    pub span: Range<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +41,49 @@ pub fn references(formula: &str) -> Vec<FormulaReference> {
             FormulaToken::NamedRange { .. } => None,
         })
         .collect()
+}
+
+/// Returns recognized references with byte spans in the original formula.
+///
+/// The spans deliberately exclude string literals and external workbook
+/// references, matching [`lex`].
+pub fn reference_spans(formula: &str) -> Vec<SpannedFormulaReference> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < formula.len() {
+        let start = cursor;
+        let character = match formula[start..].chars().next() {
+            Some(character) => character,
+            None => break,
+        };
+        if character == '"' {
+            cursor = skip_string(formula, start);
+            continue;
+        }
+        if !is_identifier_boundary_before(formula, start) {
+            cursor += character.len_utf8();
+            continue;
+        }
+        if let Some(consumed) = skip_external_reference(&formula[start..]) {
+            cursor = start + consumed;
+            continue;
+        }
+        if let Some((reference, consumed)) = parse_reference(&formula[start..])
+            && is_identifier_boundary_after(&formula[start + consumed..])
+            && !formula[start + consumed..].trim_start().starts_with('(')
+        {
+            cursor = start + consumed;
+            spans.push(SpannedFormulaReference {
+                reference,
+                span: start..cursor,
+            });
+            continue;
+        }
+        cursor += character.len_utf8();
+    }
+
+    spans
 }
 
 struct Scanner<'a> {
