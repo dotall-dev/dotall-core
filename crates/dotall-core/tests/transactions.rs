@@ -204,6 +204,46 @@ fn recover_completes_a_committed_journal_after_interruption() {
     );
 }
 
+#[test]
+fn recover_completes_a_replace_durable_before_commit_marker() {
+    let mut fixture = Fixture::new();
+    let hash = fixture.source_hash();
+    fixture
+        .engine
+        .edit("sample.stub", &request(hash, "updated", tx(1)))
+        .expect("stage");
+    fixture
+        .engine
+        .simulate_interruption_after_replace("sample.stub", tx(1))
+        .expect("replace source before commit marker");
+
+    assert_eq!(fs::read(fixture.source()).expect("source"), b"updated");
+    assert_eq!(fixture.engine.recover("sample.stub").expect("recover"), 1);
+    assert_eq!(
+        fixture
+            .engine
+            .history("sample.stub")
+            .expect("history")
+            .len(),
+        1
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .apply("sample.stub", tx(1))
+            .expect("idempotent apply")
+            .version,
+        1
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .recover("sample.stub")
+            .expect("idempotent recovery"),
+        0
+    );
+}
+
 struct Fixture {
     _workspace: tempfile::TempDir,
     root: std::path::PathBuf,

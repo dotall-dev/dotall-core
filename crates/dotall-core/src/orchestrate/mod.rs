@@ -207,7 +207,7 @@ impl Engine {
     }
 
     pub fn apply(&mut self, relative: &str, tx_id: Uuid) -> Result<AppliedEdit> {
-        self.apply_inner(relative, tx_id, false)
+        self.apply_inner(relative, tx_id, false, false)
     }
 
     #[doc(hidden)]
@@ -216,7 +216,16 @@ impl Engine {
         relative: &str,
         tx_id: Uuid,
     ) -> Result<AppliedEdit> {
-        self.apply_inner(relative, tx_id, true)
+        self.apply_inner(relative, tx_id, false, true)
+    }
+
+    #[doc(hidden)]
+    pub fn simulate_interruption_after_replace(
+        &mut self,
+        relative: &str,
+        tx_id: Uuid,
+    ) -> Result<AppliedEdit> {
+        self.apply_inner(relative, tx_id, true, false)
     }
 
     pub fn discard(&self, relative: &str, tx_id: Uuid) -> Result<()> {
@@ -271,29 +280,25 @@ impl Engine {
         Ok(staged)
     }
 
-    /// Finalizes durable commit-marked journals; incomplete journals never mutate source bytes.
+    /// Finalizes journals whose source replacement is already durable.
     pub fn recover(&mut self, relative: &str) -> Result<usize> {
         let journals: Vec<ApplyJournal> = self.store.read_journals(relative)?;
         let mut recovered = 0;
         for journal in journals {
+            let _lock = self.store.acquire_apply_lock(relative)?;
             let (_, source) = resolve_source(self.store.workspace(), Path::new(relative))?;
             let actual_hash = fingerprint(&source)?.blake3;
-            if !journal.committed {
-                if actual_hash == journal.before_source_hash {
+            if actual_hash == journal.after_source_hash {
+                let Some(staged) = self.store.read_staged(relative, journal.tx_id)? else {
                     self.store.discard_journal(relative, journal.tx_id)?;
-                }
-                continue;
-            }
-            if actual_hash != journal.after_source_hash {
-                continue;
-            }
-            let Some(staged) = self.store.read_staged(relative, journal.tx_id)? else {
+                    continue;
+                };
+                let loaded = self.model(relative)?;
+                self.finalize_apply(relative, &loaded.handler, &staged, &journal)?;
+                recovered += 1;
+            } else if !journal.committed && actual_hash == journal.before_source_hash {
                 self.store.discard_journal(relative, journal.tx_id)?;
-                continue;
-            };
-            let loaded = self.model(relative)?;
-            self.finalize_apply(relative, &loaded.handler, &staged, &journal)?;
-            recovered += 1;
+            }
         }
         Ok(recovered)
     }
@@ -302,6 +307,7 @@ impl Engine {
         &mut self,
         relative: &str,
         tx_id: Uuid,
+        interrupt_after_replace: bool,
         interrupt_after_commit: bool,
     ) -> Result<AppliedEdit> {
         if let Some(record) = self.history_for_transaction(relative, tx_id)? {
@@ -354,6 +360,15 @@ impl Engine {
         };
         self.store.write_journal(relative, tx_id, &journal)?;
         self.store.replace_source(relative, &patched.bytes)?;
+        if interrupt_after_replace {
+            return Ok(AppliedEdit {
+                tx_id,
+                version: 0,
+                before_source_hash: journal.before_source_hash,
+                after_source_hash: journal.after_source_hash,
+                revert_of: revert_of(&staged.preview),
+            });
+        }
         let journal = ApplyJournal {
             committed: true,
             ..journal
@@ -379,6 +394,11 @@ impl Engine {
         staged: &StagedEdit,
         journal: &ApplyJournal,
     ) -> Result<AppliedEdit> {
+        if let Some(record) = self.history_for_transaction(relative, staged.tx_id)? {
+            self.store.discard_staged(relative, staged.tx_id)?;
+            self.store.discard_journal(relative, staged.tx_id)?;
+            return Ok(applied_from_record(&record));
+        }
         self.store.invalidate_cache(relative)?;
         self.store
             .register_source(relative, handler.descriptor().id.clone())?;
