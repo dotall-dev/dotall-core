@@ -6,6 +6,47 @@ use serde::Serialize;
 
 use crate::error::{DotallError, Result};
 
+pub(crate) fn write_bytes(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| DotallError::InvalidWorkspacePath(path.to_path_buf()))?;
+    fs::create_dir_all(parent).map_err(|source| DotallError::io(parent, source))?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| DotallError::InvalidWorkspacePath(path.to_path_buf()))?;
+    let temporary = parent.join(format!(".{file_name}.tmp-{}", std::process::id()));
+
+    let result = (|| -> Result<()> {
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|source| DotallError::io(&temporary, source))?;
+        let mut writer = BufWriter::new(file);
+        writer
+            .write_all(bytes)
+            .map_err(|source| DotallError::io(&temporary, source))?;
+        writer
+            .flush()
+            .map_err(|source| DotallError::io(&temporary, source))?;
+        writer
+            .get_ref()
+            .sync_all()
+            .map_err(|source| DotallError::io(&temporary, source))?;
+
+        rename_replace(&temporary, path)?;
+        sync_parent(parent)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
 pub(crate) fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let parent = path
         .parent()

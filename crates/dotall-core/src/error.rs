@@ -66,6 +66,15 @@ pub enum DotallError {
         #[source]
         source: serde_json::Error,
     },
+
+    #[error("staged edit {tx_id} for {path} conflicts with an existing staged payload")]
+    StagedConflict { path: PathBuf, tx_id: String },
+
+    #[error("apply lock is held for {path}")]
+    LockBusy { path: PathBuf },
+
+    #[error("snapshot {hash} is missing for {path}")]
+    SnapshotMissing { path: PathBuf, hash: String },
 }
 
 impl DotallError {

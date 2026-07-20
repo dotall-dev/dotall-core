@@ -7,6 +7,7 @@ mod lock;
 mod record;
 mod transaction;
 
+pub use lock::ApplyLock;
 pub use record::{HistoryRecord, HistoryStatus};
 pub use transaction::{EditRequest, StagedEdit};
 
