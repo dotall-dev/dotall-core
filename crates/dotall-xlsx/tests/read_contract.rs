@@ -107,7 +107,13 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             .iter()
             .map(|capability| capability.operation.as_str())
             .collect::<Vec<_>>(),
-        vec!["set_cell_value", "set_cell_formula", "set_range"]
+        vec![
+            "set_cell_value",
+            "set_cell_formula",
+            "set_range",
+            "insert_row",
+            "delete_row",
+        ]
     );
     assert_eq!(
         inspection.summary["structure"]["sheets"][0]["header_row"],

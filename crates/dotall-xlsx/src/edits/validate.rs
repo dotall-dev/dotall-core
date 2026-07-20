@@ -72,13 +72,14 @@ pub fn validate_with_source(
 ) -> Result<ValidatedEdit> {
     if operations
         .iter()
-        .all(|operation| operation.kind != "insert_row")
+        .all(|operation| operation.kind != "insert_row" && operation.kind != "delete_row")
     {
         return validate(model, operations);
     }
-    if operations.len() != 1 || operations[0].kind != "insert_row" {
+    if operations.len() != 1 || !matches!(operations[0].kind.as_str(), "insert_row" | "delete_row")
+    {
         return Err(format_error(
-            "insert_row cannot be combined with other operations until structural apply is implemented",
+            "structural row edits cannot be combined with other operations",
         ));
     }
 
@@ -96,7 +97,15 @@ pub fn validate_with_source(
     let at = required_positive_u32(&operation.payload, "at")?;
     let count = required_positive_u32(&operation.payload, "count")?;
     if at > 1_048_576 {
-        return Err(format_error("insert_row `at` must not exceed 1048576"));
+        return Err(format_error("structural row `at` must not exceed 1048576"));
+    }
+    if at
+        .checked_add(count - 1)
+        .is_none_or(|last_row| last_row > 1_048_576)
+    {
+        return Err(format_error(
+            "structural row interval must not exceed 1048576",
+        ));
     }
     let package = fs::read(source).map_err(|error| DotallError::Format {
         format_id: FORMAT_ID.into(),
@@ -105,10 +114,18 @@ pub fn validate_with_source(
     })?;
     validate_impact(
         &package,
-        &ImpactOperation::InsertRow {
-            sheet: canonical_sheet.clone(),
-            at,
-            count,
+        &match operation.kind.as_str() {
+            "insert_row" => ImpactOperation::InsertRow {
+                sheet: canonical_sheet.clone(),
+                at,
+                count,
+            },
+            "delete_row" => ImpactOperation::DeleteRow {
+                sheet: canonical_sheet.clone(),
+                at,
+                count,
+            },
+            _ => unreachable!(),
         },
     )?;
 
@@ -117,7 +134,7 @@ pub fn validate_with_source(
         schema_id: SCHEMA_ID.into(),
         schema_version: SCHEMA_VERSION,
         operations: vec![SemanticOperation {
-            kind: "insert_row".into(),
+            kind: operation.kind.clone(),
             payload: serde_json::json!({
                 "sheet": canonical_sheet,
                 "at": at,
@@ -127,13 +144,13 @@ pub fn validate_with_source(
         semantic_diff: vec![SemanticChange {
             target: format!("{canonical_sheet}!row:{at}"),
             element_id: format!("row:{canonical_sheet}:{at}"),
-            change: "insert_row".into(),
+            change: operation.kind.clone(),
             before: None,
             after: Some(count.to_string()),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
-            notes: vec!["structural apply is not implemented; impact inventory passed".into()],
+            notes: vec!["refs parsed; values not evaluated".into()],
         },
     })
 }
@@ -524,7 +541,11 @@ fn required_positive_u32(payload: &Value, field: &str) -> Result<u32> {
         .and_then(Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
         .filter(|value| *value > 0)
-        .ok_or_else(|| format_error(format!("insert_row requires a positive integer `{field}`")))
+        .ok_or_else(|| {
+            format_error(format!(
+                "structural row edit requires a positive integer `{field}`"
+            ))
+        })
 }
 
 fn normalize_formula(formula: &str) -> String {
@@ -555,6 +576,9 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
                 after: Some(formula.clone()),
             },
             XlsxEditOp::InsertRow { .. } => {
+                unreachable!("structural edits are validated separately")
+            }
+            XlsxEditOp::DeleteRow { .. } => {
                 unreachable!("structural edits are validated separately")
             }
             XlsxEditOp::SetRange { .. } => {
@@ -651,6 +675,7 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
             }),
         },
         XlsxEditOp::InsertRow { .. } => unreachable!("structural edits are validated separately"),
+        XlsxEditOp::DeleteRow { .. } => unreachable!("structural edits are validated separately"),
         XlsxEditOp::SetRange { .. } => {
             unreachable!("set_range is expanded into cell edits during validation")
         }

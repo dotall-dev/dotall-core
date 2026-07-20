@@ -30,6 +30,11 @@ pub enum XlsxEditOp {
         at: u32,
         count: u32,
     },
+    DeleteRow {
+        sheet: String,
+        at: u32,
+        count: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -117,6 +117,56 @@ fn insert_row_allows_sheet_unrelated_to_pivot_source() {
 }
 
 #[test]
+fn structural_edits_reject_worksheet_features_and_chart_relationships() {
+    let package = structural_feature_fixture();
+    let operation = ImpactOperation::InsertRow {
+        sheet: "Inputs".into(),
+        at: 2,
+        count: 1,
+    };
+
+    let inventory = inventory(&package, &operation).expect("inventory package");
+    let mut constructs = inventory
+        .unsupported
+        .iter()
+        .map(|impact| impact.construct.as_str())
+        .collect::<Vec<_>>();
+    constructs.sort_unstable();
+    assert_eq!(
+        constructs,
+        vec![
+            "autoFilter",
+            "chart series references",
+            "conditionalFormatting",
+            "dataValidations",
+            "hyperlinks",
+            "table reference",
+        ]
+    );
+    let error = validate_impact(&package, &operation).expect_err("features require rewrite");
+    assert!(
+        error
+            .to_string()
+            .contains("insert_row is unsafe: unsupported")
+    );
+}
+
+#[test]
+fn delete_row_rejects_pivot_source_references() {
+    let package = pivot_fixture("PivotData");
+    let error = validate_impact(
+        &package,
+        &ImpactOperation::DeleteRow {
+            sheet: "PivotData".into(),
+            at: 2,
+            count: 1,
+        },
+    )
+    .expect_err("pivot must block delete");
+    assert!(error.to_string().contains("delete_row is unsafe"));
+}
+
+#[test]
 fn source_aware_validation_rejects_before_structural_edit_is_staged() {
     let directory = tempdir().expect("temporary directory");
     let source = directory.path().join("pivot.xlsx");
@@ -233,4 +283,39 @@ fn pivot_fixture_entries(
         ),
         ("xl/pivotCache/pivotCacheDefinition1.xml", pivot_cache_xml.into()),
     ]
+}
+
+fn structural_feature_fixture() -> Vec<u8> {
+    let mut writer = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    for (path, xml) in [
+        (
+            "xl/workbook.xml",
+            r#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Inputs" sheetId="1" r:id="rId1"/></sheets></workbook>"#,
+        ),
+        (
+            "xl/_rels/workbook.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#,
+        ),
+        (
+            "xl/worksheets/sheet1.xml",
+            r#"<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData/><autoFilter ref="A1:B2"/><dataValidations/><conditionalFormatting sqref="A1"/><hyperlinks/><tableParts><tablePart r:id="rId1"/></tableParts><drawing r:id="rId2"/></worksheet>"#,
+        ),
+        (
+            "xl/worksheets/_rels/sheet1.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>"#,
+        ),
+        (
+            "xl/drawings/_rels/drawing1.xml.rels",
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/></Relationships>"#,
+        ),
+    ] {
+        writer
+            .start_file(path, options)
+            .expect("start fixture entry");
+        writer
+            .write_all(xml.as_bytes())
+            .expect("write fixture entry");
+    }
+    writer.finish().expect("finish fixture").into_inner()
 }

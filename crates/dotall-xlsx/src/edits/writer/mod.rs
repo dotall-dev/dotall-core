@@ -1,5 +1,6 @@
 mod package;
 mod shared_strings;
+mod structural;
 mod worksheet;
 
 use std::path::Path;

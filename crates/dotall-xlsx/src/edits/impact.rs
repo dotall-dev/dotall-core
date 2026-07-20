@@ -32,11 +32,13 @@ pub struct UnsupportedImpact {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImpactOperation {
     InsertRow { sheet: String, at: u32, count: u32 },
+    DeleteRow { sheet: String, at: u32, count: u32 },
 }
 
 pub fn inventory(package: &[u8], operation: &ImpactOperation) -> Result<ImpactInventory> {
     let (sheet, operation_name) = match operation {
         ImpactOperation::InsertRow { sheet, .. } => (sheet.as_str(), "insert_row"),
+        ImpactOperation::DeleteRow { sheet, .. } => (sheet.as_str(), "delete_row"),
     };
     let workbook = entry_bytes(package, "xl/workbook.xml")?;
     let workbook_relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
@@ -52,6 +54,7 @@ pub fn inventory(package: &[u8], operation: &ImpactOperation) -> Result<ImpactIn
             ))
         })?;
     let worksheet = resolve_target("xl/workbook.xml", &worksheet_target.target);
+    let worksheet_xml = entry_bytes(package, &worksheet)?;
 
     let mut tables = BTreeSet::new();
     let mut charts = BTreeSet::new();
@@ -59,16 +62,33 @@ pub fn inventory(package: &[u8], operation: &ImpactOperation) -> Result<ImpactIn
     let mut unsupported = BTreeSet::new();
     for relationship in relationships_for_part(package, &worksheet)? {
         if relationship.kind.ends_with("/table") {
-            tables.insert(relationship.target);
+            tables.insert(relationship.target.clone());
+            unsupported.insert(UnsupportedImpact {
+                part: relationship.target,
+                construct: "table reference".into(),
+                reason: format!("{operation_name} requires rewriting the table range"),
+            });
         } else if relationship.kind.ends_with("/drawing") {
             drawings.insert(relationship.target.clone());
             for drawing_relationship in relationships_for_part(package, &relationship.target)? {
                 if drawing_relationship.kind.ends_with("/chart") {
-                    charts.insert(drawing_relationship.target);
+                    charts.insert(drawing_relationship.target.clone());
+                    unsupported.insert(UnsupportedImpact {
+                        part: drawing_relationship.target,
+                        construct: "chart series references".into(),
+                        reason: format!(
+                            "{operation_name} can require rewriting chart series formulas"
+                        ),
+                    });
                 }
             }
         }
     }
+    unsupported.extend(unsupported_worksheet_constructs(
+        &worksheet_xml,
+        &worksheet,
+        operation_name,
+    )?);
 
     for relationship in relationships_for_part(package, "xl/workbook.xml")? {
         if !relationship.kind.ends_with("/pivotCacheDefinition") {
@@ -112,11 +132,48 @@ pub fn inventory(package: &[u8], operation: &ImpactOperation) -> Result<ImpactIn
     })
 }
 
+fn unsupported_worksheet_constructs(
+    xml: &[u8],
+    part: &str,
+    operation_name: &str,
+) -> Result<BTreeSet<UnsupportedImpact>> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut unsupported = BTreeSet::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| impact_error(format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element) => {
+                let construct = match element.name().as_ref() {
+                    b"autoFilter" => Some("autoFilter"),
+                    b"dataValidations" => Some("dataValidations"),
+                    b"conditionalFormatting" => Some("conditionalFormatting"),
+                    b"hyperlinks" => Some("hyperlinks"),
+                    _ => None,
+                };
+                if let Some(construct) = construct {
+                    unsupported.insert(UnsupportedImpact {
+                        part: part.into(),
+                        construct: construct.into(),
+                        reason: format!("{operation_name} requires rewriting worksheet references"),
+                    });
+                }
+            }
+            Event::Eof => return Ok(unsupported),
+            _ => {}
+        }
+        buffer.clear();
+    }
+}
+
 pub fn validate_impact(package: &[u8], operation: &ImpactOperation) -> Result<ImpactInventory> {
     let inventory = inventory(package, operation)?;
     if let Some(unsupported) = inventory.unsupported.first() {
         let operation_name = match operation {
             ImpactOperation::InsertRow { .. } => "insert_row",
+            ImpactOperation::DeleteRow { .. } => "delete_row",
         };
         return Err(impact_error(format!(
             "{operation_name} is unsafe: unsupported {} in {} ({})",

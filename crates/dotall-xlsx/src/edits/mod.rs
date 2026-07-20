@@ -45,6 +45,11 @@ pub(crate) fn parse_validated_operations(
                 at: required_positive_u32(operation, "at")?,
                 count: required_positive_u32(operation, "count")?,
             }),
+            "delete_row" => Ok(XlsxEditOp::DeleteRow {
+                sheet: required_string(operation, "sheet")?,
+                at: required_positive_u32(operation, "at")?,
+                count: required_positive_u32(operation, "count")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),

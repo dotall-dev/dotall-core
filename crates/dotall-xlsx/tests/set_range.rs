@@ -132,10 +132,7 @@ fn leaves_source_unchanged_when_apply_fails_on_last_cell() {
             &[set_range(
                 "Inputs",
                 "A1",
-                serde_json::json!([
-                    [10, 20, 30],
-                    [40, 50, 60]
-                ]),
+                serde_json::json!([[10, 20, 30], [40, 50, 60]]),
             )],
         )
         .expect("validate range edit");
@@ -235,9 +232,7 @@ fn write_atomicity_fixture(path: &std::path::Path) {
     inputs.write_number(0, 2, 3).expect("C1");
     inputs.write_number(1, 0, 4).expect("A2");
     inputs.write_number(1, 1, 5).expect("B2");
-    inputs
-        .write_formula(1, 2, "=C1+1")
-        .expect("C2 formula");
+    inputs.write_formula(1, 2, "=C1+1").expect("C2 formula");
     workbook.save(path).expect("write fixture");
 }
 
@@ -245,12 +240,7 @@ fn range_cell_snapshot(path: &std::path::Path) -> BTreeMap<String, String> {
     let workbook = parse_workbook(path).expect("parse fixture");
     ["A1", "B1", "C1", "A2", "B2", "C2"]
         .into_iter()
-        .map(|address| {
-            (
-                address.to_owned(),
-                cell_value(&workbook, "Inputs", address),
-            )
-        })
+        .map(|address| (address.to_owned(), cell_value(&workbook, "Inputs", address)))
         .collect()
 }
 

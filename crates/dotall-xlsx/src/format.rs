@@ -312,6 +312,22 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Validates the complete rectangle before one surgical worksheet patch pass."
                 .into(),
         },
+        EditCapability {
+            operation: "insert_row".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Insert blank worksheet rows and rewrite affected formulas.".into(),
+            example: json!({ "kind": "insert_row", "payload": { "sheet": "Sheet1", "at": 2, "count": 1 } }),
+            safety: "Rejects unsupported structural impacts before surgically patching worksheets."
+                .into(),
+        },
+        EditCapability {
+            operation: "delete_row".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Delete worksheet rows and rewrite affected formulas.".into(),
+            example: json!({ "kind": "delete_row", "payload": { "sheet": "Sheet1", "at": 2, "count": 1 } }),
+            safety: "Rejects unsupported structural impacts before surgically patching worksheets."
+                .into(),
+        },
     ]
 }
 
