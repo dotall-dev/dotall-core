@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use dotall_core::registry::{
     ArtifactEnvelope, ArtifactSchema, Capability, DetectionProbe, DetectionScore, FormatDescriptor,
-    FormatHandler, Inspection, ReadRequest, ReadResponse, ReadSelector, ReadSuggestion,
+    FormatHandler, Inspection, PatchedOutput, ReadRequest, ReadResponse, ReadSelector,
+    ReadSuggestion, SemanticOperation, ValidatedEdit,
 };
 use dotall_core::{DotallError, Result};
 use serde_json::json;
@@ -186,6 +187,26 @@ impl FormatHandler for XlsxFormat {
             truncated: false,
             continuation: None,
             next_actions,
+        })
+    }
+
+    fn validate_edit(
+        &self,
+        _model: &ArtifactEnvelope,
+        _operations: &[SemanticOperation],
+    ) -> Result<ValidatedEdit> {
+        Err(DotallError::UnsupportedCapability {
+            format_id: FORMAT_ID.into(),
+            capability: "validate_edit".into(),
+            available: AVAILABLE_READS.iter().map(|cap| (*cap).into()).collect(),
+        })
+    }
+
+    fn apply_edit(&self, _source: &Path, _edit: &ValidatedEdit) -> Result<PatchedOutput> {
+        Err(DotallError::UnsupportedCapability {
+            format_id: FORMAT_ID.into(),
+            capability: "apply_edit".into(),
+            available: AVAILABLE_READS.iter().map(|cap| (*cap).into()).collect(),
         })
     }
 }
