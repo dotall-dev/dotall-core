@@ -375,14 +375,9 @@ impl DotallServer {
                                 .map_err(serialization_error)?,
                         )
                     }
-                    (None, true) => {
-                        let staged = session.engine.staged(&relative)?;
-                        let mut applied = Vec::with_capacity(staged.len());
-                        for edit in staged {
-                            applied.push(session.engine.apply(&relative, edit.tx_id)?);
-                        }
-                        json_result(json!({ "applied": applied }))
-                    }
+                    (None, true) => json_result(json!({
+                        "applied": session.engine.apply_all(&relative)?,
+                    })),
                     _ => Err(invalid_request(
                         "<apply>",
                         "apply requires exactly one of transaction_id or all: true",

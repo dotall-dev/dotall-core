@@ -333,6 +333,19 @@ impl DotallStore {
         read_cached_json(&self.staging_path(&key, tx_id))
     }
 
+    /// Replaces a previously staged edit after its preview has been rebased.
+    pub fn replace_staged(&self, relative_path: &str, staged: &StagedEdit) -> Result<()> {
+        let (key, _) = self.tracked_source(relative_path)?;
+        let path = self.staging_path(&key, staged.tx_id);
+        if !path.is_file() {
+            return Err(DotallError::StagedMissing {
+                path: Path::new(relative_path).to_path_buf(),
+                tx_id: staged.tx_id.to_string(),
+            });
+        }
+        write_json(&path, staged)
+    }
+
     pub fn list_staged(&self, relative_path: &str) -> Result<Vec<StagedEdit>> {
         let (key, _) = self.tracked_source(relative_path)?;
         let directory = self.staging_dir(&key);

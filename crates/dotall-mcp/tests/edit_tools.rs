@@ -1,6 +1,6 @@
 use dotall_mcp::params::{
-    ApplyParams, DiffParams, EditParams, FileParams, HistoryParams, OperationParam, RevertParams,
-    StagedParams,
+    ApplyParams, DiffParams, EditParams, FileParams, HistoryParams, OperationParam, ReadParams,
+    RevertParams, StagedParams,
 };
 use dotall_mcp::response::ToolResponse;
 use dotall_mcp::server::{DotallServer, FlushOnClose};
@@ -119,6 +119,90 @@ async fn edit_stages_then_apply_commits_a_version() {
         panic!("diff should succeed");
     };
     assert_eq!(diff.data["version"], 1);
+}
+
+#[tokio::test]
+async fn apply_all_rebases_same_hash_cell_edits() {
+    let workspace = tempdir().expect("workspace");
+    let file = workspace.path().join("financials.xlsx");
+    workbook_fixture(&file);
+    let server =
+        DotallServer::open_or_init(workspace.path(), FlushOnClose::default()).expect("server");
+    let source_hash = inspect_hash(&server, &file).await;
+
+    for (address, value) in [("A2", 125), ("B2", 200)] {
+        let response = server
+            .dotall_edit(Parameters(EditParams {
+                file: file.display().to_string(),
+                expected_source_hash: source_hash.clone(),
+                transaction_id: None,
+                actor_id: "agent-1".into(),
+                operations: vec![OperationParam {
+                    kind: "set_cell_value".into(),
+                    payload: serde_json::json!({
+                        "sheet": "Revenue",
+                        "address": address,
+                        "value": value,
+                    }),
+                }],
+            }))
+            .await
+            .0;
+        assert!(matches!(response, ToolResponse::Success { .. }));
+    }
+
+    let applied = server
+        .dotall_apply(Parameters(ApplyParams {
+            file: file.display().to_string(),
+            transaction_id: None,
+            all: true,
+        }))
+        .await
+        .0;
+    let ToolResponse::Success {
+        result: applied, ..
+    } = applied
+    else {
+        panic!("apply-all should succeed: {applied:?}");
+    };
+    assert_eq!(
+        applied.data["applied"].as_array().expect("applied").len(),
+        2
+    );
+
+    let history = server
+        .dotall_history(Parameters(HistoryParams {
+            file: file.display().to_string(),
+        }))
+        .await
+        .0;
+    let ToolResponse::Success {
+        result: history, ..
+    } = history
+    else {
+        panic!("history should succeed");
+    };
+    assert_eq!(
+        history.data["entries"].as_array().expect("entries").len(),
+        2
+    );
+
+    let read = server
+        .dotall_read(Parameters(ReadParams {
+            file: file.display().to_string(),
+            selector_kind: Some("range".into()),
+            selector: Some("Revenue!A2:B2".into()),
+            max_tokens: Some(500),
+            continuation: None,
+        }))
+        .await
+        .0;
+    let ToolResponse::Success { result: read, .. } = read else {
+        panic!("read should succeed");
+    };
+    let content = read.data["response"]["content"].as_str().expect("content");
+    assert!(content.contains("125"));
+    assert!(content.contains("200"));
 }
 
 #[tokio::test]

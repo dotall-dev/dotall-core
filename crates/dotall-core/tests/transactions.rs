@@ -158,6 +158,111 @@ fn apply_rejects_a_stale_expected_source_hash() {
 }
 
 #[test]
+fn apply_all_rebases_non_conflicting_edits_staged_from_the_same_source() {
+    let mut fixture = Fixture::new();
+    let hash = fixture.source_hash();
+    fixture
+        .engine
+        .edit(
+            "sample.stub",
+            &append_request(hash.clone(), "-first", tx(1)),
+        )
+        .expect("stage first edit");
+    fixture
+        .engine
+        .edit("sample.stub", &append_request(hash, "-second", tx(2)))
+        .expect("stage second edit");
+
+    let applied = fixture
+        .engine
+        .apply_all("sample.stub")
+        .expect("apply all staged edits");
+
+    assert_eq!(
+        applied.iter().map(|edit| edit.tx_id).collect::<Vec<_>>(),
+        vec![tx(1), tx(2)]
+    );
+    assert_eq!(
+        fs::read(fixture.source()).expect("source"),
+        b"initial-first-second"
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .history("sample.stub")
+            .expect("history")
+            .len(),
+        2
+    );
+    assert!(
+        fixture
+            .engine
+            .staged("sample.stub")
+            .expect("staged")
+            .is_empty()
+    );
+}
+
+#[test]
+fn apply_all_preserves_prior_applies_when_a_rebased_edit_conflicts() {
+    let mut fixture = Fixture::new();
+    let hash = fixture.source_hash();
+    fixture
+        .engine
+        .edit(
+            "sample.stub",
+            &append_request(hash.clone(), "-first", tx(1)),
+        )
+        .expect("stage first edit");
+    fixture
+        .engine
+        .edit(
+            "sample.stub",
+            &replace_if_request(hash, "initial", "should-not-apply", tx(2)),
+        )
+        .expect("stage conditional edit");
+
+    let error = fixture
+        .engine
+        .apply_all("sample.stub")
+        .expect_err("second edit must conflict after the first apply");
+
+    let DotallError::ApplyAllPartial {
+        applied, failed_tx, ..
+    } = error
+    else {
+        panic!("apply-all should return a structured partial error");
+    };
+    assert_eq!(
+        applied.iter().map(|edit| edit.tx_id).collect::<Vec<_>>(),
+        vec![tx(1)]
+    );
+    assert_eq!(failed_tx, tx(2));
+    assert_eq!(
+        fs::read(fixture.source()).expect("source"),
+        b"initial-first"
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .history("sample.stub")
+            .expect("history")
+            .len(),
+        1
+    );
+    assert_eq!(
+        fixture
+            .engine
+            .staged("sample.stub")
+            .expect("staged")
+            .iter()
+            .map(|edit| edit.tx_id)
+            .collect::<Vec<_>>(),
+        vec![tx(2)]
+    );
+}
+
+#[test]
 fn duplicate_transaction_id_returns_the_existing_stage_and_apply_result() {
     let mut fixture = Fixture::new();
     let hash = fixture.source_hash();
@@ -355,6 +460,44 @@ fn request(expected_source_hash: String, value: &str, transaction_id: Uuid) -> E
     }
 }
 
+fn append_request(expected_source_hash: String, suffix: &str, transaction_id: Uuid) -> EditRequest {
+    EditRequest {
+        transaction_id,
+        expected_source_hash,
+        actor: Actor {
+            kind: ActorKind::Cli,
+            id: Some("test".into()),
+        },
+        operations: vec![SemanticOperation {
+            kind: "append".into(),
+            payload: serde_json::json!({ "suffix": suffix }),
+        }],
+    }
+}
+
+fn replace_if_request(
+    expected_source_hash: String,
+    expected_content: &str,
+    value: &str,
+    transaction_id: Uuid,
+) -> EditRequest {
+    EditRequest {
+        transaction_id,
+        expected_source_hash,
+        actor: Actor {
+            kind: ActorKind::Cli,
+            id: Some("test".into()),
+        },
+        operations: vec![SemanticOperation {
+            kind: "replace_if".into(),
+            payload: serde_json::json!({
+                "expected_content": expected_content,
+                "content": value,
+            }),
+        }],
+    }
+}
+
 struct StubFormat {
     parse_count: Arc<AtomicUsize>,
 }
@@ -403,10 +546,34 @@ impl FormatHandler for StubFormat {
 
     fn validate_edit(
         &self,
-        _model: &ArtifactEnvelope,
+        model: &ArtifactEnvelope,
         operations: &[SemanticOperation],
     ) -> Result<ValidatedEdit> {
-        let value = operations[0].payload["content"].as_str().expect("content");
+        let operation = &operations[0];
+        let content = model.payload["content"].as_str().expect("content");
+        if operation.kind == "replace_if"
+            && operation.payload["expected_content"].as_str() != Some(content)
+        {
+            return Err(DotallError::Format {
+                format_id: "stub".into(),
+                path: Path::new("sample.stub").to_path_buf(),
+                message: format!(
+                    "expected content {:?}, found {content:?}",
+                    operation.payload["expected_content"]
+                ),
+            });
+        }
+        let value = match operation.kind.as_str() {
+            "append" => format!(
+                "{content}{}",
+                operation.payload["suffix"].as_str().expect("suffix")
+            ),
+            "replace" | "replace_if" => operation.payload["content"]
+                .as_str()
+                .expect("content")
+                .to_owned(),
+            other => panic!("unsupported test operation: {other}"),
+        };
         Ok(ValidatedEdit {
             format_id: "stub".into(),
             schema_id: "stub.edits".into(),
@@ -415,9 +582,9 @@ impl FormatHandler for StubFormat {
             semantic_diff: vec![SemanticChange {
                 target: "content".into(),
                 element_id: "content".into(),
-                change: "replace".into(),
-                before: None,
-                after: Some(value.into()),
+                change: operation.kind.clone(),
+                before: Some(content.into()),
+                after: Some(value),
             }],
             dependency_impact: DependencyImpact {
                 forward: Vec::new(),
@@ -426,12 +593,26 @@ impl FormatHandler for StubFormat {
         })
     }
 
-    fn apply_edit(&self, _source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
-        let bytes = edit.operations[0].payload["content"]
-            .as_str()
-            .expect("content")
-            .as_bytes()
-            .to_vec();
+    fn apply_edit(&self, source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
+        let operation = &edit.operations[0];
+        let bytes = match operation.kind.as_str() {
+            "append" => {
+                let mut bytes = fs::read(source).expect("test source");
+                bytes.extend_from_slice(
+                    operation.payload["suffix"]
+                        .as_str()
+                        .expect("suffix")
+                        .as_bytes(),
+                );
+                bytes
+            }
+            "replace" | "replace_if" => operation.payload["content"]
+                .as_str()
+                .expect("content")
+                .as_bytes()
+                .to_vec(),
+            other => panic!("unsupported test operation: {other}"),
+        };
         Ok(PatchedOutput {
             after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
             bytes,

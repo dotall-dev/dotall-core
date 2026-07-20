@@ -244,6 +244,7 @@ impl Engine {
         )?;
         let staged = StagedEdit {
             tx_id: request.transaction_id,
+            operations: request.operations.clone(),
             preview,
             staged_at: now_unix_ms()?.to_string(),
             expected_source_hash: request.expected_source_hash.clone(),
@@ -260,6 +261,53 @@ impl Engine {
 
     pub fn apply(&mut self, relative: &str, tx_id: Uuid) -> Result<AppliedEdit> {
         self.apply_inner(relative, tx_id, false, false)
+    }
+
+    /// Applies staged edits in deterministic order, rebasing stale edits as needed.
+    ///
+    /// Applies are durable one at a time. If rebasing or applying an edit fails,
+    /// prior edits remain committed and the returned error identifies both the
+    /// failed transaction and the committed [`AppliedEdit`] records.
+    pub fn apply_all(&mut self, relative: &str) -> Result<Vec<AppliedEdit>> {
+        let mut staged = self.store.list_staged(relative)?;
+        staged.sort_by(|left, right| {
+            left.staged_at
+                .cmp(&right.staged_at)
+                .then_with(|| left.tx_id.cmp(&right.tx_id))
+        });
+
+        let mut applied = Vec::with_capacity(staged.len());
+        for mut edit in staged {
+            let result = (|| {
+                let (_, source) = resolve_source(self.store.workspace(), Path::new(relative))?;
+                let current_hash = fingerprint(&source)?.blake3;
+                if edit.expected_source_hash != current_hash {
+                    let loaded = self.model(relative)?;
+                    let preview = loaded.handler.validate_edit_with_source(
+                        &source,
+                        &loaded.model,
+                        &edit.operations,
+                    )?;
+                    edit.expected_source_hash = loaded.source_hash;
+                    edit.preview = preview;
+                    self.store.replace_staged(relative, &edit)?;
+                }
+                self.apply(relative, edit.tx_id)
+            })();
+
+            match result {
+                Ok(edit) => applied.push(edit),
+                Err(source) => {
+                    return Err(DotallError::ApplyAllPartial {
+                        path: Path::new(relative).to_path_buf(),
+                        applied,
+                        failed_tx: edit.tx_id,
+                        source: Box::new(source),
+                    });
+                }
+            }
+        }
+        Ok(applied)
     }
 
     #[doc(hidden)]
@@ -303,6 +351,13 @@ impl Engine {
         let loaded = self.model(relative)?;
         let staged = StagedEdit {
             tx_id,
+            operations: vec![SemanticOperation {
+                kind: "restore_snapshot".into(),
+                payload: serde_json::json!({
+                    "snapshot_ref": record.snapshot_ref,
+                    "revert_of": version,
+                }),
+            }],
             preview: ValidatedEdit {
                 format_id: loaded.model.format_id,
                 schema_id: "dotall.restore-snapshot".into(),

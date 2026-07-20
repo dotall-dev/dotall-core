@@ -37,6 +37,9 @@ pub struct EditRequest {
 pub struct StagedEdit {
     #[serde(rename = "tx_id")]
     pub tx_id: Uuid,
+    /// Original agent operations, retained so a stale stage can be revalidated.
+    #[serde(default)]
+    pub operations: Vec<SemanticOperation>,
     pub preview: ValidatedEdit,
     pub staged_at: String,
     pub expected_source_hash: String,
@@ -47,6 +50,7 @@ impl StagedEdit {
     /// Whether two staged envelopes carry the same durable payload for idempotent retries.
     pub fn same_payload(&self, other: &Self) -> bool {
         self.tx_id == other.tx_id
+            && self.operations == other.operations
             && self.preview == other.preview
             && self.expected_source_hash == other.expected_source_hash
             && self.actor == other.actor

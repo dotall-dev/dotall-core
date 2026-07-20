@@ -26,6 +26,29 @@ pub fn tool_error_typed<T>(error: DotallError) -> ToolResponse<T> {
                 "actual_hash": actual,
             }),
         },
+        DotallError::ApplyAllPartial {
+            path,
+            applied,
+            failed_tx,
+            source,
+        } => ToolResponse::Error {
+            code: "apply_all_partial".into(),
+            message: format!(
+                "apply-all stopped at transaction {failed_tx} after committing {} edit(s): {source}",
+                applied.len()
+            ),
+            retryable: true,
+            next_actions: vec![
+                "Inspect the current file state and the remaining staged edit.".into(),
+                "Discard or replace the failed transaction, then retry apply-all.".into(),
+            ],
+            details: serde_json::json!({
+                "path": path.display().to_string(),
+                "applied": applied,
+                "failed_transaction_id": failed_tx,
+                "cause": source.to_string(),
+            }),
+        },
         DotallError::UnsupportedCapability {
             format_id,
             capability,

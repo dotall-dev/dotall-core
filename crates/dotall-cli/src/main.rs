@@ -325,11 +325,7 @@ fn run_apply(cli: &Cli, path: &Path, tx: Option<Uuid>, all: bool) -> dotall_core
     let mut engine = Engine::new(store, default_registry());
 
     if all {
-        let pending = engine.staged(&relative)?;
-        let mut applied = Vec::with_capacity(pending.len());
-        for edit in pending {
-            applied.push(engine.apply(&relative, edit.tx_id)?);
-        }
+        let applied = engine.apply_all(&relative)?;
         if cli.json {
             print_json(&ApplyAllOutput { applied });
         } else {
