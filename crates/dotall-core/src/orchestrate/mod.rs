@@ -232,6 +232,10 @@ impl Engine {
         self.store.discard_staged(relative, tx_id)
     }
 
+    pub fn staged(&self, relative: &str) -> Result<Vec<StagedEdit>> {
+        self.store.list_staged(relative)
+    }
+
     pub fn history(&self, relative: &str) -> Result<Vec<HistorySummary>> {
         self.store.list_history(relative)
     }
