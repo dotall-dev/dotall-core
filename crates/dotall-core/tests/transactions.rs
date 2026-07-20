@@ -204,6 +204,44 @@ fn apply_all_rebases_non_conflicting_edits_staged_from_the_same_source() {
 }
 
 #[test]
+fn apply_all_rebases_stale_snapshot_restore_without_format_validation() {
+    let mut fixture = Fixture::new();
+    let initial_hash = fixture.source_hash();
+    fixture
+        .engine
+        .edit("sample.stub", &request(initial_hash, "updated", tx(1)))
+        .expect("stage original");
+    fixture
+        .engine
+        .apply("sample.stub", tx(1))
+        .expect("apply original");
+
+    let updated_hash = fixture.source_hash();
+    fixture
+        .engine
+        .edit(
+            "sample.stub",
+            &append_request(updated_hash, "-later", tx(2)),
+        )
+        .expect("stage intervening edit");
+    fixture
+        .engine
+        .revert("sample.stub", 1, tx(3))
+        .expect("stage revert");
+
+    let applied = fixture
+        .engine
+        .apply_all("sample.stub")
+        .expect("apply all should restore the snapshot");
+
+    assert_eq!(
+        applied.iter().map(|edit| edit.tx_id).collect::<Vec<_>>(),
+        vec![tx(2), tx(3)]
+    );
+    assert_eq!(fs::read(fixture.source()).expect("source"), b"initial");
+}
+
+#[test]
 fn apply_all_preserves_prior_applies_when_a_rebased_edit_conflicts() {
     let mut fixture = Fixture::new();
     let hash = fixture.source_hash();

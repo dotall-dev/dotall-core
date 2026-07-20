@@ -282,16 +282,20 @@ impl Engine {
                 let (_, source) = resolve_source(self.store.workspace(), Path::new(relative))?;
                 let current_hash = fingerprint(&source)?.blake3;
                 if edit.expected_source_hash != current_hash {
-                    let loaded = self.model(relative)?;
-                    let operations = edit.effective_operations();
-                    let preview = loaded.handler.validate_edit_with_source(
-                        &source,
-                        &loaded.model,
-                        &operations,
-                    )?;
-                    edit.expected_source_hash = loaded.source_hash;
-                    edit.operations = operations;
-                    edit.preview = preview;
+                    if is_snapshot_restore(&edit) {
+                        edit.expected_source_hash = current_hash;
+                    } else {
+                        let loaded = self.model(relative)?;
+                        let operations = edit.effective_operations();
+                        let preview = loaded.handler.validate_edit_with_source(
+                            &source,
+                            &loaded.model,
+                            &operations,
+                        )?;
+                        edit.expected_source_hash = loaded.source_hash;
+                        edit.operations = operations;
+                        edit.preview = preview;
+                    }
                     self.store.replace_staged(relative, &edit)?;
                 }
                 self.apply(relative, edit.tx_id)
@@ -643,6 +647,14 @@ fn restore_snapshot_ref(edit: &ValidatedEdit) -> Option<&str> {
     let operation = edit.operations.first()?;
     (operation.kind == "restore_snapshot")
         .then(|| operation.payload.get("snapshot_ref")?.as_str())?
+}
+
+fn is_snapshot_restore(edit: &StagedEdit) -> bool {
+    edit.preview.schema_id == "dotall.restore-snapshot"
+        || edit
+            .effective_operations()
+            .iter()
+            .any(|operation| operation.kind == "restore_snapshot")
 }
 
 fn revert_of(edit: &ValidatedEdit) -> Option<u64> {

@@ -251,7 +251,7 @@ async fn revert_stages_restore_until_apply() {
             version: 1,
             expected_source_hash: inspect_hash(&server, &file).await,
             transaction_id: None,
-            actor_id: "agent-1".into(),
+            actor_id: None,
         }))
         .await
         .0;

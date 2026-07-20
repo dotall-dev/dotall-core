@@ -335,7 +335,7 @@ async fn agent_session_inspects_reads_edits_applies_histories_and_reverts() {
                 .expect("source hash")
                 .to_owned(),
             transaction_id: None,
-            actor_id: "agent-1".into(),
+            actor_id: None,
         }))
         .await
         .0;

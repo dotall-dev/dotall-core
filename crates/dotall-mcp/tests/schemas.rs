@@ -1,6 +1,6 @@
 use dotall_mcp::params::{
-    ApplyParams, CapabilitiesParams, DepsParams, DiffParams, DiscardParams, EditParams, InitParams,
-    ReadParams, RevertParams, StagedParams, StatusParams,
+    ApplyParams, CapabilitiesParams, DepsParams, DiffParams, DiscardParams, EditParams, FileParams,
+    HistoryParams, InitParams, ReadParams, RevertParams, StagedParams, StatusParams,
 };
 use dotall_mcp::response::{JsonResult, ToolResponse};
 
@@ -49,6 +49,21 @@ fn apply_schema_exposes_transaction_and_all_fields() {
 
     assert!(properties.contains_key("transaction_id"));
     assert!(properties.contains_key("all"));
+}
+
+#[test]
+fn revert_schema_makes_actor_optional_and_documents_system_attribution() {
+    let json = serde_json::to_value(schemars::schema_for!(RevertParams)).expect("schema JSON");
+    let required = json["required"].as_array().expect("required");
+    let properties = json["properties"].as_object().expect("properties");
+
+    assert!(!required.iter().any(|value| value == "actor_id"));
+    assert!(
+        properties["actor_id"]["description"]
+            .as_str()
+            .expect("actor description")
+            .contains("system/revert")
+    );
 }
 
 #[test]
@@ -108,8 +123,10 @@ fn workspace_and_file_param_schemas_exist() {
     for schema in [
         schemars::schema_for!(InitParams),
         schemars::schema_for!(StatusParams),
+        schemars::schema_for!(FileParams),
         schemars::schema_for!(StagedParams),
         schemars::schema_for!(DiscardParams),
+        schemars::schema_for!(HistoryParams),
         schemars::schema_for!(DiffParams),
         schemars::schema_for!(RevertParams),
         schemars::schema_for!(DepsParams),

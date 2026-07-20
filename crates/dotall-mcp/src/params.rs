@@ -111,5 +111,8 @@ pub struct RevertParams {
     pub expected_source_hash: String,
     #[schemars(description = "Stable UUID reused when retrying the same revert")]
     pub transaction_id: Option<String>,
-    pub actor_id: String,
+    #[schemars(
+        description = "Optional client metadata; core always attributes a revert as system/revert"
+    )]
+    pub actor_id: Option<String>,
 }
