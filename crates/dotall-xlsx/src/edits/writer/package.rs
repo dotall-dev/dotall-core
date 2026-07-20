@@ -4,14 +4,15 @@ use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use dotall_core::{DotallError, PatchedOutput, Result, ValidatedEdit};
-use quick_xml::Reader;
 use quick_xml::events::Event;
+use quick_xml::Reader;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
+use crate::edits::{parse_validated_operations, EditableValue, XlsxEditOp};
 use crate::FORMAT_ID;
-use crate::edits::{XlsxEditOp, parse_validated_operations};
 
+use super::shared_strings;
 use super::worksheet;
 
 pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
@@ -35,13 +36,46 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
         grouped.entry(sheet.clone()).or_default().push(operation);
     }
 
+    let string_values = grouped
+        .values()
+        .flat_map(|operations| operations.iter())
+        .filter_map(|operation| match operation {
+            XlsxEditOp::SetCellValue {
+                value: EditableValue::String(value),
+                ..
+            } => Some(value.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     let mut replacements = BTreeMap::new();
+    let shared_string_indices = match (string_values.is_empty(), shared_strings_path(&original)?) {
+        (false, Some(path)) => {
+            let count_delta = grouped
+                .iter()
+                .try_fold(0_u64, |delta, (sheet, operations)| {
+                    let path = worksheet_paths.get(sheet).ok_or_else(|| {
+                        writer_error(format!("worksheet path not found for sheet `{sheet}`"))
+                    })?;
+                    let xml = entry_bytes(&original, path)?;
+                    worksheet::shared_string_count_delta(&xml, operations)
+                        .map(|value| delta + value)
+                })?;
+            let patch =
+                shared_strings::patch(&entry_bytes(&original, &path)?, string_values, count_delta)?;
+            replacements.insert(path, patch.bytes);
+            Some(patch.indices)
+        }
+        _ => None,
+    };
     for (sheet, operations) in grouped {
         let path = worksheet_paths
             .get(&sheet)
             .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
         let xml = entry_bytes(&original, path)?;
-        replacements.insert(path.clone(), worksheet::patch(&xml, &operations)?);
+        replacements.insert(
+            path.clone(),
+            worksheet::patch(&xml, &operations, shared_string_indices.as_ref())?,
+        );
     }
 
     let bytes = rebuild_package(&original, &replacements)?;
@@ -49,6 +83,56 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes,
     })
+}
+
+fn shared_strings_path(package: &[u8]) -> Result<Option<String>> {
+    let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
+    if let Some(target) = parse_shared_strings_target(&relationships)? {
+        return Ok(Some(normalize_relationship_target(&target)));
+    }
+    Ok(has_entry(package, "xl/sharedStrings.xml")?.then(|| "xl/sharedStrings.xml".into()))
+}
+
+fn parse_shared_strings_target(xml: &[u8]) -> Result<Option<String>> {
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| writer_error(format!("invalid workbook relationships XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if element.name().as_ref() == b"Relationship" =>
+            {
+                let mut relationship_type = None;
+                let mut target = None;
+                for attribute in element.attributes().flatten() {
+                    match attribute.key.as_ref() {
+                        b"Type" => {
+                            relationship_type =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
+                        b"Target" => {
+                            target =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
+                        _ => {}
+                    }
+                }
+                if relationship_type
+                    .as_deref()
+                    .is_some_and(|value| value.ends_with("/sharedStrings"))
+                {
+                    return target.map(Some).ok_or_else(|| {
+                        writer_error("shared strings relationship is missing its target")
+                    });
+                }
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
+        }
+        buffer.clear();
+    }
 }
 
 fn worksheet_paths(package: &[u8]) -> Result<BTreeMap<String, String>> {
@@ -159,6 +243,12 @@ fn normalize_relationship_target(target: &str) -> String {
     } else {
         format!("xl/{target}")
     }
+}
+
+fn has_entry(package: &[u8], name: &str) -> Result<bool> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| writer_error(format!("invalid XLSX package: {error}")))?;
+    Ok(archive.by_name(name).is_ok())
 }
 
 fn entry_bytes(package: &[u8], name: &str) -> Result<Vec<u8>> {

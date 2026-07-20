@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Cursor, Read, Write};
 
-use dotall_core::SemanticOperation;
 use dotall_core::registry::FormatHandler;
-use dotall_xlsx::{XlsxFormat, parse_workbook};
+use dotall_core::SemanticOperation;
+use dotall_xlsx::{parse_workbook, XlsxFormat};
 use rust_xlsxwriter::Workbook;
 use tempfile::tempdir;
 use zip::write::SimpleFileOptions;
@@ -39,6 +39,98 @@ fn patches_a_cell_value_without_changing_other_zip_entries() {
     let after_model = parse_workbook_bytes(&patched.bytes, directory.path());
 
     assert_eq!(cell_value(&after_model, "Inputs", "A1"), "42");
+    assert_untouched_entries_are_identical(&before, &patched.bytes, &["xl/worksheets/sheet1.xml"]);
+}
+
+#[test]
+fn patches_string_cells_through_shared_strings_and_reuses_existing_entries() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("workbook.xlsx");
+    write_shared_string_fixture(&source);
+    let before = fs::read(&source).expect("fixture bytes");
+    assert!(
+        zip_entries(&before).contains_key("xl/sharedStrings.xml"),
+        "fixture must include shared strings"
+    );
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[
+                SemanticOperation {
+                    kind: "set_cell_value".into(),
+                    payload: serde_json::json!({
+                        "sheet": "Inputs",
+                        "address": "A1",
+                        "value": "appended",
+                    }),
+                },
+                SemanticOperation {
+                    kind: "set_cell_value".into(),
+                    payload: serde_json::json!({
+                        "sheet": "Inputs",
+                        "address": "B1",
+                        "value": "existing",
+                    }),
+                },
+            ],
+        )
+        .expect("validate string edits");
+
+    let patched = handler
+        .apply_edit(&source, &edit)
+        .expect("apply string edits");
+    let worksheet = worksheet_xml(&patched.bytes, "xl/worksheets/sheet1.xml");
+    let shared_strings = worksheet_xml(&patched.bytes, "xl/sharedStrings.xml");
+
+    assert!(worksheet.contains(r#"<c r="A1" t="s"><v>1</v></c>"#));
+    assert!(worksheet.contains(r#"<c r="B1" t="s"><v>0</v></c>"#));
+    assert!(shared_strings.contains(r#"count="2" uniqueCount="2""#));
+    assert!(shared_strings.contains("<si><t>existing</t></si>"));
+    assert!(shared_strings.contains("<si><t>appended</t></si>"));
+    assert_untouched_entries_are_identical(
+        &before,
+        &patched.bytes,
+        &["xl/worksheets/sheet1.xml", "xl/sharedStrings.xml"],
+    );
+}
+
+#[test]
+fn patches_string_cells_inline_when_workbook_has_no_shared_strings() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("workbook.xlsx");
+    write_fixture(&source);
+    let before = fs::read(&source).expect("fixture bytes");
+    assert!(
+        !zip_entries(&before).contains_key("xl/sharedStrings.xml"),
+        "fixture must not include shared strings"
+    );
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_value".into(),
+                payload: serde_json::json!({
+                    "sheet": "Inputs",
+                    "address": "A1",
+                    "value": "inline",
+                }),
+            }],
+        )
+        .expect("validate string edit");
+
+    let patched = handler
+        .apply_edit(&source, &edit)
+        .expect("apply string edit");
+
+    assert!(worksheet_xml(&patched.bytes, "xl/worksheets/sheet1.xml")
+        .contains(r#"<c r="A1" t="inlineStr"><is><t>inline</t></is></c>"#));
+    assert!(!zip_entries(&patched.bytes).contains_key("xl/sharedStrings.xml"));
     assert_untouched_entries_are_identical(&before, &patched.bytes, &["xl/worksheets/sheet1.xml"]);
 }
 
@@ -288,6 +380,17 @@ fn write_fixture(path: &std::path::Path) {
     workbook.save(path).expect("write fixture");
 }
 
+fn write_shared_string_fixture(path: &std::path::Path) {
+    let mut workbook = Workbook::new();
+    let inputs = workbook
+        .add_worksheet()
+        .set_name("Inputs")
+        .expect("sheet name");
+    inputs.write_string(0, 0, "existing").expect("string value");
+    inputs.write_number(0, 1, 1).expect("number value");
+    workbook.save(path).expect("write fixture");
+}
+
 fn parse_workbook_bytes(bytes: &[u8], directory: &std::path::Path) -> dotall_xlsx::WorkbookModel {
     let path = directory.join("patched.xlsx");
     fs::write(&path, bytes).expect("write patched workbook");
@@ -374,11 +477,7 @@ fn zip_entries(bytes: &[u8]) -> BTreeMap<String, ZipEntrySnapshot> {
         };
         let (crc32, compression, compressed_size) = {
             let entry = archive.by_index(index).expect("ZIP entry");
-            (
-                entry.crc32(),
-                entry.compression(),
-                entry.compressed_size(),
-            )
+            (entry.crc32(), entry.compression(), entry.compressed_size())
         };
         let mut raw_compressed = Vec::new();
         archive

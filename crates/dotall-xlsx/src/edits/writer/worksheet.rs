@@ -1,13 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dotall_core::{DotallError, Result};
-use quick_xml::Reader;
 use quick_xml::events::Event;
+use quick_xml::Reader;
 
-use crate::FORMAT_ID;
 use crate::edits::{EditableValue, XlsxEditOp};
+use crate::FORMAT_ID;
 
-pub(super) fn patch(xml: &[u8], operations: &[XlsxEditOp]) -> Result<Vec<u8>> {
+pub(super) fn patch(
+    xml: &[u8],
+    operations: &[XlsxEditOp],
+    shared_string_indices: Option<&BTreeMap<String, usize>>,
+) -> Result<Vec<u8>> {
     let edits = operations
         .iter()
         .map(|operation| match operation {
@@ -53,7 +57,7 @@ pub(super) fn patch(xml: &[u8], operations: &[XlsxEditOp]) -> Result<Vec<u8>> {
                     replacements.push((
                         start_offset,
                         end_offset,
-                        render_cell(&start_tag, operation)?,
+                        render_cell(&start_tag, operation, shared_string_indices)?,
                     ));
                     found.insert(address);
                 }
@@ -66,7 +70,7 @@ pub(super) fn patch(xml: &[u8], operations: &[XlsxEditOp]) -> Result<Vec<u8>> {
                     replacements.push((
                         start_offset,
                         end,
-                        render_cell(&start.to_owned(), operation)?,
+                        render_cell(&start.to_owned(), operation, shared_string_indices)?,
                     ));
                     found.insert(address);
                 }
@@ -120,7 +124,7 @@ pub(super) fn patch(xml: &[u8], operations: &[XlsxEditOp]) -> Result<Vec<u8>> {
         let row = row_number(address)?;
         rows.entry(row)
             .or_default()
-            .push_str(&render_new_cell(operation)?);
+            .push_str(&render_new_cell(operation, shared_string_indices)?);
     }
     let mut new_rows = String::new();
     for (row, cells) in rows {
@@ -150,9 +154,56 @@ fn cell_address(start: &quick_xml::events::BytesStart<'_>) -> Result<String> {
         .ok_or_else(|| writer_error("worksheet cell is missing its address"))
 }
 
+pub(super) fn shared_string_count_delta(xml: &[u8], operations: &[XlsxEditOp]) -> Result<u64> {
+    let string_edits = operations
+        .iter()
+        .filter_map(|operation| match operation {
+            XlsxEditOp::SetCellValue {
+                address,
+                value: EditableValue::String(_),
+                ..
+            } => Some(address.as_str()),
+            _ => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let requested_count = string_edits.len() as u64;
+    let mut remaining = string_edits;
+    let mut existing_shared_strings = 0_u64;
+    let mut reader = Reader::from_reader(xml);
+    let mut buffer = Vec::new();
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| writer_error(format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Start(cell) | Event::Empty(cell) if cell.name().as_ref() == b"c" => {
+                let address = cell_address(&cell)?;
+                if remaining.remove(address.as_str()) && cell_is_shared_string(&cell) {
+                    existing_shared_strings += 1;
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+
+    Ok(requested_count - existing_shared_strings)
+}
+
+fn cell_is_shared_string(start: &quick_xml::events::BytesStart<'_>) -> bool {
+    start
+        .attributes()
+        .filter_map(|attribute| attribute.ok())
+        .find(|attribute| attribute.key.as_ref() == b"t")
+        .is_some_and(|attribute| attribute.value.as_ref() == b"s")
+}
+
 fn render_cell(
     start: &quick_xml::events::BytesStart<'_>,
     operation: &XlsxEditOp,
+    shared_string_indices: Option<&BTreeMap<String, usize>>,
 ) -> Result<String> {
     let address = cell_address(start)?;
     let mut attributes = Vec::new();
@@ -166,16 +217,24 @@ fn render_cell(
             ));
         }
     }
-    render_cell_parts(&address, &attributes.concat(), operation)
+    render_cell_parts(
+        &address,
+        &attributes.concat(),
+        operation,
+        shared_string_indices,
+    )
 }
 
-fn render_new_cell(operation: &XlsxEditOp) -> Result<String> {
+fn render_new_cell(
+    operation: &XlsxEditOp,
+    shared_string_indices: Option<&BTreeMap<String, usize>>,
+) -> Result<String> {
     let address = match operation {
         XlsxEditOp::SetCellValue { address, .. } | XlsxEditOp::SetCellFormula { address, .. } => {
             address
         }
     };
-    render_cell_parts(address, "", operation)
+    render_cell_parts(address, "", operation, shared_string_indices)
 }
 
 fn row_number(address: &str) -> Result<u32> {
@@ -296,13 +355,26 @@ fn render_cell_parts(
     address: &str,
     preserved_attributes: &str,
     operation: &XlsxEditOp,
+    shared_string_indices: Option<&BTreeMap<String, usize>>,
 ) -> Result<String> {
     match operation {
         XlsxEditOp::SetCellValue { value, .. } => match value {
-            EditableValue::String(value) => Ok(format!(
-                r#"<c r="{address}" t="inlineStr"{preserved_attributes}><is><t>{}</t></is></c>"#,
-                escape(value)
-            )),
+            EditableValue::String(value) => match shared_string_indices {
+                Some(indices) => {
+                    let index = indices.get(value).ok_or_else(|| {
+                        writer_error(format!(
+                            "shared string index not found for cell `{address}`"
+                        ))
+                    })?;
+                    Ok(format!(
+                        r#"<c r="{address}" t="s"{preserved_attributes}><v>{index}</v></c>"#
+                    ))
+                }
+                None => Ok(format!(
+                    r#"<c r="{address}" t="inlineStr"{preserved_attributes}><is><t>{}</t></is></c>"#,
+                    escape(value)
+                )),
+            },
             EditableValue::Number(value) => Ok(format!(
                 r#"<c r="{address}"{preserved_attributes}><v>{value}</v></c>"#
             )),
