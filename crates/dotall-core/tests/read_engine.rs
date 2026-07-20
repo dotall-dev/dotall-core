@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use dotall_core::read::apply_budget;
 use dotall_core::registry::{
     ArtifactSchema, Capability, DetectionProbe, DetectionScore, FormatDescriptor, FormatHandler,
-    FormatRegistry, Inspection, ReadRequest,
+    FormatRegistry, Inspection, PatchedOutput, ReadRequest, SemanticOperation, ValidatedEdit,
 };
 use dotall_core::{ArtifactEnvelope, DotallStore, Engine, ReadResponse, Result};
 use tempfile::tempdir;
@@ -279,6 +279,26 @@ impl FormatHandler for CountingFormat {
             truncated: false,
             continuation: None,
             next_actions: Vec::new(),
+        })
+    }
+
+    fn validate_edit(
+        &self,
+        _model: &ArtifactEnvelope,
+        _operations: &[SemanticOperation],
+    ) -> Result<ValidatedEdit> {
+        Err(dotall_core::DotallError::UnsupportedCapability {
+            format_id: "stub".into(),
+            capability: "validate_edit".into(),
+            available: vec!["inspect".into(), "read.full".into()],
+        })
+    }
+
+    fn apply_edit(&self, _source: &Path, _edit: &ValidatedEdit) -> Result<PatchedOutput> {
+        Err(dotall_core::DotallError::UnsupportedCapability {
+            format_id: "stub".into(),
+            capability: "apply_edit".into(),
+            available: vec!["inspect".into(), "read.full".into()],
         })
     }
 }
