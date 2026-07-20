@@ -90,3 +90,42 @@ fn inspect_json_is_machine_readable() {
     assert_eq!(value["inspection"]["format_id"], "xlsx");
     assert_eq!(value["inspection"]["summary"]["sheets"][0]["name"], "Sheet");
 }
+
+#[test]
+fn inspect_advertises_all_merge_two_edit_capabilities() {
+    let temp = tempdir().expect("tempdir");
+    let workbook = temp.path().join("book.xlsx");
+    workbook_fixture(&workbook);
+    let workspace = temp.path().to_str().expect("UTF-8 workspace");
+    let source = workbook.to_str().expect("UTF-8 workbook");
+
+    dotall().args(["init", workspace]).assert().success();
+    let output = dotall()
+        .args(["--json", "inspect", source])
+        .output()
+        .expect("inspect output");
+
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid JSON");
+    let operations = value["inspection"]["edit_capabilities"]
+        .as_array()
+        .expect("edit capabilities")
+        .iter()
+        .filter_map(|capability| capability["operation"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        operations,
+        vec![
+            "set_cell_value",
+            "set_cell_formula",
+            "set_range",
+            "insert_row",
+            "delete_row",
+            "insert_column",
+            "delete_column",
+            "add_sheet",
+            "rename_sheet",
+            "delete_sheet",
+        ]
+    );
+}
