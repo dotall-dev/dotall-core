@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "dotall": {
+      "command": "REPO_ROOT/target/release/dotall-mcp",
+      "args": [],
+      "cwd": "REPO_ROOT/demo"
+    }
+  }
+}

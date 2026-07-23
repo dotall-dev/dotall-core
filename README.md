@@ -52,6 +52,9 @@ cargo run -p dotall-cli -- apply /path/to/project/book.xlsx --all
 
 Add `--json` for machine-readable output.
 
+**Demo kit:** see [`demo/`](demo/) for a ready `financials.xlsx`, CLI script, and MCP
+config example (`demo/mcp.example.json`).
+
 ## MCP (for agents)
 
 Stdio MCP server over the same engine as the CLI:

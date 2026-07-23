@@ -15,6 +15,7 @@ brainstorming notes live elsewhere.
 - `docs/superpowers/specs/2026-07-21-mcp-agent-interface-design.md` — MCP tools,
   flush-on-close, capabilities discovery.
 - `skills/xlsx/SKILL.md` — agent workflow for `.xlsx` via Dotall MCP.
+- `demo/README.md` — sample workbook + CLI/MCP walkthrough.
 
 Specs are the source of truth. If code and spec disagree, fix one deliberately —
 don't silently drift.
