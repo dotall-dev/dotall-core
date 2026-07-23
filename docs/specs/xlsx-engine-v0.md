@@ -1,7 +1,9 @@
 # XLSX Engine v0 — Implementation Spec
 
 First buildable milestone for the Dotall engine. Pure-Rust core, CLI-first, XLSX as
-the lead format. Wraps into an MCP server once the core is solid.
+the lead format. The same core is exposed via stdio MCP — see
+`docs/superpowers/specs/2026-07-21-mcp-agent-interface-design.md` and
+`docs/superpowers/plans/2026-07-21-mcp-agent-interface.md`.
 
 See `docs/specs/dotall-overview.md` for product context.
 
@@ -36,7 +38,8 @@ dotall status           # tracked objects, fresh/stale, versions
 - [ ] An edited formula round-trips into a valid `.xlsx` that Excel opens cleanly.
 - [ ] All untouched content preserved byte-for-byte (styles, charts, other sheets).
 - [ ] `revert` restores the prior version.
-- [ ] Same core wrapped as an MCP binary, registered in Claude Desktop.
+- [x] Same core wrapped as an MCP binary (`dotall-mcp`); see MCP spec above and
+      `skills/xlsx/SKILL.md` for agent workflow.
 
 ## 2. Workspace layout (one Cargo workspace)
 
@@ -47,7 +50,7 @@ dotall/
 │   ├── dotall-core/         # store, registry, pipeline, read, history, orchestration
 │   ├── dotall-xlsx/         # typed model, processors, views, edits, OOXML writer
 │   ├── dotall-cli/          # bin: `dotall` (dev harness + real CLI)
-│   └── dotall-mcp/          # bin: stdio MCP server (added after core is solid)
+│   └── dotall-mcp/          # bin: stdio MCP server (`dotall-mcp`)
 ```
 
 Core concerns begin as strict internal modules. Promote one to a separate crate only
@@ -197,7 +200,8 @@ fidelity test suite guards it.
 4. Transactional value/formula edits, surgical OOXML apply, history, diff, recovery,
    and revert.
 5. Broaden row/column/range/sheet operations behind fidelity tests.
-6. `dotall-mcp`: expose the same core as a stdio MCP server.
+6. `dotall-mcp`: expose the same core as a stdio MCP server — **shipped**; see
+   `docs/superpowers/specs/2026-07-21-mcp-agent-interface-design.md`.
 
 ## 11. Non-goals for v0 (YAGNI)
 
@@ -214,6 +218,6 @@ multi-agent conflict/locking · no branching history · no DOCX/PDF · no Python
 | Hashing | `blake3` |
 | Serialization | `serde` + `serde_json` |
 | CLI | `clap` |
-| MCP (later) | Rust MCP SDK (stdio) |
+| MCP | `rmcp` (stdio); see MCP agent-interface spec |
 
 Exact versions pinned at implementation time via `cargo add`.

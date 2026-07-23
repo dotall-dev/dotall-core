@@ -2,6 +2,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
+use uuid::Uuid;
+
+use crate::orchestrate::AppliedEdit;
 
 pub type Result<T> = std::result::Result<T, DotallError>;
 
@@ -91,6 +94,17 @@ pub enum DotallError {
 
     #[error("history version {version} is missing for {path}")]
     HistoryVersionMissing { path: PathBuf, version: u64 },
+
+    #[error(
+        "apply-all for {path} stopped at transaction {failed_tx} after applying transactions {applied:?}: {source}"
+    )]
+    ApplyAllPartial {
+        path: PathBuf,
+        applied: Vec<AppliedEdit>,
+        failed_tx: Uuid,
+        #[source]
+        source: Box<DotallError>,
+    },
 }
 
 impl DotallError {

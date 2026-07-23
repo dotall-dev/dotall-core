@@ -8,7 +8,7 @@ mod types;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::{DotallError, Result};
+use crate::{DotallError, DotallStore, Result};
 
 pub use types::*;
 
@@ -19,6 +19,23 @@ pub trait FormatHandler: Send + Sync {
     fn parse(&self, source: &Path) -> Result<ArtifactEnvelope>;
     fn inspect(&self, model: &ArtifactEnvelope) -> Result<Inspection>;
     fn read(&self, model: &ArtifactEnvelope, request: &ReadRequest) -> Result<ReadResponse>;
+
+    /// Queries format-specific dependencies for a selector in a cached artifact.
+    fn query_dependencies(
+        &self,
+        _store: &DotallStore,
+        _relative: &str,
+        _model: &ArtifactEnvelope,
+        _source_hash: &str,
+        _selector: &str,
+        _dependents: bool,
+    ) -> Result<serde_json::Value> {
+        Err(DotallError::UnsupportedCapability {
+            format_id: self.descriptor().id,
+            capability: "deps".into(),
+            available: Vec::new(),
+        })
+    }
 
     fn validate_edit(
         &self,

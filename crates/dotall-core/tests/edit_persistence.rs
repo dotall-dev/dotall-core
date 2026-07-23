@@ -10,6 +10,14 @@ use uuid::Uuid;
 fn sample_staged(tx_id: Uuid, expected_hash: &str, formula: &str) -> StagedEdit {
     StagedEdit {
         tx_id,
+        operations: vec![SemanticOperation {
+            kind: "set_cell_formula".into(),
+            payload: serde_json::json!({
+                "sheet": "Revenue",
+                "address": "B12",
+                "formula": formula
+            }),
+        }],
         preview: ValidatedEdit {
             format_id: "xlsx".into(),
             schema_id: "xlsx.cell-edits".into(),

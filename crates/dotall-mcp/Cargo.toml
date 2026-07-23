@@ -1,0 +1,23 @@
+[package]
+name = "dotall-mcp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+clap = { version = "4.6.3", features = ["derive"] }
+dotall-core = { version = "0.1.0", path = "../dotall-core" }
+dotall-xlsx = { version = "0.1.0", path = "../dotall-xlsx", optional = true }
+rmcp = { version = "2.2.0", features = ["server", "macros", "transport-io"] }
+schemars = "1.2.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+uuid = "1.24.0"
+
+[dev-dependencies]
+rust_xlsxwriter = "0.96.0"
+tempfile = "3.27.0"
+
+[features]
+default = ["xlsx"]
+xlsx = ["dep:dotall-xlsx"]
