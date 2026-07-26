@@ -480,6 +480,95 @@ fn delete_row_removes_the_calc_chain_relationship_with_the_calc_chain() {
     assert!(!worksheet_xml(&patched.bytes, "[Content_Types].xml").contains("calcChain"));
 }
 
+#[test]
+fn value_edits_force_excel_recalculation_on_open() {
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("workbook.xlsx");
+    write_fixture(&source);
+
+    // Simulate an Excel-saved workbook: stale formula cache + no fullCalcOnLoad + calcChain.
+    replace_zip_entry(&source, "xl/workbook.xml", |xml| {
+        if let Some(start) = xml.find("<calcPr") {
+            let end = xml[start..]
+                .find('>')
+                .map(|offset| start + offset + 1)
+                .expect("calcPr tag");
+            format!(
+                "{}{}{}",
+                &xml[..start],
+                r#"<calcPr calcId="191029" calcMode="auto" fullCalcOnLoad="0"/>"#,
+                &xml[end..]
+            )
+        } else {
+            xml.replacen(
+                "</workbook>",
+                r#"<calcPr calcId="191029" calcMode="auto" fullCalcOnLoad="0"/></workbook>"#,
+                1,
+            )
+        }
+    });
+    replace_zip_entry(&source, "xl/worksheets/sheet2.xml", |xml| {
+        xml.replacen("<f>Inputs!A1</f>", "<f>Inputs!A1</f><v>1</v>", 1)
+    });
+    replace_zip_entry(&source, "xl/_rels/workbook.xml.rels", |xml| {
+        xml.replacen(
+            "</Relationships>",
+            r#"<Relationship Id="rId99" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/calcChain" Target="calcChain.xml"/></Relationships>"#,
+            1,
+        )
+    });
+    replace_zip_entry(&source, "[Content_Types].xml", |xml| {
+        xml.replacen(
+            "</Types>",
+            r#"<Override PartName="/xl/calcChain.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"/></Types>"#,
+            1,
+        )
+    });
+    append_zip_entry(
+        &source,
+        "xl/calcChain.xml",
+        r#"<calcChain xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><c r="B1" i="2"/></calcChain>"#,
+    );
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_value".into(),
+                payload: serde_json::json!({
+                    "sheet": "Inputs",
+                    "address": "A1",
+                    "value": 99,
+                }),
+            }],
+        )
+        .expect("validate value edit");
+
+    let patched = handler
+        .apply_edit(&source, &edit)
+        .expect("apply value edit");
+    let workbook_xml = worksheet_xml(&patched.bytes, "xl/workbook.xml");
+    let entries = zip_entries(&patched.bytes);
+
+    assert!(
+        workbook_xml.contains(r#"fullCalcOnLoad="1""#),
+        "value edits must mark the workbook for full recalculation on open: {workbook_xml}"
+    );
+    assert!(!entries.contains_key("xl/calcChain.xml"));
+    assert!(!worksheet_xml(&patched.bytes, "xl/_rels/workbook.xml.rels").contains("calcChain"));
+    assert!(!worksheet_xml(&patched.bytes, "[Content_Types].xml").contains("calcChain"));
+    assert_eq!(
+        cell_value(
+            &parse_workbook_bytes(&patched.bytes, directory.path()),
+            "Inputs",
+            "A1"
+        ),
+        "99"
+    );
+}
+
 fn write_fixture(path: &std::path::Path) {
     let mut workbook = Workbook::new();
     let inputs = workbook

@@ -122,20 +122,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             );
         }
         let mut removals = BTreeSet::new();
-        if has_entry(&original, "xl/calcChain.xml")? {
-            removals.insert("xl/calcChain.xml".to_owned());
-            replacements.insert(
-                "[Content_Types].xml".into(),
-                remove_calc_chain_override(&entry_bytes(&original, "[Content_Types].xml")?)?,
-            );
-            replacements.insert(
-                "xl/_rels/workbook.xml.rels".into(),
-                remove_calc_chain_relationship(&entry_bytes(
-                    &original,
-                    "xl/_rels/workbook.xml.rels",
-                )?)?,
-            );
-        }
+        invalidate_cached_calculation(&original, &mut replacements, &mut removals)?;
         let bytes = rebuild_package(&original, &replacements, &removals, &BTreeMap::new())?;
         return Ok(PatchedOutput {
             after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
@@ -224,11 +211,102 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
         );
     }
 
-    let bytes = rebuild_package(&original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    let mut removals = BTreeSet::new();
+    invalidate_cached_calculation(&original, &mut replacements, &mut removals)?;
+    let bytes = rebuild_package(&original, &replacements, &removals, &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes,
     })
+}
+
+/// Drop Excel's calculation chain and mark the workbook so dependents/charts
+/// recalculate on open. Surgical cell patches leave stale formula `<v>` caches
+/// and chart caches intact; without this, Excel shows the old results.
+fn invalidate_cached_calculation(
+    package: &[u8],
+    replacements: &mut BTreeMap<String, Vec<u8>>,
+    removals: &mut BTreeSet<String>,
+) -> Result<()> {
+    if has_entry(package, "xl/calcChain.xml")? {
+        removals.insert("xl/calcChain.xml".to_owned());
+        replacements.insert(
+            "[Content_Types].xml".into(),
+            remove_calc_chain_override(&entry_bytes(package, "[Content_Types].xml")?)?,
+        );
+        replacements.insert(
+            "xl/_rels/workbook.xml.rels".into(),
+            remove_calc_chain_relationship(&entry_bytes(package, "xl/_rels/workbook.xml.rels")?)?,
+        );
+    }
+    if let Some(workbook) = ensure_full_calc_on_load(&entry_bytes(package, "xl/workbook.xml")?)? {
+        replacements.insert("xl/workbook.xml".into(), workbook);
+    }
+    Ok(())
+}
+
+fn ensure_full_calc_on_load(xml: &[u8]) -> Result<Option<Vec<u8>>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
+    if let Some(start) = source.find("<calcPr") {
+        let end = source[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| writer_error("unterminated workbook calcPr"))?;
+        let tag = &source[start..end];
+        if tag.contains(r#"fullCalcOnLoad="1""#) {
+            return Ok(None);
+        }
+        let updated = rewrite_calc_pr_tag(tag)?;
+        let mut output = String::with_capacity(source.len() + 32);
+        output.push_str(&source[..start]);
+        output.push_str(&updated);
+        output.push_str(&source[end..]);
+        return Ok(Some(output.into_bytes()));
+    }
+    let insertion = source
+        .rfind("</workbook>")
+        .ok_or_else(|| writer_error("workbook XML is missing </workbook>"))?;
+    let mut output = String::with_capacity(source.len() + 64);
+    output.push_str(&source[..insertion]);
+    output.push_str(r#"<calcPr fullCalcOnLoad="1" forceFullCalc="1"/>"#);
+    output.push_str(&source[insertion..]);
+    Ok(Some(output.into_bytes()))
+}
+
+fn rewrite_calc_pr_tag(tag: &str) -> Result<String> {
+    let self_closing = tag.ends_with("/>");
+    let inner = tag
+        .trim_start_matches("<calcPr")
+        .trim_end_matches("/>")
+        .trim_end_matches('>')
+        .trim();
+    let mut attributes = Vec::new();
+    let mut saw_full_calc = false;
+    let mut saw_force_full = false;
+    for attribute in inner.split_whitespace() {
+        if attribute.starts_with("fullCalcOnLoad=") {
+            attributes.push(r#"fullCalcOnLoad="1""#.to_owned());
+            saw_full_calc = true;
+        } else if attribute.starts_with("forceFullCalc=") {
+            attributes.push(r#"forceFullCalc="1""#.to_owned());
+            saw_force_full = true;
+        } else {
+            attributes.push(attribute.to_owned());
+        }
+    }
+    if !saw_full_calc {
+        attributes.push(r#"fullCalcOnLoad="1""#.to_owned());
+    }
+    if !saw_force_full {
+        attributes.push(r#"forceFullCalc="1""#.to_owned());
+    }
+    let body = attributes.join(" ");
+    if self_closing {
+        Ok(format!("<calcPr {body}/>"))
+    } else {
+        Ok(format!("<calcPr {body}>"))
+    }
 }
 
 fn shared_strings_path(package: &[u8]) -> Result<Option<String>> {
