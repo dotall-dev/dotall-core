@@ -420,6 +420,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "uuid",
  "zip 8.6.0",
 ]
 
