@@ -550,11 +550,24 @@ fn value_edits_force_excel_recalculation_on_open() {
         .apply_edit(&source, &edit)
         .expect("apply value edit");
     let workbook_xml = worksheet_xml(&patched.bytes, "xl/workbook.xml");
+    let summary_xml = worksheet_xml(&patched.bytes, "xl/worksheets/sheet2.xml");
     let entries = zip_entries(&patched.bytes);
 
     assert!(
         workbook_xml.contains(r#"fullCalcOnLoad="1""#),
         "value edits must mark the workbook for full recalculation on open: {workbook_xml}"
+    );
+    assert!(
+        workbook_xml.contains(r#"forceFullCalc="1""#),
+        "value edits must force full calc so dependents refresh: {workbook_xml}"
+    );
+    assert!(
+        !summary_xml.contains("<v>1</v>"),
+        "stale formula caches on untouched sheets must be stripped: {summary_xml}"
+    );
+    assert!(
+        summary_xml.contains("<f>Inputs!A1</f>"),
+        "formula text must be preserved: {summary_xml}"
     );
     assert!(!entries.contains_key("xl/calcChain.xml"));
     assert!(!worksheet_xml(&patched.bytes, "xl/_rels/workbook.xml.rels").contains("calcChain"));
@@ -567,6 +580,72 @@ fn value_edits_force_excel_recalculation_on_open() {
         ),
         "99"
     );
+}
+
+#[test]
+fn value_edits_upgrade_existing_full_calc_on_load_and_strip_caches() {
+    // YC demo failure mode: generated workbooks already ship with fullCalcOnLoad="1",
+    // so a no-op early return left stale Board/chart formula caches intact.
+    let directory = tempdir().expect("temporary directory");
+    let source = directory.path().join("workbook.xlsx");
+    write_fixture(&source);
+
+    replace_zip_entry(&source, "xl/workbook.xml", |xml| {
+        if let Some(start) = xml.find("<calcPr") {
+            let end = xml[start..]
+                .find('>')
+                .map(|offset| start + offset + 1)
+                .expect("calcPr tag");
+            format!(
+                "{}{}{}",
+                &xml[..start],
+                r#"<calcPr calcId="124519" fullCalcOnLoad="1"/>"#,
+                &xml[end..]
+            )
+        } else {
+            xml.replacen(
+                "</workbook>",
+                r#"<calcPr calcId="124519" fullCalcOnLoad="1"/></workbook>"#,
+                1,
+            )
+        }
+    });
+    replace_zip_entry(&source, "xl/worksheets/sheet2.xml", |xml| {
+        xml.replacen("<f>Inputs!A1</f>", "<f>Inputs!A1</f><v>49</v>", 1)
+    });
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&source).expect("parse fixture");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_value".into(),
+                payload: serde_json::json!({
+                    "sheet": "Inputs",
+                    "address": "A1",
+                    "value": 59,
+                }),
+            }],
+        )
+        .expect("validate value edit");
+
+    let patched = handler
+        .apply_edit(&source, &edit)
+        .expect("apply value edit");
+    let workbook_xml = worksheet_xml(&patched.bytes, "xl/workbook.xml");
+    let summary_xml = worksheet_xml(&patched.bytes, "xl/worksheets/sheet2.xml");
+
+    assert!(
+        workbook_xml.contains(r#"fullCalcOnLoad="1""#)
+            && workbook_xml.contains(r#"forceFullCalc="1""#),
+        "must upgrade calcPr even when fullCalcOnLoad was already set: {workbook_xml}"
+    );
+    assert!(
+        !summary_xml.contains("<v>49</v>"),
+        "dependent formula cache must be cleared: {summary_xml}"
+    );
+    assert!(summary_xml.contains("<f>Inputs!A1</f>"));
 }
 
 fn write_fixture(path: &std::path::Path) {
@@ -666,7 +745,7 @@ fn assert_untouched_entries_are_identical(before: &[u8], after: &[u8], patched: 
     );
     for (name, before_entry) in &before_entries {
         let after_entry = after_entries.get(name).expect("entry retained");
-        if patched.contains(&name.as_str()) {
+        if patched.contains(&name.as_str()) || is_calc_invalidation_part(name) {
             continue;
         }
         assert_eq!(
@@ -690,6 +769,13 @@ fn assert_untouched_entries_are_identical(before: &[u8], after: &[u8], patched: 
             "raw compressed payload changed for {name}"
         );
     }
+}
+
+/// Parts rewritten so spreadsheet apps recalculate dependents/charts on open.
+fn is_calc_invalidation_part(name: &str) -> bool {
+    name == "xl/workbook.xml"
+        || name.starts_with("xl/worksheets/")
+        || name.starts_with("xl/charts/")
 }
 
 fn zip_entries(bytes: &[u8]) -> BTreeMap<String, ZipEntrySnapshot> {

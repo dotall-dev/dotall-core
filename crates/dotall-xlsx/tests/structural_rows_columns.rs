@@ -337,12 +337,19 @@ fn zip_entries(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
 
 fn assert_untouched_entries_are_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     for (name, bytes) in zip_entries(before) {
-        if !patched.contains(&name.as_str()) {
-            assert_eq!(
-                zip_entries(after)[&name],
-                bytes,
-                "changed untouched part {name}"
-            );
+        if patched.contains(&name.as_str()) || is_calc_invalidation_part(&name) {
+            continue;
         }
+        assert_eq!(
+            zip_entries(after)[&name],
+            bytes,
+            "changed untouched part {name}"
+        );
     }
+}
+
+fn is_calc_invalidation_part(name: &str) -> bool {
+    name == "xl/workbook.xml"
+        || name.starts_with("xl/worksheets/")
+        || name.starts_with("xl/charts/")
 }
