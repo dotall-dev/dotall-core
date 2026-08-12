@@ -1,165 +1,218 @@
-# Snapshot Delta Storage Design
+# OOXML Part Snapshot Storage Design
 
 **Date:** 2026-08-12  
-**Status:** Approved for planning  
+**Status:** Approved for planning (revises earlier whole-file binary-delta draft)  
 **Related:**  
-- `docs/superpowers/specs/2026-07-20-xlsx-write-history-design.md` (history spine; this doc revises snapshot storage only)  
-- `docs/specs/xlsx-engine-v0.md`  
-- `docs/specs/core-format-architecture.md`
+- `docs/superpowers/specs/2026-07-20-xlsx-write-history-design.md`  
+- `docs/specs/core-format-architecture.md`  
+- `docs/specs/xlsx-engine-v0.md`
 
 ## Goal
 
-Keep edit history **lossless** (exact pre-apply source bytes for revert) while storing
-**much less** than one full file copy per apply — using **binary deltas against
-periodic full bases**, analogous to git’s space model without implementing git
-packfiles.
+Keep edit history **lossless** (exact pre-apply `.xlsx` bytes for revert) while
+storing **far less** than one full workbook copy per apply — by content-addressing
+**individual OOXML ZIP parts**, the same grain surgical patching already uses.
+
+This supersedes the whole-file zstd binary-delta approach in the prior draft of
+this workstream. Whole-file binary deltas remain a possible fallback for
+non-OOXML formats later; they are **not** the XLSX design.
 
 ## Decisions
 
 | Topic | Choice |
 |-------|--------|
-| Compression model | **Binary deltas** of whole-file bytes (not ZIP-part deltas) |
-| Chain policy | **Periodic full bases** every `base_every` versions (default **10**) |
-| Codec | **zstd** for full objects and delta frames |
-| Ownership | **`dotall-core` store** — format-agnostic |
-| Compatibility | **Clean break** — replace `snapshots/<hash>.bin`; no migrator (prototyping) |
-| External API | Keep `write_snapshot` / `read_snapshot` and history `snapshot_ref` = blake3 of **uncompressed** bytes |
+| Granularity | **OOXML ZIP entry / part** (not whole-file binary delta) |
+| Dedup model | **Content-addressed parts** shared across versions (git-blob style) |
+| Per-version record | **Manifest** mapping entry name → part hash (+ ZIP metadata) |
+| Ownership | **Encode/decode in `dotall-xlsx`**; **object store in `dotall-core`** |
+| External API | History `snapshot_ref` stays blake3 of **reconstructed full package** bytes |
+| Compatibility | Clean break; replace `snapshots/<hash>.bin` (prototyping) |
+| Other formats | Default: keep opaque full-blob snapshot until they grow their own strategy |
 
-## 1. Goals and non-goals
+## 1. Why part-level (not whole-file binary delta)
+
+Surgical applies already leave untouched ZIP entries **byte-identical**. A cell
+edit typically changes one worksheet (and maybe shared strings / calc chain) while
+dozens of other parts are unchanged.
+
+| Approach | What is stored per apply |
+|----------|--------------------------|
+| Full `.bin` (today) | Entire workbook again (dedupe only if identical) |
+| Whole-file binary delta | Diff of two large ZIPs — still heavy for small XML edits |
+| **Part manifests** | New/changed parts only; unchanged parts reuse prior hashes |
+
+Part-level matches the product moat and maximizes savings for XLSX.
+
+## 2. Goals and non-goals
 
 ### Goals
 
-- Lossless: `read_snapshot` returns byte-identical pre-apply source.
-- Smaller: typical edits store a delta against a recent full base.
-- Format-agnostic: XLSX (and future formats) need no snapshot-layout knowledge.
-- Bounded restore: at most `base_every − 1` deltas after loading one full base.
-- Dedupe: identical content hashes reuse the same object.
+- Lossless: reconstructed package bytes are identical to the pre-apply source
+  (including ZIP entry compression method, compressed payload, and CRC where the
+  surgical writer already preserves them).
+- Smaller: N applies that touch few parts store ~N × changed-parts, not N × file.
+- Align with surgical writer: same entry names / fidelity expectations as golden
+  round-trip tests.
+- Stable history API: `snapshot_ref`, revert, MCP unchanged at the agent surface.
 
-### Non-goals (this slice)
+### Non-goals
 
-- Git packfiles, multipack, or `git gc`-style repack.
-- ZIP-/OOXML-part-aware deltas.
-- Automatic GC of unreferenced snapshot objects.
-- Cross-object packing across different tracked files.
-- Migrating legacy `.bin` snapshots (none in production).
+- Whole-file git packfiles / zstd package deltas for XLSX.
+- Editing chart/pivot/VBA parts (still preserve-only); they are still snapshotted
+  as ordinary ZIP entries when present.
+- Automatic GC of unreferenced parts (follow-up).
+- Audio/DOCX part strategies (later; default full-blob until then).
 
-## 2. On-disk layout
+## 3. Data model
 
-Under `.all/objects/<relative-path>/state/edits/history/`:
+### Part object
+
+Content-addressed blob for one ZIP entry’s **stored** bytes (the compressed
+payload as it appears in the package, plus enough metadata to rebuild the local
+file header / central directory fields the fidelity tests care about).
 
 ```text
-snapshots/
-├── objects/
-│   ├── <blake3>.full.zst      # zstd-compressed full source bytes
-│   └── <blake3>.delta.zst     # zstd delta vs a full base
-└── index.json                 # ordered chain metadata
+parts/<part_hash>
 ```
 
-History version files (`v001.json`, …) are unchanged. They continue to store:
+`part_hash = blake3(canonical_part_encoding)` where the encoding includes at
+least:
 
-```json
-"snapshot_ref": "<blake3 of uncompressed pre-apply bytes>"
-```
+- entry name (normalized ZIP path)
+- compression method
+- compressed bytes
+- uncompressed size / CRC32 (as recorded)
 
-### `index.json`
+Exact serialization is an implementation detail owned by `dotall-xlsx`, versioned
+under a schema id such as `xlsx.snapshot-part` v1.
+
+### Package manifest (one per distinct package snapshot)
 
 ```json
 {
-  "schema_id": "dotall.snapshot-chain",
+  "schema_id": "xlsx.snapshot-manifest",
   "schema_version": 1,
-  "base_every": 10,
+  "package_hash": "<blake3 of full reconstructed .xlsx bytes>",
   "entries": [
     {
-      "content_hash": "aaa…",
-      "kind": "full",
-      "base_content_hash": null,
-      "byte_len": 123456
-    },
-    {
-      "content_hash": "bbb…",
-      "kind": "delta",
-      "base_content_hash": "aaa…",
-      "byte_len": 123500
+      "name": "xl/worksheets/sheet1.xml",
+      "part_hash": "…",
+      "compression": "deflate",
+      "crc32": 123,
+      "compressed_size": 456,
+      "uncompressed_size": 789
     }
   ]
 }
 ```
 
-| Field | Meaning |
-|-------|---------|
-| `content_hash` | blake3 of uncompressed source bytes (= `snapshot_ref`) |
-| `kind` | `full` or `delta` |
-| `base_content_hash` | Required for `delta`; must name a `full` entry |
-| `byte_len` | Uncompressed length (debug / sanity) |
-| `base_every` | Chain policy recorded on the index (default 10) |
+Manifests are stored content-addressed by `package_hash` (same value as today’s
+`snapshot_ref`):
 
-Object writes are atomic (temp file + rename). Index updates happen under the
-existing per-object apply lock.
+```text
+snapshots/manifests/<package_hash>.json
+```
 
-## 3. Write path (`write_snapshot`)
+### Layout under an object
 
-Called during apply with the pre-apply source bytes:
+```text
+state/edits/history/
+├── snapshots/
+│   ├── manifests/
+│   │   └── <package_hash>.json
+│   └── parts/
+│       └── <part_hash>          # opaque bytes from xlsx encoder
+└── v001.json …
+```
 
-1. `content_hash = blake3(bytes)`.
-2. If an object for `content_hash` already exists → return that hash (dedupe). Append
-   an index entry only if missing for this chain.
-3. Else choose **full** vs **delta**:
-   - **Full** when: no prior full base; or count of entries since the last full
-     (including this one) would reach `base_every`; or a trial delta’s compressed
-     size is ≥ ~90% of a compressed full (fallback — avoid pathological deltas).
-   - **Delta** otherwise, against the **nearest prior full** base’s reconstructed
-     bytes.
-4. Compress and write `<hash>.full.zst` or `<hash>.delta.zst`.
-5. Before committing: round-trip verify
-   `reconstruct(base, delta) == bytes` and `blake3` matches.
-6. Append index entry; return `content_hash`.
+Optional later: zstd-compress part payloads on disk; must not change `part_hash`
+definition (hash the logical encoding, not the on-disk wrapper).
 
-Engine apply / journal / history append stay as today; only snapshot persistence
-changes.
+## 4. Ownership split
 
-## 4. Restore path (`read_snapshot`)
+```text
+dotall-xlsx                          dotall-core store
+─────────────────────────────        ─────────────────────────────
+explode .xlsx → parts + manifest     put_part(hash, bytes)
+assemble parts + manifest → .xlsx    get_part(hash) → bytes
+fidelity / ZIP metadata rules        put_manifest(package_hash, json)
+                                     get_manifest(package_hash)
+                                     write_snapshot / read_snapshot façade
+```
 
-Given `content_hash`:
+### FormatHandler hook (recommended)
 
-1. Resolve entry via `index.json` (or by discovering the object file).
-2. **Full:** decompress → verify blake3 → return bytes.
-3. **Delta:** load `base_content_hash` as a full object → decompress base → apply
-   zstd delta → verify blake3 == `content_hash` → return bytes.
+```text
+fn encode_snapshot(&self, source_bytes: &[u8]) -> Result<EncodedSnapshot>
+fn decode_snapshot(&self, encoded: &EncodedSnapshot) -> Result<Vec<u8>>
+```
 
-Corrupt or truncated objects surface a structured error (reuse
-`SnapshotMissing` where appropriate, or add `SnapshotCorrupt` if distinction helps
-agents).
+- `XlsxFormat` implements part explode/assemble.
+- Default on `FormatHandler`: single opaque full blob (preserves non-XLSX behavior).
+- `Engine::apply` continues to call `store.write_snapshot(relative, &before_bytes)`;
+  the store (or engine) uses the registered handler for that object’s `format_id`
+  when encoding.
 
-`Engine::revert` is unchanged: it stages `restore_snapshot` with `snapshot_ref`,
-then apply writes reconstructed bytes to the source.
+`EncodedSnapshot` is a small envelope: `{ package_hash, manifest_json, parts: [(hash, bytes)] }`.
 
-## 5. API surface
+## 5. Write path
 
-| Layer | Change |
-|-------|--------|
-| `DotallStore::write_snapshot` / `read_snapshot` | Same signatures; new internals |
-| History / CLI / MCP | No schema change (`snapshot_ref` meaning unchanged) |
-| Config | Hardcode `base_every = 10` for v1; optional config later |
+On apply, with pre-apply source bytes:
 
-## 6. Testing
+1. `package_hash = blake3(bytes)`.
+2. If manifest `package_hash` already exists → return it (full-package dedupe).
+3. Else `handler.encode_snapshot(bytes)` → manifest + part list.
+4. For each part: if `parts/<part_hash>` missing, write it; else reuse.
+5. Write `manifests/<package_hash>.json`.
+6. Verify: `decode_snapshot` → bytes equal input and blake3 matches.
+7. Return `package_hash` as `snapshot_ref`.
 
-- Write full + `base_every − 1` deltas; each `read_snapshot` is byte-identical.
-- Dedupe: second `write_snapshot` of identical bytes reuses the object file.
-- Base boundary: every Nth distinct snapshot is `kind: full`.
-- Size fallback: when delta is not smaller enough, store full.
-- Corrupt object → structured error.
-- Existing apply / revert / `apply_all` / MCP restore tests still pass.
+No separate “delta vs full base” policy is required for XLSX: **every version is a
+full manifest**; storage savings come from **shared parts**. (Periodic full bases
+from the binary-delta design are unnecessary here.)
 
-## 7. Rollout
+## 6. Restore path
 
-1. Implementation plan + branch off `main`.
-2. Replace `.bin` expectations in store tests and docs (AGENTS layout, write-history
-   design note pointing here).
-3. No migration tool.
+`read_snapshot(relative, package_hash)`:
 
-## 8. Open follow-ups (out of scope)
+1. Load manifest.
+2. Load each `part_hash`.
+3. `handler.decode_snapshot` → assemble ZIP.
+4. Verify `blake3(bytes) == package_hash`.
+5. Return bytes for revert apply.
 
-- Unreferenced object GC.
-- Tunable `base_every` / compression level via workspace config.
-- Measuring ratios on real XLSX corpora and adjusting the 90% fallback.
-- Later: git-style multipack if multi-format history volume demands it.
+## 7. Agent / Engine surface
+
+Unchanged:
+
+- `history` / `diff` / `revert` / MCP tools
+- `snapshot_ref` meaning: hash of full package bytes
+- Stage `restore_snapshot` then apply
+
+## 8. Testing
+
+- Cell edit apply: new version adds few parts; unchanged part files are not
+  rewritten (same path + hash).
+- Two applies changing different sheets: shared parts (e.g. styles, other sheets)
+  appear once on disk.
+- `read_snapshot` after each apply equals pre-apply bytes (byte-identical ZIP
+  fidelity for preserved entries — align with existing surgical goldens).
+- Dedupe: re-snapshot identical package reuses manifest + parts.
+- Corrupt / missing part → structured error.
+- Existing apply / revert / `apply_all` / MCP restore tests pass.
+- Optional metric test: after N small edits, total `parts/` + `manifests/` size
+  ≪ N × file size.
+
+## 9. Rollout
+
+1. Rewrite implementation plan against this spec (not the binary-delta draft).
+2. Branch off `main`; replace `.bin` snapshot tests.
+3. Update AGENTS / write-history docs to point at part manifests.
+4. No migrator.
+
+## 10. Follow-ups
+
+- GC unreferenced parts/manifests.
+- Compress part objects on disk.
+- DOCX can reuse the same ZIP-part pattern (same OOXML container family).
+- Non-ZIP formats: keep default full-blob encode until they need a strategy.
