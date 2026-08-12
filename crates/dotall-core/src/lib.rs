@@ -23,8 +23,8 @@ pub use orchestrate::{
 };
 pub use pipeline::{CachedArtifact, CachedDerived, CachedView, DerivationRecipe};
 pub use registry::{
-    Actor, ActorKind, ArtifactEnvelope, ArtifactSchema, DependencyImpact, PatchedOutput,
-    ReadResponse, SemanticChange, SemanticOperation, ValidatedEdit,
+    Actor, ActorKind, ArtifactEnvelope, ArtifactSchema, DependencyImpact, EncodedSnapshot,
+    PatchedOutput, ReadResponse, SemanticChange, SemanticOperation, SnapshotPart, ValidatedEdit,
 };
 pub use status::{ObjectState, ObjectStatus};
 pub use store::DotallStore;

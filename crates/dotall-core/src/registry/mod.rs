@@ -56,6 +56,54 @@ pub trait FormatHandler: Send + Sync {
     }
 
     fn apply_edit(&self, source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput>;
+
+    /// Encodes source bytes for content-addressed snapshot persistence.
+    ///
+    /// Formats may override this to split package containers into reusable parts.
+    fn encode_snapshot(&self, source_bytes: &[u8]) -> Result<EncodedSnapshot> {
+        let package_hash = blake3::hash(source_bytes).to_hex().to_string();
+        Ok(EncodedSnapshot {
+            package_hash: package_hash.clone(),
+            format_id: self.descriptor().id,
+            manifest: serde_json::json!({
+                "kind": "opaque",
+                "part_hash": package_hash,
+            }),
+            parts: vec![SnapshotPart {
+                hash: package_hash,
+                bytes: source_bytes.to_vec(),
+            }],
+        })
+    }
+
+    /// Reconstructs exact source bytes from a format-owned snapshot encoding.
+    fn decode_snapshot(&self, encoded: &EncodedSnapshot) -> Result<Vec<u8>> {
+        let descriptor = self.descriptor();
+        let part_hash = encoded.manifest["part_hash"].as_str().ok_or_else(|| {
+            DotallError::Format {
+                format_id: descriptor.id.clone(),
+                path: "<snapshot manifest>".into(),
+                message: "opaque snapshot manifest is missing part_hash".into(),
+            }
+        })?;
+        let part = encoded
+            .parts
+            .iter()
+            .find(|part| part.hash == part_hash)
+            .ok_or_else(|| DotallError::SnapshotMissing {
+                path: Path::new("<snapshot>").into(),
+                hash: part_hash.to_owned(),
+            })?;
+        let actual_hash = blake3::hash(&part.bytes).to_hex().to_string();
+        if actual_hash != encoded.package_hash || actual_hash != part.hash {
+            return Err(DotallError::Format {
+                format_id: descriptor.id,
+                path: "<snapshot>".into(),
+                message: "opaque snapshot hash does not match its bytes".into(),
+            });
+        }
+        Ok(part.bytes.clone())
+    }
 }
 
 #[derive(Default)]
@@ -165,5 +213,24 @@ mod tests {
             error,
             DotallError::UnsupportedFormat(path) if path == Path::new("book.bin")
         ));
+    }
+
+    #[test]
+    fn default_snapshot_encoding_round_trips_opaque_bytes() {
+        let handler = Stub("stub", 1);
+        let source = b"byte-exact snapshot";
+
+        let encoded = handler.encode_snapshot(source).expect("encode snapshot");
+        let decoded = handler.decode_snapshot(&encoded).expect("decode snapshot");
+
+        assert_eq!(decoded, source);
+        assert_eq!(
+            encoded.package_hash,
+            blake3::hash(source).to_hex().to_string()
+        );
+        assert_eq!(encoded.format_id, "stub");
+        assert_eq!(encoded.parts.len(), 1);
+        assert_eq!(encoded.parts[0].hash, encoded.package_hash);
+        assert_eq!(encoded.manifest["kind"], "opaque");
     }
 }
