@@ -79,13 +79,14 @@ pub trait FormatHandler: Send + Sync {
     /// Reconstructs exact source bytes from a format-owned snapshot encoding.
     fn decode_snapshot(&self, encoded: &EncodedSnapshot) -> Result<Vec<u8>> {
         let descriptor = self.descriptor();
-        let part_hash = encoded.manifest["part_hash"].as_str().ok_or_else(|| {
-            DotallError::Format {
-                format_id: descriptor.id.clone(),
-                path: "<snapshot manifest>".into(),
-                message: "opaque snapshot manifest is missing part_hash".into(),
-            }
-        })?;
+        let part_hash =
+            encoded.manifest["part_hash"]
+                .as_str()
+                .ok_or_else(|| DotallError::Format {
+                    format_id: descriptor.id.clone(),
+                    path: "<snapshot manifest>".into(),
+                    message: "opaque snapshot manifest is missing part_hash".into(),
+                })?;
         let part = encoded
             .parts
             .iter()

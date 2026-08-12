@@ -97,7 +97,9 @@ Project-local `.all/` only for v0. Global `~/.all/cache/` is deferred.
             ├── staging/              # proposed ops, pre-apply
             └── history/
                 ├── v001.json ...     # ops, semantic diff, timestamp, actor
-                └── snapshots/        # pre-apply content-addressed snapshots
+                └── snapshots/        # lossless pre-apply packages
+                    ├── manifests/<package_hash>.json
+                    └── parts/<part_hash> # deduplicated OOXML ZIP slices
 ```
 
 ## 4. The three artifacts
@@ -148,7 +150,7 @@ What the agent consumes:
 
 ```
 edit  → validate against model + deps → write state/edits/staging/patch-NNN.json
-apply → snapshot source hash → surgical OOXML write → refresh model/derived/views
+apply → snapshot exact OOXML parts → surgical OOXML write → refresh model/derived/views
       → append state/edits/history/vNNN.json (ops + semantic diff)
 ```
 

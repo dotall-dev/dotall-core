@@ -22,7 +22,9 @@ struct SnapshotManifest {
 #[derive(Debug, Serialize, Deserialize)]
 struct ManifestEntry {
     name: String,
+    header_part_hash: String,
     part_hash: String,
+    trailer_part_hash: String,
     compression: String,
     crc32: u32,
     compressed_size: u64,
@@ -48,6 +50,12 @@ pub(crate) fn encode(package: &[u8]) -> Result<EncodedSnapshot> {
         records.push((
             usize::try_from(entry.header_start())
                 .map_err(|_| snapshot_error("ZIP entry offset exceeds platform limits"))?,
+            usize::try_from(
+                entry
+                    .data_start()
+                    .ok_or_else(|| snapshot_error("ZIP entry data offset is unavailable"))?,
+            )
+            .map_err(|_| snapshot_error("ZIP entry data offset exceeds platform limits"))?,
             entry.name().to_owned(),
             format!("{:?}", entry.compression()).to_ascii_lowercase(),
             entry.crc32(),
@@ -61,32 +69,45 @@ pub(crate) fn encode(package: &[u8]) -> Result<EncodedSnapshot> {
     let mut seen_hashes = BTreeSet::new();
     let mut entries = Vec::with_capacity(records.len());
     for (index, record) in records.iter().enumerate() {
-        let start = if index == 0 { 0 } else { record.0 };
-        let end = records
-            .get(index + 1)
-            .map_or(central_start, |next| next.0);
-        if start > end || end > central_start {
+        let header_start = if index == 0 { 0 } else { record.0 };
+        let data_start = record.1;
+        let data_end = data_start
+            .checked_add(
+                usize::try_from(record.5)
+                    .map_err(|_| snapshot_error("ZIP compressed size exceeds platform limits"))?,
+            )
+            .ok_or_else(|| snapshot_error("ZIP compressed payload range overflows"))?;
+        let end = records.get(index + 1).map_or(central_start, |next| next.0);
+        if header_start > data_start
+            || data_start > data_end
+            || data_end > end
+            || end > central_start
+        {
             return Err(snapshot_error("ZIP local-file record offsets overlap"));
         }
-        let part_hash = push_part(&mut parts, &mut seen_hashes, &package[start..end]);
+        let header_part_hash = push_part(
+            &mut parts,
+            &mut seen_hashes,
+            &package[header_start..data_start],
+        );
+        let part_hash = push_part(&mut parts, &mut seen_hashes, &package[data_start..data_end]);
+        let trailer_part_hash = push_part(&mut parts, &mut seen_hashes, &package[data_end..end]);
         entries.push(ManifestEntry {
-            name: record.1.clone(),
+            name: record.2.clone(),
+            header_part_hash,
             part_hash,
-            compression: record.2.clone(),
-            crc32: record.3,
-            compressed_size: record.4,
-            uncompressed_size: record.5,
+            trailer_part_hash,
+            compression: record.3.clone(),
+            crc32: record.4,
+            compressed_size: record.5,
+            uncompressed_size: record.6,
         });
     }
 
     let tail_part_hash = push_part(
         &mut parts,
         &mut seen_hashes,
-        &package[if records.is_empty() {
-            0
-        } else {
-            central_start
-        }..],
+        &package[if records.is_empty() { 0 } else { central_start }..],
     );
     let package_hash = blake3::hash(package).to_hex().to_string();
     let manifest = SnapshotManifest {
@@ -126,7 +147,9 @@ pub(crate) fn decode(encoded: &EncodedSnapshot) -> Result<Vec<u8>> {
         || manifest.schema_version != MANIFEST_SCHEMA_VERSION
         || manifest.package_hash != encoded.package_hash
     {
-        return Err(snapshot_error("unsupported or inconsistent snapshot manifest"));
+        return Err(snapshot_error(
+            "unsupported or inconsistent snapshot manifest",
+        ));
     }
 
     let parts = encoded
@@ -136,7 +159,9 @@ pub(crate) fn decode(encoded: &EncodedSnapshot) -> Result<Vec<u8>> {
         .collect::<BTreeMap<_, _>>();
     let mut package = Vec::new();
     for entry in &manifest.entries {
+        append_part(&mut package, &parts, &entry.header_part_hash)?;
         append_part(&mut package, &parts, &entry.part_hash)?;
+        append_part(&mut package, &parts, &entry.trailer_part_hash)?;
     }
     append_part(&mut package, &parts, &manifest.tail_part_hash)?;
     let actual_hash = blake3::hash(&package).to_hex().to_string();
@@ -164,11 +189,7 @@ fn push_part(
     hash
 }
 
-fn append_part(
-    output: &mut Vec<u8>,
-    parts: &BTreeMap<&str, &[u8]>,
-    hash: &str,
-) -> Result<()> {
+fn append_part(output: &mut Vec<u8>, parts: &BTreeMap<&str, &[u8]>, hash: &str) -> Result<()> {
     let bytes = parts
         .get(hash)
         .ok_or_else(|| DotallError::SnapshotMissing {

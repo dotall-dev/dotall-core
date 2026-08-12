@@ -471,46 +471,6 @@ impl DotallStore {
         })
     }
 
-    /// Temporary opaque snapshot façade for callers not yet using format hooks.
-    pub fn write_snapshot(&self, relative_path: &str, bytes: &[u8]) -> Result<String> {
-        let (_, object) = self.tracked_source(relative_path)?;
-        let package_hash = blake3::hash(bytes).to_hex().to_string();
-        self.write_encoded_snapshot(
-            relative_path,
-            &EncodedSnapshot {
-                package_hash: package_hash.clone(),
-                format_id: object.format_id.clone(),
-                manifest: serde_json::json!({
-                    "kind": "opaque",
-                    "part_hash": package_hash,
-                }),
-                parts: vec![SnapshotPart {
-                    hash: package_hash,
-                    bytes: bytes.to_vec(),
-                }],
-            },
-        )
-    }
-
-    pub fn read_snapshot(&self, relative_path: &str, hash: &str) -> Result<Vec<u8>> {
-        let encoded = self.read_encoded_snapshot(relative_path, hash)?;
-        let part_hash = encoded.manifest["part_hash"].as_str().ok_or_else(|| {
-            DotallError::InvalidSourcePath {
-                path: self.snapshot_manifest_path(relative_path, hash),
-                reason: "snapshot is not opaque".to_owned(),
-            }
-        })?;
-        encoded
-            .parts
-            .into_iter()
-            .find(|part| part.hash == part_hash)
-            .map(|part| part.bytes)
-            .ok_or_else(|| DotallError::SnapshotMissing {
-                path: Path::new(relative_path).to_path_buf(),
-                hash: part_hash.to_owned(),
-            })
-    }
-
     /// Replaces a tracked source atomically on its own filesystem.
     pub fn replace_source(&self, relative_path: &str, bytes: &[u8]) -> Result<()> {
         let (_, source) = resolve_source(&self.workspace, Path::new(relative_path))?;
@@ -751,8 +711,7 @@ impl DotallStore {
     fn put_snapshot_manifest(&self, key: &str, manifest: &StoredSnapshotManifest) -> Result<()> {
         let path = self.snapshot_manifest_path(key, &manifest.package_hash);
         if path.is_file() {
-            let existing: StoredSnapshotManifest =
-                read_required_json(&path, "snapshot manifest")?;
+            let existing: StoredSnapshotManifest = read_required_json(&path, "snapshot manifest")?;
             if existing == *manifest {
                 return Ok(());
             }
