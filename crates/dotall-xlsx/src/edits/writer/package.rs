@@ -220,9 +220,10 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     })
 }
 
-/// Drop Excel's calculation chain and mark the workbook so dependents/charts
-/// recalculate on open. Surgical cell patches leave stale formula `<v>` caches
-/// and chart caches intact; without this, Excel shows the old results.
+/// Drop Excel's calculation chain, strip stale formula/chart caches, and mark
+/// the workbook so dependents/charts recalculate on open. Surgical cell patches
+/// leave formula `<v>` caches intact; apps that honor those caches (Excel with
+/// no force flag, LibreOffice) keep showing the pre-edit graph and KPIs.
 fn invalidate_cached_calculation(
     package: &[u8],
     replacements: &mut BTreeMap<String, Vec<u8>>,
@@ -239,6 +240,27 @@ fn invalidate_cached_calculation(
             remove_calc_chain_relationship(&entry_bytes(package, "xl/_rels/workbook.xml.rels")?)?,
         );
     }
+
+    for path in worksheet_paths(package)?.into_values() {
+        let current = match replacements.get(&path) {
+            Some(bytes) => bytes.clone(),
+            None => entry_bytes(package, &path)?,
+        };
+        if let Some(stripped) = strip_formula_cached_values(&current)? {
+            replacements.insert(path, stripped);
+        }
+    }
+
+    for path in chart_paths(package)? {
+        let current = match replacements.get(&path) {
+            Some(bytes) => bytes.clone(),
+            None => entry_bytes(package, &path)?,
+        };
+        if let Some(cleared) = clear_chart_number_caches(&current)? {
+            replacements.insert(path, cleared);
+        }
+    }
+
     if let Some(workbook) = ensure_full_calc_on_load(&entry_bytes(package, "xl/workbook.xml")?)? {
         replacements.insert("xl/workbook.xml".into(), workbook);
     }
@@ -254,7 +276,9 @@ fn ensure_full_calc_on_load(xml: &[u8]) -> Result<Option<Vec<u8>>> {
             .map(|offset| start + offset + 1)
             .ok_or_else(|| writer_error("unterminated workbook calcPr"))?;
         let tag = &source[start..end];
-        if tag.contains(r#"fullCalcOnLoad="1""#) {
+        // Workbooks we generate already have fullCalcOnLoad="1"; still need
+        // forceFullCalc so Excel rebuilds dependents after surgical value edits.
+        if tag.contains(r#"fullCalcOnLoad="1""#) && tag.contains(r#"forceFullCalc="1""#) {
             return Ok(None);
         }
         let updated = rewrite_calc_pr_tag(tag)?;
@@ -272,6 +296,188 @@ fn ensure_full_calc_on_load(xml: &[u8]) -> Result<Option<Vec<u8>>> {
     output.push_str(r#"<calcPr fullCalcOnLoad="1" forceFullCalc="1"/>"#);
     output.push_str(&source[insertion..]);
     Ok(Some(output.into_bytes()))
+}
+
+/// Remove cached `<v>` results from formula cells so spreadsheet apps must
+/// recompute instead of displaying the pre-edit values.
+fn strip_formula_cached_values(xml: &[u8]) -> Result<Option<Vec<u8>>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("worksheet XML is not UTF-8: {error}")))?;
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    let mut changed = false;
+    while let Some(relative) = find_cell_start(&source[cursor..]) {
+        let start = cursor + relative;
+        output.push_str(&source[cursor..start]);
+        let end = find_cell_end(&source[start..])?;
+        let cell = &source[start..start + end];
+        if cell_has_formula(cell) {
+            let stripped = remove_cell_value_elements(cell);
+            if stripped != cell {
+                changed = true;
+            }
+            output.push_str(&stripped);
+        } else {
+            output.push_str(cell);
+        }
+        cursor = start + end;
+    }
+    output.push_str(&source[cursor..]);
+    if changed {
+        Ok(Some(output.into_bytes()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn find_cell_start(source: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = 0;
+    while index + 2 < bytes.len() {
+        if bytes[index] == b'<' && bytes[index + 1] == b'c' {
+            match bytes[index + 2] {
+                b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/' => return Some(index),
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
+fn find_cell_end(cell_start: &str) -> Result<usize> {
+    if let Some(relative) = cell_start.find("/>") {
+        let close = cell_start.find("</c>");
+        if close.is_none_or(|close| relative < close) {
+            return Ok(relative + 2);
+        }
+    }
+    cell_start
+        .find("</c>")
+        .map(|offset| offset + 4)
+        .ok_or_else(|| writer_error("unterminated worksheet cell"))
+}
+
+fn cell_has_formula(cell: &str) -> bool {
+    cell.contains("<f>") || cell.contains("<f ") || cell.contains("<f/")
+}
+
+fn remove_cell_value_elements(cell: &str) -> String {
+    let mut output = String::with_capacity(cell.len());
+    let mut cursor = 0;
+    while let Some(relative) = cell[cursor..].find("<v") {
+        let start = cursor + relative;
+        let after = &cell[start + 2..];
+        let is_value = after
+            .chars()
+            .next()
+            .is_some_and(|character| matches!(character, '>' | '/' | ' ' | '\t' | '\n' | '\r'));
+        if !is_value {
+            output.push_str(&cell[cursor..start + 2]);
+            cursor = start + 2;
+            continue;
+        }
+        output.push_str(&cell[cursor..start]);
+        if let Some(end) = cell[start..].find("</v>") {
+            cursor = start + end + 4;
+        } else if let Some(end) = cell[start..].find("/>") {
+            cursor = start + end + 2;
+        } else {
+            output.push_str(&cell[start..]);
+            return output;
+        }
+    }
+    output.push_str(&cell[cursor..]);
+    output
+}
+
+/// Drop cached chart series points so charts refresh from recalculated cells.
+fn clear_chart_number_caches(xml: &[u8]) -> Result<Option<Vec<u8>>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("chart XML is not UTF-8: {error}")))?;
+    if !source.contains("<c:pt") {
+        return Ok(None);
+    }
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    let mut changed = false;
+    while let Some((relative, close)) = next_chart_cache(&source[cursor..]) {
+        let start = cursor + relative;
+        output.push_str(&source[cursor..start]);
+        let tag_end = source[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| writer_error("unterminated chart cache tag"))?;
+        let tag = &source[start..tag_end];
+        let end = source[tag_end..]
+            .find(close)
+            .map(|offset| tag_end + offset + close.len())
+            .ok_or_else(|| writer_error(format!("unterminated chart cache `{close}`")))?;
+        let body = &source[tag_end..end - close.len()];
+        output.push_str(tag);
+        if let Some(format) = extract_chart_format_code(body) {
+            output.push_str(&format);
+        }
+        let count = extract_chart_pt_count(body).unwrap_or(0);
+        output.push_str(&format!(r#"<c:ptCount val="{count}"/>"#));
+        output.push_str(close);
+        if body.contains("<c:pt") {
+            changed = true;
+        }
+        cursor = end;
+    }
+    output.push_str(&source[cursor..]);
+    if changed {
+        Ok(Some(output.into_bytes()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn next_chart_cache(source: &str) -> Option<(usize, &'static str)> {
+    let num = source
+        .find("<c:numCache>")
+        .map(|offset| (offset, "</c:numCache>"));
+    let str_cache = source
+        .find("<c:strCache>")
+        .map(|offset| (offset, "</c:strCache>"));
+    match (num, str_cache) {
+        (Some(num), Some(str_cache)) if str_cache.0 < num.0 => Some(str_cache),
+        (Some(num), _) => Some(num),
+        (None, Some(str_cache)) => Some(str_cache),
+        (None, None) => None,
+    }
+}
+
+fn extract_chart_format_code(body: &str) -> Option<String> {
+    let start = body.find("<c:formatCode>")?;
+    let end = body[start..].find("</c:formatCode>")? + start + "</c:formatCode>".len();
+    Some(body[start..end].to_owned())
+}
+
+fn extract_chart_pt_count(body: &str) -> Option<u32> {
+    let start = body.find("<c:ptCount ")?;
+    let end = body[start..].find('>').map(|offset| start + offset + 1)?;
+    let tag = &body[start..end];
+    let value_start = tag.find(r#"val=""#)? + 5;
+    let value_end = tag[value_start..].find('"')? + value_start;
+    tag[value_start..value_end].parse().ok()
+}
+
+fn chart_paths(package: &[u8]) -> Result<Vec<String>> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| writer_error(format!("invalid XLSX package: {error}")))?;
+    let mut paths = Vec::new();
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|error| writer_error(format!("cannot read ZIP entry: {error}")))?;
+        let name = entry.name();
+        if name.starts_with("xl/charts/") && name.ends_with(".xml") {
+            paths.push(name.to_owned());
+        }
+    }
+    Ok(paths)
 }
 
 fn rewrite_calc_pr_tag(tag: &str) -> Result<String> {
