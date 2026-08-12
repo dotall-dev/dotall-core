@@ -2,7 +2,8 @@ use std::fs;
 
 use dotall_core::{
     Actor, ActorKind, CancelAudit, CancelStatus, DependencyImpact, DotallError, DotallStore,
-    HistoryRecord, HistoryStatus, SemanticChange, SemanticOperation, StagedEdit, ValidatedEdit,
+    EncodedSnapshot, HistoryRecord, HistoryStatus, SemanticChange, SemanticOperation, SnapshotPart,
+    StagedEdit, ValidatedEdit,
 };
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -216,31 +217,52 @@ fn apply_lock_blocks_concurrent_acquire() {
 }
 
 #[test]
-fn write_snapshot_is_content_addressed_and_idempotent() {
+fn write_encoded_snapshot_deduplicates_parts_and_persists_manifest() {
     let (temp, store, _tx_id) = init_store_with_source();
     let bytes = b"workbook-bytes-v1";
-
+    let package_hash = blake3::hash(bytes).to_hex().to_string();
+    let part_hash = blake3::hash(b"shared-part").to_hex().to_string();
+    let encoded = EncodedSnapshot {
+        package_hash: package_hash.clone(),
+        format_id: "xlsx".into(),
+        manifest: serde_json::json!({
+            "schema_id": "xlsx.snapshot-manifest",
+            "schema_version": 1,
+            "part_hashes": [part_hash],
+        }),
+        parts: vec![SnapshotPart {
+            hash: part_hash.clone(),
+            bytes: b"shared-part".to_vec(),
+        }],
+    };
     let hash = store
-        .write_snapshot("book.xlsx", bytes)
+        .write_encoded_snapshot("book.xlsx", &encoded)
         .expect("first snapshot");
     let again = store
-        .write_snapshot("book.xlsx", bytes)
+        .write_encoded_snapshot("book.xlsx", &encoded)
         .expect("duplicate snapshot");
+    assert_eq!(hash, package_hash);
     assert_eq!(hash, again);
 
-    let snapshot_path = temp.path().join(format!(
-        ".all/objects/book.xlsx/state/edits/history/snapshots/{hash}.bin"
+    let manifest_path = temp.path().join(format!(
+        ".all/objects/book.xlsx/state/edits/history/snapshots/manifests/{hash}.json"
     ));
-    assert!(snapshot_path.is_file());
-    assert_eq!(fs::read(&snapshot_path).expect("read snapshot"), bytes);
+    let part_path = temp.path().join(format!(
+        ".all/objects/book.xlsx/state/edits/history/snapshots/parts/{part_hash}"
+    ));
+    assert!(manifest_path.is_file());
+    assert_eq!(fs::read(&part_path).expect("read part"), b"shared-part");
 
-    let entries: Vec<_> = fs::read_dir(
-        temp.path()
-            .join(".all/objects/book.xlsx/state/edits/history/snapshots"),
-    )
-    .expect("read snapshots dir")
-    .collect();
-    assert_eq!(entries.len(), 1);
+    let loaded = store
+        .read_encoded_snapshot("book.xlsx", &hash)
+        .expect("read encoded snapshot");
+    assert_eq!(loaded, encoded);
+    assert_eq!(
+        fs::read_dir(part_path.parent().expect("parts directory"))
+            .expect("read parts")
+            .count(),
+        1
+    );
 }
 
 fn sample_history_record(
