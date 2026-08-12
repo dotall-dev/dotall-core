@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "dotall": {
+      "command": "/workspace/target/release/dotall-mcp",
+      "args": [],
+      "cwd": "/workspace/demo"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "dotall": {
+      "command": "/dotall-mcp",
+      "args": [],
+      "cwd": "/workspace"
+    }
+  }
+}
