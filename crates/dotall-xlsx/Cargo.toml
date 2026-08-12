@@ -15,3 +15,4 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2
 [dev-dependencies]
 rust_xlsxwriter = "0.96.0"
 tempfile = "3.27.0"
+uuid = { version = "1.18.1", features = ["v4"] }
