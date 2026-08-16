@@ -35,10 +35,11 @@ pub fn validate(
     match operation.kind.as_str() {
         "set_shape_text" => validate_set_shape_text(model, operation),
         "set_table_cell_text" => validate_set_table_cell_text(model, operation),
+        "set_notes_text" => validate_set_notes_text(model, operation),
         "add_slide" => validate_add_slide(model, operation),
         "delete_slide" => validate_delete_slide(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, add_slide, or delete_slide"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, add_slide, or delete_slide"
         ))),
     }
 }
@@ -125,6 +126,47 @@ fn validate_set_table_cell_text(
             element_id: cell.element_id.clone(),
             change: "set_table_cell_text".into(),
             before: Some(cell.text.clone()),
+            after: Some(text.to_owned()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_notes_text(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let text = required_str(&operation.payload, "text")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let notes_part_name = slide.notes_part_name.as_deref().ok_or_else(|| {
+        format_error(format!(
+            "slide `{}` has no notes slide part to edit",
+            slide.name
+        ))
+    })?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_notes_text".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "text": text,
+                "part_name": notes_part_name,
+                "element_id": slide.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!notes", slide.name),
+            element_id: slide.element_id.clone(),
+            change: "set_notes_text".into(),
+            before: slide.notes.clone(),
             after: Some(text.to_owned()),
         }],
         dependency_impact: DependencyImpact {
@@ -265,6 +307,19 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 replacements: BTreeMap::from([(
                     part_name.to_owned(),
                     patch_table_cell_text(&original, table, row, col, text)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
+        "set_notes_text" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let text = required_str(&operation.payload, "text")?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_notes_text(&original, text)?,
                 )]),
                 additions: BTreeMap::new(),
                 removals: BTreeSet::new(),
@@ -524,6 +579,29 @@ pub fn patch_table_cell_text(
     output.push_str(&patched_cell);
     output.push_str(&source[cell_abs_end..]);
     Ok(output.into_bytes())
+}
+
+/// Replace the first `a:t` in a notes slide part and clear later text runs.
+pub fn patch_notes_text(xml: &[u8], text: &str) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("notes XML is not UTF-8: {error}")))?;
+    let Some(t_rel) = find_tag(source, 0, "a:t") else {
+        return Err(format_error("notes slide has no text run to patch"));
+    };
+    let t_open_end = source[t_rel..]
+        .find('>')
+        .map(|offset| t_rel + offset + 1)
+        .ok_or_else(|| format_error("unterminated a:t"))?;
+    let t_close_rel = source[t_open_end..]
+        .find("</a:t>")
+        .ok_or_else(|| format_error("unterminated a:t content"))?;
+    let t_close = t_open_end + t_close_rel;
+    let mut patched = String::new();
+    patched.push_str(&source[..t_open_end]);
+    patched.push_str(&xml_escape(text));
+    patched.push_str(&source[t_close..]);
+    patched = clear_later_text_runs(&patched);
+    Ok(patched.into_bytes())
 }
 
 fn nth_table_cell(tbl: &str, row: u32, col: u32) -> Result<&str> {

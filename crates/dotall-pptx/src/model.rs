@@ -21,6 +21,9 @@ pub struct SlideModel {
     #[serde(default)]
     pub tables: Vec<TableModel>,
     pub notes: Option<String>,
+    /// Present when a notes slide part exists (even if notes text is empty).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes_part_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

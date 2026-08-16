@@ -10,7 +10,9 @@ pub mod selector;
 
 pub const FORMAT_ID: &str = "pptx";
 
-pub use fixture::{demo_deck_pptx, minimal_pptx, minimal_pptx_with_media, pptx_with_table};
+pub use fixture::{
+    demo_deck_pptx, minimal_pptx, minimal_pptx_with_media, pptx_with_notes, pptx_with_table,
+};
 pub use format::PptxFormat;
 pub use model::{
     PresentationModel, SCHEMA_ID, SCHEMA_VERSION, ShapeModel, SlideModel, TableCellModel,

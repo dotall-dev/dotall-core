@@ -248,6 +248,16 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Patches only the slide part that owns the table. Rejects out-of-range row/col. Media and other slides stay byte-identical.".into(),
         },
         EditCapability {
+            operation: "set_notes_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Replace speaker notes text for a slide that already has a notes slide part.".into(),
+            example: json!({
+                "kind": "set_notes_text",
+                "payload": { "slide": "Slide 1", "text": "Updated speaker notes" }
+            }),
+            safety: "Patches only the notes slide part. Rejects slides without notes. Slide XML and media stay byte-identical.".into(),
+        },
+        EditCapability {
             operation: "add_slide".into(),
             schema_version: SCHEMA_VERSION,
             description: "Insert a blank slide after an existing slide (or at the end when `after` is omitted).".into(),

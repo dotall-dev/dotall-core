@@ -9,7 +9,7 @@ cargo run -p dotall-cli --example generate_demos
 | File | Format | Agent workload |
 |------|--------|----------------|
 | [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header |
-| [`deck.pptx`](deck.pptx) | PPTX | Title + body + metrics table; second slide next-steps |
+| [`deck.pptx`](deck.pptx) | PPTX | Title + metrics table + speaker notes; second slide next-steps |
 | [`memo.docx`](memo.docx) | DOCX | Heading memo + status table + confidential header |
 | [`form.pdf`](form.pdf) | PDF | Intake form: Name, Email, Agree checkbox, Department choice; `/Info` metadata |
 
@@ -72,13 +72,15 @@ $DOTALL history demo/financials.xlsx
 
 ## PPTX — `deck.pptx`
 
-Slide 1: title `Q3 Product Review`, body blurb, table `Metrics` (NPS=42). Slide 2: `Next Steps`.
+Slide 1: title `Q3 Product Review`, body blurb, table `Metrics` (NPS=42), speaker notes.
+Slide 2: `Next Steps`.
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/deck.pptx
 $DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 1'
+$DOTALL read demo/deck.pptx --selector-kind notes --selector 'Slide 1'
 
 # Prior v0
 $DOTALL edit demo/deck.pptx --ops-json \
@@ -99,9 +101,15 @@ $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"delete_slide","payload":{"slide":"Slide 3"}}]'
 $DOTALL apply demo/deck.pptx --all
 $DOTALL inspect demo/deck.pptx   # expect 2 slides (updated title slide + blank)
+
+# Wave 3 — speaker notes (notes part only)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_notes_text","payload":{"slide":"Slide 1","text":"Call out the NPS jump to 58."}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL read demo/deck.pptx --selector-kind notes --selector 'Slide 1'
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part.
 
 ---
 

@@ -4,7 +4,9 @@ use std::io::{Cursor, Read};
 
 use dotall_core::SemanticOperation;
 use dotall_core::registry::FormatHandler;
-use dotall_pptx::{PptxFormat, minimal_pptx, parse_presentation_bytes, pptx_with_table};
+use dotall_pptx::{
+    PptxFormat, minimal_pptx, parse_presentation_bytes, pptx_with_notes, pptx_with_table,
+};
 use tempfile::tempdir;
 use zip::ZipArchive;
 
@@ -197,6 +199,74 @@ fn delete_slide_removes_last_non_only_slide() {
             "[Content_Types].xml",
             "ppt/slides/slide2.xml",
         ],
+    );
+}
+
+#[test]
+fn set_notes_text_patches_only_notes_part() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_with_notes();
+    fs::write(&path, &before).expect("write fixture");
+
+    let parsed = parse_presentation_bytes(&before).expect("parse bytes");
+    assert_eq!(parsed.slides[0].notes.as_deref(), Some("Talk through NPS."));
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_notes_text".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "text": "Updated speaker notes",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(
+        after.slides[0].notes.as_deref(),
+        Some("Updated speaker notes")
+    );
+    assert_eq!(after.slides[0].shapes[0].text, "Hello");
+    assert_eq!(edit.semantic_diff[0].change, "set_notes_text");
+    assert_eq!(edit.semantic_diff[0].target, "Slide 1!notes");
+    assert_untouched_entries_identical(
+        &before,
+        &patched.bytes,
+        &["ppt/notesSlides/notesSlide1.xml"],
+    );
+}
+
+#[test]
+fn set_notes_text_rejects_slide_without_notes() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_notes_text".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "text": "Nope",
+                }),
+            }],
+        )
+        .expect_err("no notes");
+    let message = error.to_string();
+    assert!(
+        message.contains("notes") || message.contains("Notes"),
+        "unexpected error: {message}"
     );
 }
 

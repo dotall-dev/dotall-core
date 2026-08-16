@@ -40,10 +40,13 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
         let name = format!("Slide {}", index + 1);
         let (shapes, tables) = parse_shapes_and_tables(&slide_xml, &name)?;
         let notes_part = format!("ppt/notesSlides/notesSlide{}.xml", index + 1);
-        let notes = zip_entry(&mut archive, &notes_part)
-            .ok()
-            .map(|xml| collect_text(&xml))
-            .filter(|text| !text.is_empty());
+        let (notes, notes_part_name) = match zip_entry(&mut archive, &notes_part) {
+            Ok(xml) => {
+                let text = collect_text(&xml);
+                ((!text.is_empty()).then_some(text), Some(notes_part.clone()))
+            }
+            Err(_) => (None, None),
+        };
         slides.push(SlideModel {
             element_id: ids::slide_id(&name, index as u32, SCHEMA_VERSION),
             name,
@@ -52,6 +55,7 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
             shapes,
             tables,
             notes,
+            notes_part_name,
         });
     }
 
