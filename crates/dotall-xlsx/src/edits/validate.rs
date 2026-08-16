@@ -15,6 +15,7 @@ use crate::edits::ops::{
     DeleteSheetPolicy, EditableCell, EditableValue, SCHEMA_ID, SCHEMA_VERSION, XlsxEditOp,
     format_cell_value, format_editable_value,
 };
+use crate::edits::transform::{RangeRef, column_number, parse_range as parse_a1_range};
 use crate::ids;
 use crate::model::{CellModel, CellValue, SCHEMA_ID as MODEL_SCHEMA_ID, WorkbookModel};
 use crate::selector::{self, CellAddress};
@@ -41,6 +42,13 @@ pub fn validate(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "merge_cells" | "unmerge_cells"))
+    {
+        return validate_merge_operations(model, operations);
+    }
+
     let workbook = decode(model)?;
     let graph = build(&workbook);
     let parsed = parse_operations(&workbook, operations)?;
@@ -77,6 +85,12 @@ pub fn validate_with_source(
         )
     }) {
         return validate_sheet_operation(source, model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "merge_cells" | "unmerge_cells"))
+    {
+        return validate_merge_operations(model, operations);
     }
     if operations.iter().all(|operation| {
         !matches!(
@@ -324,6 +338,154 @@ fn parse_delete_sheet_policy(payload: &Value) -> Result<DeleteSheetPolicy> {
             "delete_sheet has unsupported dependency_policy `{value}`"
         ))),
     }
+}
+
+fn validate_merge_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "merge edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| {
+            format_error(format!(
+                "{} requires a non-empty `sheet` field",
+                operation.kind
+            ))
+        })?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let range_text = operation
+        .payload
+        .get("range")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|range| !range.is_empty())
+        .ok_or_else(|| {
+            format_error(format!(
+                "{} requires a non-empty `range` field",
+                operation.kind
+            ))
+        })?;
+    let range = parse_a1_range(range_text).map_err(format_error)?;
+    let canonical_range = canonicalize_merge_ref(&range);
+    if range.start.row == range.end.row
+        && column_number(&range.start.column) == column_number(&range.end.column)
+    {
+        return Err(format_error(format!(
+            "{} rejects single-cell ranges (`{canonical_range}`)",
+            operation.kind
+        )));
+    }
+
+    match operation.kind.as_str() {
+        "merge_cells" => {
+            for existing in &sheet.merges {
+                let existing_range = parse_a1_range(existing).map_err(|message| {
+                    format_error(format!("invalid existing merge `{existing}`: {message}"))
+                })?;
+                if ranges_overlap(&range, &existing_range) {
+                    return Err(format_error(format!(
+                        "merge_cells `{canonical_range}` overlaps existing merge `{existing}` on sheet `{canonical_sheet}`"
+                    )));
+                }
+            }
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "merge_cells".into(),
+                    payload: serde_json::json!({
+                        "sheet": canonical_sheet,
+                        "range": canonical_range,
+                    }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: format!("{canonical_sheet}!{canonical_range}"),
+                    element_id: format!("merge:{canonical_sheet}:{canonical_range}"),
+                    change: "merge_cells".into(),
+                    before: None,
+                    after: Some(canonical_range),
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["refs parsed; values not evaluated".into()],
+                },
+            })
+        }
+        "unmerge_cells" => {
+            let existing = sheet
+                .merges
+                .iter()
+                .find(|merge| {
+                    parse_a1_range(merge)
+                        .ok()
+                        .map(|parsed| canonicalize_merge_ref(&parsed) == canonical_range)
+                        .unwrap_or(false)
+                })
+                .cloned()
+                .ok_or_else(|| {
+                    format_error(format!(
+                        "unmerge_cells `{canonical_range}` was not found on sheet `{canonical_sheet}`"
+                    ))
+                })?;
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "unmerge_cells".into(),
+                    payload: serde_json::json!({
+                        "sheet": canonical_sheet,
+                        "range": canonicalize_merge_ref(
+                            &parse_a1_range(&existing).map_err(format_error)?,
+                        ),
+                    }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: format!("{canonical_sheet}!{canonical_range}"),
+                    element_id: format!("merge:{canonical_sheet}:{canonical_range}"),
+                    change: "unmerge_cells".into(),
+                    before: Some(canonical_range),
+                    after: None,
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["refs parsed; values not evaluated".into()],
+                },
+            })
+        }
+        _ => Err(format_error("unsupported merge edit")),
+    }
+}
+
+fn canonicalize_merge_ref(range: &RangeRef) -> String {
+    format!(
+        "{}{}:{}{}",
+        range.start.column, range.start.row, range.end.column, range.end.row
+    )
+}
+
+fn ranges_overlap(left: &RangeRef, right: &RangeRef) -> bool {
+    let left_start_col = column_number(&left.start.column);
+    let left_end_col = column_number(&left.end.column);
+    let right_start_col = column_number(&right.start.column);
+    let right_end_col = column_number(&right.end.column);
+    !(left.end.row < right.start.row
+        || right.end.row < left.start.row
+        || left_end_col < right_start_col
+        || right_end_col < left_start_col)
 }
 
 fn decode(model: &ArtifactEnvelope) -> Result<WorkbookModel> {
@@ -820,8 +982,10 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             }
             XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
-            | XlsxEditOp::DeleteSheet { .. } => {
-                unreachable!("sheet edits are validated separately")
+            | XlsxEditOp::DeleteSheet { .. }
+            | XlsxEditOp::MergeCells { .. }
+            | XlsxEditOp::UnmergeCells { .. } => {
+                unreachable!("sheet and merge edits are validated separately")
             }
         })
         .collect()
@@ -923,8 +1087,10 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         }
         XlsxEditOp::AddSheet { .. }
         | XlsxEditOp::RenameSheet { .. }
-        | XlsxEditOp::DeleteSheet { .. } => {
-            unreachable!("sheet edits are validated separately")
+        | XlsxEditOp::DeleteSheet { .. }
+        | XlsxEditOp::MergeCells { .. }
+        | XlsxEditOp::UnmergeCells { .. } => {
+            unreachable!("sheet and merge edits are validated separately")
         }
     }
 }

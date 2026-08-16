@@ -118,6 +118,8 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "add_sheet",
             "rename_sheet",
             "delete_sheet",
+            "merge_cells",
+            "unmerge_cells",
         ]
     );
     assert_eq!(

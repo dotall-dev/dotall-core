@@ -459,6 +459,28 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Rejects the last visible sheet; either lists inbound references or rewrites them to #REF! while removing only orphaned drawings and charts."
                 .into(),
         },
+        EditCapability {
+            operation: "merge_cells".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Merge a rectangular worksheet range.".into(),
+            example: json!({
+                "kind": "merge_cells",
+                "payload": { "sheet": "Sheet1", "range": "A1:B2" }
+            }),
+            safety: "Rejects overlapping merges; surgically patches only the target worksheet mergeCells."
+                .into(),
+        },
+        EditCapability {
+            operation: "unmerge_cells".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Remove an existing worksheet merge by exact range ref.".into(),
+            example: json!({
+                "kind": "unmerge_cells",
+                "payload": { "sheet": "Sheet1", "range": "A1:B2" }
+            }),
+            safety: "Removes the matching mergeCell ref; surgically patches only the target worksheet."
+                .into(),
+        },
     ]
 }
 

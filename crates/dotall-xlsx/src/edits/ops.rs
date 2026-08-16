@@ -58,6 +58,14 @@ pub enum XlsxEditOp {
         #[serde(default)]
         dependency_policy: DeleteSheetPolicy,
     },
+    MergeCells {
+        sheet: String,
+        range: String,
+    },
+    UnmergeCells {
+        sheet: String,
+        range: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

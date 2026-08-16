@@ -1,3 +1,4 @@
+mod merges;
 mod package;
 mod shared_strings;
 mod structural;

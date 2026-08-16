@@ -24,7 +24,9 @@ pub(super) fn patch(
             | XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::DeleteSheet { .. }
-            | XlsxEditOp::SetRange { .. } => {
+            | XlsxEditOp::SetRange { .. }
+            | XlsxEditOp::MergeCells { .. }
+            | XlsxEditOp::UnmergeCells { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -124,7 +126,9 @@ pub(super) fn patch(
                 | XlsxEditOp::AddSheet { .. }
                 | XlsxEditOp::RenameSheet { .. }
                 | XlsxEditOp::DeleteSheet { .. }
-                | XlsxEditOp::SetRange { .. } => {
+                | XlsxEditOp::SetRange { .. }
+                | XlsxEditOp::MergeCells { .. }
+                | XlsxEditOp::UnmergeCells { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -147,7 +151,9 @@ pub(super) fn patch(
             | XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::DeleteSheet { .. }
-            | XlsxEditOp::SetRange { .. } => {
+            | XlsxEditOp::SetRange { .. }
+            | XlsxEditOp::MergeCells { .. }
+            | XlsxEditOp::UnmergeCells { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -270,7 +276,9 @@ fn render_new_cell(
         | XlsxEditOp::AddSheet { .. }
         | XlsxEditOp::RenameSheet { .. }
         | XlsxEditOp::DeleteSheet { .. }
-        | XlsxEditOp::SetRange { .. } => {
+        | XlsxEditOp::SetRange { .. }
+        | XlsxEditOp::MergeCells { .. }
+        | XlsxEditOp::UnmergeCells { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -438,7 +446,9 @@ fn render_cell_parts(
         | XlsxEditOp::AddSheet { .. }
         | XlsxEditOp::RenameSheet { .. }
         | XlsxEditOp::DeleteSheet { .. }
-        | XlsxEditOp::SetRange { .. } => {
+        | XlsxEditOp::SetRange { .. }
+        | XlsxEditOp::MergeCells { .. }
+        | XlsxEditOp::UnmergeCells { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

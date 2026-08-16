@@ -98,6 +98,16 @@ Build each operation from **`edit_capabilities[].example`**:
 }
 ```
 
+Merge / unmerge (surgical worksheet `mergeCells` patch; overlapping merges are rejected):
+
+```json
+{ "kind": "merge_cells", "payload": { "sheet": "Sheet1", "range": "A1:B2" } }
+```
+
+```json
+{ "kind": "unmerge_cells", "payload": { "sheet": "Sheet1", "range": "A1:B2" } }
+```
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

@@ -13,6 +13,7 @@ use crate::FORMAT_ID;
 use crate::edits::transform::{Axis, AxisChange};
 use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
+use super::merges;
 use super::shared_strings;
 use super::structural;
 use super::workbook;
@@ -28,6 +29,24 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
 
     let original = fs::read(source).map_err(|error| source_error(source, error))?;
     let operations = parse_validated_operations(&edit.operations)?;
+    if let [XlsxEditOp::MergeCells { sheet, range }] = operations.as_slice() {
+        return patch_merge(
+            &original,
+            sheet,
+            &merges::MergeEdit::Merge {
+                range: range.clone(),
+            },
+        );
+    }
+    if let [XlsxEditOp::UnmergeCells { sheet, range }] = operations.as_slice() {
+        return patch_merge(
+            &original,
+            sheet,
+            &merges::MergeEdit::Unmerge {
+                range: range.clone(),
+            },
+        );
+    }
     if let [XlsxEditOp::AddSheet { name, after }] = operations.as_slice() {
         let patch = workbook::add_sheet(&original, name, after.as_deref())?;
         let bytes = rebuild_package(
@@ -140,6 +159,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::RenameSheet { .. }
                 | XlsxEditOp::DeleteSheet { .. }
                 | XlsxEditOp::SetRange { .. }
+                | XlsxEditOp::MergeCells { .. }
+                | XlsxEditOp::UnmergeCells { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -162,7 +183,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::DeleteSheet { .. }
-            | XlsxEditOp::SetRange { .. } => {
+            | XlsxEditOp::SetRange { .. }
+            | XlsxEditOp::MergeCells { .. }
+            | XlsxEditOp::UnmergeCells { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -513,6 +536,21 @@ fn rewrite_calc_pr_tag(tag: &str) -> Result<String> {
     } else {
         Ok(format!("<calcPr {body}>"))
     }
+}
+
+fn patch_merge(original: &[u8], sheet: &str, edit: &merges::MergeEdit) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), merges::patch(&xml, edit)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
 }
 
 fn shared_strings_path(package: &[u8]) -> Result<Option<String>> {

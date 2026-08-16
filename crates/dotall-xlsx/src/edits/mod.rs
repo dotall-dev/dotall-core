@@ -88,6 +88,14 @@ pub(crate) fn parse_validated_operations(
                     }
                 },
             }),
+            "merge_cells" => Ok(XlsxEditOp::MergeCells {
+                sheet: required_string(operation, "sheet")?,
+                range: required_string(operation, "range")?,
+            }),
+            "unmerge_cells" => Ok(XlsxEditOp::UnmergeCells {
+                sheet: required_string(operation, "sheet")?,
+                range: required_string(operation, "range")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
