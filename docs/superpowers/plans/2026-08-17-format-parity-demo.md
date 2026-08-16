@@ -327,6 +327,17 @@ After Wave 4 integrates (col/row size, move_slide, insert_paragraph, set_documen
 
 Each task ends with the standing demo gate.
 
+## Wave 6 — next openpyxl-class gaps (parallel)
+
+After Wave 5 integrates (freeze_panes, add_textbox, delete_paragraph, radio Btn):
+
+1. **XLSX:** `define_name` / update named range formula (surgical workbook.xml) — pairs with Wave 1 named-range read
+2. **PPTX:** `delete_shape` by slide+name — pairs with add_textbox
+3. **DOCX:** `set_paragraph_style` (set `w:pStyle` / style_id) — light style apply without full styles.xml rewrite
+4. **PDF:** `clear_form_field` (blank text / Off checkbox / clear choice) — common form workflow
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
