@@ -586,14 +586,11 @@ fn canonical_workspace(workspace: &str) -> DotallResult<PathBuf> {
     })
 }
 
-#[cfg(feature = "xlsx")]
 pub fn registry() -> FormatRegistry {
     let mut registry = FormatRegistry::default();
+    #[cfg(feature = "xlsx")]
     registry.register(Arc::new(dotall_xlsx::XlsxFormat));
+    #[cfg(feature = "pptx")]
+    registry.register(Arc::new(dotall_pptx::PptxFormat));
     registry
-}
-
-#[cfg(not(feature = "xlsx"))]
-pub fn registry() -> FormatRegistry {
-    FormatRegistry::default()
 }

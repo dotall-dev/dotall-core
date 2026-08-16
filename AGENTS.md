@@ -15,6 +15,7 @@ brainstorming notes live elsewhere.
 - `docs/superpowers/specs/2026-07-21-mcp-agent-interface-design.md` — MCP tools,
   flush-on-close, capabilities discovery.
 - `skills/xlsx/SKILL.md` — agent workflow for `.xlsx` via Dotall MCP.
+- `skills/pptx/SKILL.md` — agent workflow for `.pptx` via Dotall MCP.
 - `demo/README.md` — sample workbook + CLI/MCP walkthrough.
 
 Specs are the source of truth. If code and spec disagree, fix one deliberately —
@@ -43,6 +44,7 @@ dotall/
 │   ├── dotall-core/         # store, registry, pipeline, read, history, orchestration
 │   ├── dotall-ooxml/        # shared ZIP part snapshots + package probes (not a format)
 │   ├── dotall-xlsx/         # typed model, processors, views, edits, OOXML writer
+│   ├── dotall-pptx/         # presentation model, slide reads, surgical shape text
 │   ├── dotall-cli/          # bin: `dotall`
 │   └── dotall-mcp/          # bin: stdio MCP server (`dotall-mcp`)
 ```
@@ -126,9 +128,10 @@ Stdio MCP server over the same `Engine` as the CLI. Run from the workspace root:
 cargo run -p dotall-mcp
 ```
 
-Register the built binary in your MCP client. Before editing `.xlsx` files, read
-`skills/xlsx/SKILL.md` — discover capabilities at runtime, stage edits, apply
-explicitly or via flush-on-close (default).
+Register the built binary in your MCP client. Before editing `.xlsx` or `.pptx`
+files, read `skills/xlsx/SKILL.md` or `skills/pptx/SKILL.md` — discover
+capabilities at runtime, stage edits, apply explicitly or via flush-on-close
+(default).
 
 ## Build & test
 
