@@ -11,7 +11,7 @@ pub mod text;
 
 pub const FORMAT_ID: &str = "pdf";
 
-pub use fixture::{demo_form_pdf, minimal_checkbox_pdf, minimal_form_pdf};
+pub use fixture::{demo_form_pdf, minimal_checkbox_pdf, minimal_form_pdf, minimal_radio_pdf};
 pub use format::PdfFormat;
 pub use model::{
     PdfDocumentModel, PdfFieldModel, PdfMetadata, PdfPageModel, SCHEMA_ID, SCHEMA_VERSION,

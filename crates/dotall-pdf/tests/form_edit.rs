@@ -4,9 +4,70 @@ use std::sync::Arc;
 use dotall_core::registry::{FormatHandler, FormatRegistry};
 use dotall_core::{Actor, ActorKind, DotallStore, EditRequest, Engine, SemanticOperation};
 use dotall_pdf::{
-    PdfFormat, demo_form_pdf, minimal_checkbox_pdf, minimal_form_pdf, parse_pdf_bytes,
+    PdfFormat, demo_form_pdf, minimal_checkbox_pdf, minimal_form_pdf, minimal_radio_pdf,
+    parse_pdf_bytes,
 };
 use tempfile::tempdir;
+
+#[test]
+fn set_form_field_updates_radio_group_export_value() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("radio.pdf");
+    fs::write(&path, minimal_radio_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Priority"))
+        .expect("Priority radio");
+    assert_eq!(field["field_type"], "btn");
+    assert_eq!(field["value"], "Medium");
+    let export_values = field["export_values"]
+        .as_array()
+        .expect("export_values")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert!(export_values.contains(&"Low"));
+    assert!(export_values.contains(&"Medium"));
+    assert!(export_values.contains(&"High"));
+    assert!(export_values.contains(&"Off"));
+
+    let ambiguous = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Priority", "value": "On" }),
+            }],
+        )
+        .expect_err("On is ambiguous for radio");
+    assert!(
+        ambiguous.to_string().contains("ambiguous radio"),
+        "{ambiguous}"
+    );
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Priority", "value": "High" }),
+            }],
+        )
+        .expect("validate radio");
+    let patched = handler.apply_edit(&path, &edit).expect("apply radio");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let priority = after
+        .fields
+        .iter()
+        .find(|f| f.name == "Priority")
+        .expect("Priority");
+    assert_eq!(priority.value, "High");
+}
 
 #[test]
 fn set_form_field_updates_checkbox_on() {
@@ -248,6 +309,53 @@ fn revert_after_checkbox_fill_restores_original_bytes() {
         .revert("checkbox.pdf", 1, uuid(4))
         .expect("stage revert");
     engine.apply("checkbox.pdf", uuid(4)).expect("apply revert");
+    assert_eq!(fs::read(&source).expect("restored"), original);
+}
+
+#[test]
+fn revert_after_radio_fill_restores_original_bytes() {
+    let workspace = tempdir().expect("workspace");
+    let source = workspace.path().join("radio.pdf");
+    let original = minimal_radio_pdf();
+    fs::write(&source, &original).expect("write fixture");
+
+    let store = DotallStore::init(workspace.path()).expect("store");
+    let mut registry = FormatRegistry::default();
+    registry.register(Arc::new(PdfFormat));
+    let mut engine = Engine::new(store, registry);
+
+    let hash = engine.load_model("radio.pdf").expect("load").source_hash;
+    engine
+        .edit(
+            "radio.pdf",
+            &EditRequest {
+                transaction_id: uuid(5),
+                expected_source_hash: hash,
+                actor: Actor {
+                    kind: ActorKind::Cli,
+                    id: Some("pdf-radio".into()),
+                },
+                operations: vec![SemanticOperation {
+                    kind: "set_form_field".into(),
+                    payload: serde_json::json!({ "name": "Priority", "value": "High" }),
+                }],
+            },
+        )
+        .expect("stage");
+    engine.apply("radio.pdf", uuid(5)).expect("apply");
+    let after_apply = parse_pdf_bytes(&fs::read(&source).expect("read after")).expect("parse");
+    let priority = after_apply
+        .fields
+        .iter()
+        .find(|f| f.name == "Priority")
+        .expect("Priority");
+    assert_eq!(priority.value, "High");
+    assert_ne!(fs::read(&source).expect("after apply"), original);
+
+    engine
+        .revert("radio.pdf", 1, uuid(6))
+        .expect("stage revert");
+    engine.apply("radio.pdf", uuid(6)).expect("apply revert");
     assert_eq!(fs::read(&source).expect("restored"), original);
 }
 

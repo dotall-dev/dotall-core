@@ -2,8 +2,9 @@
 name: pdf
 description: >-
   Work with .pdf files through Dotall MCP. Use when inspecting pages, listing
-  AcroForm fields, filling a text or checkbox field, setting /Info metadata, or
-  reverting a PDF in a Dotall workspace. Do not rewrite page content streams.
+  AcroForm fields, filling a text/checkbox/choice/radio field, setting /Info
+  metadata, or reverting a PDF in a Dotall workspace. Do not rewrite page
+  content streams.
 ---
 
 # PDF via Dotall MCP
@@ -30,7 +31,8 @@ dotall_capabilities or dotall_inspect
 Text extraction is best-effort but operator-aware (`Tj` / `TJ` / `'` / `"`, line
 breaks from `Td` / `T*`). Inspect `encrypted` and `has_signature` before editing.
 Inspect `metadata` for `/Info` Title / Author / Subject / Creator / Producer when present.
-Checkbox fields (`btn`) may include `export_values` (e.g. `Yes`, `Off`) from `/AP /N`.
+Checkbox and radio fields (`btn`) may include `export_values` (e.g. `Yes`, `Off`,
+or radio states `Low` / `Medium` / `High`) from `/AP /N` across widgets.
 Choice fields (`ch`) expose `options` from `/Opt` on inspect and field read.
 
 ### Edit
@@ -46,7 +48,8 @@ Text / choice:
 
 Choice (`Ch`): set `value` to one of the field `options` (export string from `/Opt`).
 
-Checkbox (`Btn`): use `On` / `Off`, or an explicit export value from `export_values`:
+Checkbox (`Btn`, single on-state): use `On` / `Off`, or an explicit export value from
+`export_values`:
 
 ```json
 {
@@ -55,7 +58,17 @@ Checkbox (`Btn`): use `On` / `Off`, or an explicit export value from `export_val
 }
 ```
 
-`On` maps to the sole non-`Off` export value when unambiguous; radios with multiple on-states require an explicit export value.
+`On` maps to the sole non-`Off` export value when unambiguous.
+
+Radio group (`Btn` with multiple on-states): always pass an explicit export value
+(e.g. `High`). Do not use bare `On` — validation rejects it as ambiguous.
+
+```json
+{
+  "kind": "set_form_field",
+  "payload": { "name": "Priority", "value": "High" }
+}
+```
 
 Document `/Info` (Title / Author / Subject — omit keys to leave unchanged):
 
@@ -70,6 +83,7 @@ Document `/Info` (Title / Author / Subject — omit keys to leave unchanged):
 }
 ```
 
-Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios without an export value, empty metadata payloads.
+Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios
+without an export value, empty metadata payloads.
 
 Snapshots are opaque whole-file blobs (not OOXML part manifests).

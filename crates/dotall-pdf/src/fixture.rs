@@ -35,17 +35,45 @@ pub fn minimal_checkbox_pdf() -> Vec<u8> {
     )
 }
 
-/// Intake form: Name + Email text, Agree checkbox, Department choice, `/Info` metadata.
+/// Radio group (`/Btn` + Radio flag) with export values Low / Medium / High / Off.
+///
+/// Three widgets under one named field; `/V` starts as Medium.
+pub fn minimal_radio_pdf() -> Vec<u8> {
+    let content = content_object(4, "BT /F1 24 Tf 10 150 Td (Hello) Tj ET\n");
+    // Ff bit 15 (32768) = Radio.
+    assemble(
+        &[
+            "1 0 obj<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>endobj\n",
+            "2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n",
+            "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> /Annots [7 0 R 8 0 R 9 0 R] >>endobj\n",
+            content.as_str(),
+            "5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n",
+            "6 0 obj<< /Fields [10 0 R] /NeedAppearances true >>endobj\n",
+            "7 0 obj<< /Type /Annot /Subtype /Widget /Rect [10 80 30 100] /P 3 0 R /Parent 10 0 R /F 4 /AS /Off /AP << /N << /Low 11 0 R /Off 14 0 R >> >> >>endobj\n",
+            "8 0 obj<< /Type /Annot /Subtype /Widget /Rect [40 80 60 100] /P 3 0 R /Parent 10 0 R /F 4 /AS /Medium /AP << /N << /Medium 12 0 R /Off 14 0 R >> >> >>endobj\n",
+            "9 0 obj<< /Type /Annot /Subtype /Widget /Rect [70 80 90 100] /P 3 0 R /Parent 10 0 R /F 4 /AS /Off /AP << /N << /High 13 0 R /Off 14 0 R >> >> >>endobj\n",
+            "10 0 obj<< /FT /Btn /Ff 32768 /T (Priority) /V /Medium /Kids [7 0 R 8 0 R 9 0 R] >>endobj\n",
+            "11 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+            "12 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+            "13 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+            "14 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+        ],
+        None,
+    )
+}
+
+/// Intake form: Name + Email text, Agree checkbox, Priority radio, Department choice, `/Info`.
 ///
 /// Page content lists the form title and field labels so `read.page` returns meaningful text.
 pub fn demo_form_pdf() -> Vec<u8> {
     let page_text = "\
 BT
-/F1 18 Tf 20 330 Td (Vendor Intake Form) Tj
+/F1 18 Tf 20 400 Td (Vendor Intake Form) Tj
 0 -28 Td /F1 12 Tf (Name) Tj
 0 -40 Td (Email) Tj
 0 -50 Td (Agree to terms) Tj
-0 -60 Td (Department) Tj
+0 -50 Td (Priority) Tj
+0 -50 Td (Department) Tj
 ET
 ";
     let content = content_object(4, page_text);
@@ -53,23 +81,29 @@ ET
         &[
             "1 0 obj<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>endobj\n",
             "2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n",
-            "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 360] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> /Annots [7 0 R 9 0 R 11 0 R 15 0 R] >>endobj\n",
+            "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 430] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> /Annots [7 0 R 9 0 R 11 0 R 15 0 R 16 0 R 17 0 R 21 0 R] >>endobj\n",
             content.as_str(),
             "5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n",
-            "6 0 obj<< /Fields [8 0 R 10 0 R 12 0 R 16 0 R] /NeedAppearances true >>endobj\n",
-            "7 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 270 280 295] /P 3 0 R /Parent 8 0 R /F 4 >>endobj\n",
+            "6 0 obj<< /Fields [8 0 R 10 0 R 12 0 R 18 0 R 22 0 R] /NeedAppearances true >>endobj\n",
+            "7 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 340 280 365] /P 3 0 R /Parent 8 0 R /F 4 >>endobj\n",
             "8 0 obj<< /FT /Tx /T (Name) /V (Ada Lovelace) /Kids [7 0 R] >>endobj\n",
-            "9 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 230 280 255] /P 3 0 R /Parent 10 0 R /F 4 >>endobj\n",
+            "9 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 300 280 325] /P 3 0 R /Parent 10 0 R /F 4 >>endobj\n",
             "10 0 obj<< /FT /Tx /T (Email) /V (ada@example.com) /Kids [9 0 R] >>endobj\n",
-            "11 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 180 100 200] /P 3 0 R /Parent 12 0 R /F 4 /AS /Off /AP << /N << /Yes 13 0 R /Off 14 0 R >> >> >>endobj\n",
+            "11 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 250 100 270] /P 3 0 R /Parent 12 0 R /F 4 /AS /Off /AP << /N << /Yes 13 0 R /Off 14 0 R >> >> >>endobj\n",
             "12 0 obj<< /FT /Btn /T (Agree) /V /Off /Kids [11 0 R] >>endobj\n",
             "13 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
             "14 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
-            "15 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 120 280 145] /P 3 0 R /Parent 16 0 R /F 4 >>endobj\n",
-            "16 0 obj<< /FT /Ch /T (Department) /V (Engineering) /Opt [(Engineering) (Sales) (Operations)] /Kids [15 0 R] >>endobj\n",
-            "17 0 obj<< /Title (Vendor Intake Form) /Author (Dotall Demo) /Subject (Vendor onboarding) /Creator (dotall-pdf) /Producer (dotall-pdf) >>endobj\n",
+            "15 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 200 100 220] /P 3 0 R /Parent 18 0 R /F 4 /AS /Off /AP << /N << /Low 19 0 R /Off 20 0 R >> >> >>endobj\n",
+            "16 0 obj<< /Type /Annot /Subtype /Widget /Rect [110 200 130 220] /P 3 0 R /Parent 18 0 R /F 4 /AS /Medium /AP << /N << /Medium 19 0 R /Off 20 0 R >> >> >>endobj\n",
+            "17 0 obj<< /Type /Annot /Subtype /Widget /Rect [140 200 160 220] /P 3 0 R /Parent 18 0 R /F 4 /AS /Off /AP << /N << /High 19 0 R /Off 20 0 R >> >> >>endobj\n",
+            "18 0 obj<< /FT /Btn /Ff 32768 /T (Priority) /V /Medium /Kids [15 0 R 16 0 R 17 0 R] >>endobj\n",
+            "19 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+            "20 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+            "21 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 140 280 165] /P 3 0 R /Parent 22 0 R /F 4 >>endobj\n",
+            "22 0 obj<< /FT /Ch /T (Department) /V (Engineering) /Opt [(Engineering) (Sales) (Operations)] /Kids [21 0 R] >>endobj\n",
+            "23 0 obj<< /Title (Vendor Intake Form) /Author (Dotall Demo) /Subject (Vendor onboarding) /Creator (dotall-pdf) /Producer (dotall-pdf) >>endobj\n",
         ],
-        Some(17),
+        Some(23),
     )
 }
 
@@ -131,7 +165,12 @@ mod tests {
         assert!(text.contains("Name"), "{text}");
         assert!(text.contains("Email"), "{text}");
         assert!(text.contains("Agree to terms"), "{text}");
+        assert!(text.contains("Priority"), "{text}");
         assert!(text.contains("Department"), "{text}");
+        assert!(
+            model.fields.iter().any(|f| f.name == "Priority"),
+            "Priority radio missing"
+        );
     }
 
     #[test]

@@ -11,7 +11,7 @@ cargo run -p dotall-cli --example generate_demos
 | [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header, percent/currency formats, seeded column widths |
 | [`deck.pptx`](deck.pptx) | PPTX | Title + metrics table + speaker notes; second slide next-steps |
 | [`memo.docx`](memo.docx) | DOCX | Heading memo + multi-run body + status table + confidential header |
-| [`form.pdf`](form.pdf) | PDF | Intake form + page labels; Name/Email/Agree/Department; `/Info` metadata |
+| [`form.pdf`](form.pdf) | PDF | Intake form + page labels; Name/Email/Agree/Priority/Department; `/Info` metadata |
 
 Skills: [`xlsx`](../skills/xlsx/SKILL.md) · [`pptx`](../skills/pptx/SKILL.md) · [`docx`](../skills/docx/SKILL.md) · [`pdf`](../skills/pdf/SKILL.md)
 
@@ -193,18 +193,20 @@ $DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:5'
 ## PDF — `form.pdf`
 
 Fields: `Name` (tx), `Email` (tx), `Agree` (btn checkbox, export `Yes`/`Off`),
+`Priority` (btn radio, export `Low`/`Medium`/`High`/`Off`, default Medium),
 `Department` (ch: Engineering / Sales / Operations).
 `/Info`: Title `Vendor Intake Form`, Author `Dotall Demo`, Subject `Vendor onboarding`.
-Page text (labels): Vendor Intake Form, Name, Email, Agree to terms, Department.
+Page text (labels): Vendor Intake Form, Name, Email, Agree to terms, Priority, Department.
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/form.pdf
-# summary.metadata.title / author / …; fields[].options for Department
+# summary.metadata.title / author / …; fields[].options for Department;
+# fields[].export_values for Agree and Priority
 $DOTALL read demo/form.pdf --selector-kind page --selector 1
-# Vendor Intake Form / Name / Email / Agree to terms / Department
-$DOTALL read demo/form.pdf --selector-kind field --selector Department
+# Vendor Intake Form / Name / Email / Agree to terms / Priority / Department
+$DOTALL read demo/form.pdf --selector-kind field --selector Priority
 
 # Prior v0
 $DOTALL edit demo/form.pdf --ops-json \
@@ -227,6 +229,13 @@ $DOTALL edit demo/form.pdf --ops-json \
 $DOTALL apply demo/form.pdf --all
 $DOTALL inspect demo/form.pdf
 # expect summary.metadata.title Updated Intake, author Wave 4 Agent
+
+# Wave 5 — radio group via explicit export value
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field","payload":{"name":"Priority","value":"High"}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL read demo/form.pdf --selector-kind field --selector Priority
+# expect value High
 ```
 
 ---

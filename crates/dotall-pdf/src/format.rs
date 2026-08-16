@@ -225,12 +225,12 @@ fn edit_capabilities() -> Vec<EditCapability> {
         EditCapability {
             operation: "set_form_field".into(),
             schema_version: SCHEMA_VERSION,
-            description: "Set an AcroForm text, choice, or checkbox (Btn) field value.".into(),
+            description: "Set an AcroForm text, choice, checkbox, or radio (Btn) field value.".into(),
             example: json!({
                 "kind": "set_form_field",
-                "payload": { "name": "Agree", "value": "On" }
+                "payload": { "name": "Priority", "value": "High" }
             }),
-            safety: "Form fill only. Checkboxes accept On/Off or export values. Rejects encrypted and signed PDFs. Does not rewrite page content streams.".into(),
+            safety: "Form fill only. Checkboxes accept On/Off or export values; radios require an explicit export value when multiple on-states exist. Rejects encrypted and signed PDFs. Does not rewrite page content streams.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),
