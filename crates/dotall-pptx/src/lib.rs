@@ -10,9 +10,12 @@ pub mod selector;
 
 pub const FORMAT_ID: &str = "pptx";
 
-pub use fixture::{minimal_pptx, minimal_pptx_with_media};
+pub use fixture::{minimal_pptx, minimal_pptx_with_media, pptx_with_table};
 pub use format::PptxFormat;
-pub use model::{PresentationModel, SCHEMA_ID, SCHEMA_VERSION, ShapeModel, SlideModel};
+pub use model::{
+    PresentationModel, SCHEMA_ID, SCHEMA_VERSION, ShapeModel, SlideModel, TableCellModel,
+    TableModel,
+};
 pub use parser::parse_presentation_bytes;
 
 #[cfg(test)]

@@ -61,15 +61,19 @@ v0 does **not** expose `dotall_deps` for presentations.
 
 ### 2. Read
 
-- `selector_kind=full` — all slides as Markdown (`# Slide N` then `- **Shape**: text`).
+- `selector_kind=full` — all slides as Markdown (`# Slide N` then shapes and table cells).
 - `selector_kind=slide` — one slide. Identity can be `Slide 1`, `slide1`, or `1`.
+  Table cells appear as `- **Table 1[0,1]**: text`.
 - `selector_kind=notes` — speaker notes for that slide identity, if present.
+- Inspect includes `table_count` per slide when tables are present.
 
 Honor `max_tokens` and resume with the returned `continuation` cursor.
 
 ### 3. Stage edits
 
-**`dotall_edit` stages only.** v0 supports a **single** operation per transaction:
+**`dotall_edit` stages only.** Supports a **single** operation per transaction.
+
+Shape text:
 
 ```json
 {
@@ -78,12 +82,27 @@ Honor `max_tokens` and resume with the returned `continuation` cursor.
 }
 ```
 
+Table cell text (`p:graphicFrame` → `a:tbl`):
+
+```json
+{
+  "kind": "set_table_cell_text",
+  "payload": {
+    "slide": "Slide 1",
+    "table": "Table 1",
+    "row": 0,
+    "col": 1,
+    "text": "NEW"
+  }
+}
+```
+
 Safety:
 
-- Text frames only (`p:sp` + `p:txBody`).
-- Rejects SmartArt, charts, `graphicFrame`, and grouped drawingML the writer cannot patch.
-- Multiple paragraphs: first `a:t` is replaced; later runs in the shape are cleared.
-- No slide add/delete/reorder in v0.
+- `set_shape_text`: text frames only (`p:sp` + `p:txBody`). Rejects SmartArt, charts, and grouped drawingML the writer cannot patch.
+- `set_table_cell_text`: patches one cell; rejects out-of-range `row`/`col`. First `a:t` in the cell is replaced; later runs in that cell are cleared.
+- Both ops patch only the target slide part; media and other slides stay byte-identical.
+- No slide add/delete/reorder yet.
 
 ### 4. Apply, history, revert
 

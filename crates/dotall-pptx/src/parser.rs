@@ -9,7 +9,9 @@ use zip::ZipArchive;
 
 use crate::FORMAT_ID;
 use crate::ids;
-use crate::model::{PresentationModel, SCHEMA_VERSION, ShapeModel, SlideModel};
+use crate::model::{
+    PresentationModel, SCHEMA_VERSION, ShapeModel, SlideModel, TableCellModel, TableModel,
+};
 
 pub fn parse_presentation(source: &Path) -> Result<PresentationModel> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
@@ -36,7 +38,7 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
         let part_name = resolve_ppt_target(target);
         let slide_xml = zip_entry(&mut archive, &part_name)?;
         let name = format!("Slide {}", index + 1);
-        let shapes = parse_shapes(&slide_xml, &name)?;
+        let (shapes, tables) = parse_shapes_and_tables(&slide_xml, &name)?;
         let notes_part = format!("ppt/notesSlides/notesSlide{}.xml", index + 1);
         let notes = zip_entry(&mut archive, &notes_part)
             .ok()
@@ -48,6 +50,7 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
             index: index as u32,
             part_name,
             shapes,
+            tables,
             notes,
         });
     }
@@ -163,15 +166,30 @@ fn relationship_targets(xml: &[u8]) -> Result<BTreeMap<String, String>> {
     Ok(targets)
 }
 
-fn parse_shapes(xml: &[u8], slide_name: &str) -> Result<Vec<ShapeModel>> {
+fn parse_shapes_and_tables(
+    xml: &[u8],
+    slide_name: &str,
+) -> Result<(Vec<ShapeModel>, Vec<TableModel>)> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut shapes = Vec::new();
+    let mut tables = Vec::new();
+
     let mut in_sp = false;
     let mut skipped_frame = false;
     let mut shape_name = String::new();
-    let mut texts = Vec::new();
+    let mut shape_texts = Vec::new();
+
+    let mut in_graphic_frame = false;
+    let mut frame_name = String::new();
+    let mut in_tbl = false;
+    let mut table_cells: Vec<(u32, u32, String)> = Vec::new();
+    let mut row: i32 = -1;
+    let mut col: i32 = -1;
+    let mut in_tc = false;
+    let mut cell_texts: Vec<String> = Vec::new();
+
     loop {
         match reader
             .read_event_into(&mut buffer)
@@ -179,35 +197,98 @@ fn parse_shapes(xml: &[u8], slide_name: &str) -> Result<Vec<ShapeModel>> {
         {
             Event::Start(tag) if tag.local_name().as_ref() == b"graphicFrame" => {
                 skipped_frame = true;
+                in_graphic_frame = true;
+                frame_name.clear();
+                in_tbl = false;
+                table_cells.clear();
+                row = -1;
+                col = -1;
+                in_tc = false;
+                cell_texts.clear();
             }
             Event::End(tag) if tag.local_name().as_ref() == b"graphicFrame" => {
+                if in_tbl {
+                    let name = if frame_name.is_empty() {
+                        format!("table:{}", tables.len())
+                    } else {
+                        frame_name.clone()
+                    };
+                    let cells = table_cells
+                        .iter()
+                        .map(|(cell_row, cell_col, text)| TableCellModel {
+                            element_id: ids::table_cell_id(
+                                slide_name,
+                                &name,
+                                *cell_row,
+                                *cell_col,
+                                SCHEMA_VERSION,
+                            ),
+                            row: *cell_row,
+                            col: *cell_col,
+                            text: text.clone(),
+                        })
+                        .collect();
+                    tables.push(TableModel {
+                        element_id: ids::table_id(slide_name, &name, SCHEMA_VERSION),
+                        name,
+                        cells,
+                    });
+                }
                 skipped_frame = false;
+                in_graphic_frame = false;
+                in_tbl = false;
+                in_tc = false;
+            }
+            Event::Start(tag) if tag.local_name().as_ref() == b"tbl" && in_graphic_frame => {
+                in_tbl = true;
+                table_cells.clear();
+                row = -1;
+                col = -1;
+            }
+            Event::Start(tag) if tag.local_name().as_ref() == b"tr" && in_tbl => {
+                row += 1;
+                col = -1;
+            }
+            Event::Start(tag) if tag.local_name().as_ref() == b"tc" && in_tbl => {
+                col += 1;
+                in_tc = true;
+                cell_texts.clear();
+            }
+            Event::End(tag) if tag.local_name().as_ref() == b"tc" && in_tc => {
+                table_cells.push((row as u32, col as u32, cell_texts.concat()));
+                in_tc = false;
             }
             Event::Start(tag) if tag.local_name().as_ref() == b"sp" && !skipped_frame => {
                 in_sp = true;
                 shape_name.clear();
-                texts.clear();
+                shape_texts.clear();
             }
             Event::Empty(tag) | Event::Start(tag)
-                if in_sp && tag.local_name().as_ref() == b"cNvPr" =>
+                if (in_sp || in_graphic_frame) && tag.local_name().as_ref() == b"cNvPr" =>
             {
                 for attribute in tag.attributes() {
                     let attribute = attribute
                         .map_err(|error| format_error(format!("invalid cNvPr: {error}")))?;
                     if attribute.key.local_name().as_ref() == b"name" {
-                        shape_name = String::from_utf8_lossy(&attribute.value).into_owned();
+                        let value = String::from_utf8_lossy(&attribute.value).into_owned();
+                        if in_sp {
+                            shape_name = value;
+                        } else if in_graphic_frame && !in_tbl {
+                            frame_name = value;
+                        }
                     }
                 }
             }
-            Event::Text(text) if in_sp => {
-                // only captured via Start t below
-                let _ = text;
-            }
-            Event::Start(tag) if in_sp && tag.local_name().as_ref() == b"t" => {
+            Event::Start(tag) if tag.local_name().as_ref() == b"t" && (in_sp || in_tc) => {
                 let text = reader
                     .read_text(tag.name())
                     .map_err(|error| format_error(format!("invalid a:t: {error}")))?;
-                texts.push(decode_text(text));
+                let decoded = decode_text(text);
+                if in_tc {
+                    cell_texts.push(decoded);
+                } else {
+                    shape_texts.push(decoded);
+                }
             }
             Event::End(tag) if tag.local_name().as_ref() == b"sp" && in_sp => {
                 if !skipped_frame {
@@ -216,7 +297,7 @@ fn parse_shapes(xml: &[u8], slide_name: &str) -> Result<Vec<ShapeModel>> {
                     } else {
                         shape_name.clone()
                     };
-                    let text = texts.concat();
+                    let text = shape_texts.concat();
                     shapes.push(ShapeModel {
                         element_id: ids::shape_id(slide_name, &name, SCHEMA_VERSION),
                         name,
@@ -230,7 +311,7 @@ fn parse_shapes(xml: &[u8], slide_name: &str) -> Result<Vec<ShapeModel>> {
         }
         buffer.clear();
     }
-    Ok(shapes)
+    Ok((shapes, tables))
 }
 
 fn collect_text(xml: &[u8]) -> String {

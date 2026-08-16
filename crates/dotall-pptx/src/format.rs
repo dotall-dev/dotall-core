@@ -66,6 +66,7 @@ impl FormatHandler for PptxFormat {
                     "name": slide.name,
                     "index": slide.index,
                     "shape_count": slide.shapes.len(),
+                    "table_count": slide.tables.len(),
                     "preview": slide.shapes.first().map(|shape| shape.text.as_str()).unwrap_or(""),
                 })
             })
@@ -219,14 +220,32 @@ fn capabilities() -> Vec<Capability> {
 }
 
 fn edit_capabilities() -> Vec<EditCapability> {
-    vec![EditCapability {
-        operation: "set_shape_text".into(),
-        schema_version: SCHEMA_VERSION,
-        description: "Replace text in a simple text-frame shape.".into(),
-        example: json!({
-            "kind": "set_shape_text",
-            "payload": { "slide": "Slide 1", "shape": "Title", "text": "World" }
-        }),
-        safety: "Text frames only. Patches the target slide part; rejects SmartArt, charts, and grouped drawingML.".into(),
-    }]
+    vec![
+        EditCapability {
+            operation: "set_shape_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Replace text in a simple text-frame shape.".into(),
+            example: json!({
+                "kind": "set_shape_text",
+                "payload": { "slide": "Slide 1", "shape": "Title", "text": "World" }
+            }),
+            safety: "Text frames only. Patches the target slide part; rejects SmartArt, charts, and grouped drawingML.".into(),
+        },
+        EditCapability {
+            operation: "set_table_cell_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Replace text in one cell of a slide table (a:tbl inside p:graphicFrame).".into(),
+            example: json!({
+                "kind": "set_table_cell_text",
+                "payload": {
+                    "slide": "Slide 1",
+                    "table": "Table 1",
+                    "row": 0,
+                    "col": 1,
+                    "text": "NEW"
+                }
+            }),
+            safety: "Patches only the slide part that owns the table. Rejects out-of-range row/col. Media and other slides stay byte-identical.".into(),
+        },
+    ]
 }
