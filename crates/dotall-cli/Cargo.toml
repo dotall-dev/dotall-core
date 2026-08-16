@@ -13,6 +13,7 @@ clap = { version = "4.6.2", features = ["derive"] }
 dotall-core = { version = "0.1.0", path = "../dotall-core" }
 dotall-xlsx = { version = "0.1.0", path = "../dotall-xlsx", optional = true }
 dotall-pptx = { version = "0.1.0", path = "../dotall-pptx", optional = true }
+dotall-docx = { version = "0.1.0", path = "../dotall-docx", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 uuid = { version = "1.19.0", features = ["v4", "serde"] }
@@ -23,8 +24,10 @@ predicates = "3.1.4"
 rust_xlsxwriter = "0.96.0"
 tempfile = "3.27.0"
 dotall-pptx = { version = "0.1.0", path = "../dotall-pptx" }
+dotall-docx = { version = "0.1.0", path = "../dotall-docx" }
 
 [features]
-default = ["xlsx", "pptx"]
+default = ["xlsx", "pptx", "docx"]
 xlsx = ["dep:dotall-xlsx"]
 pptx = ["dep:dotall-pptx"]
+docx = ["dep:dotall-docx"]

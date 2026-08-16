@@ -8,10 +8,37 @@
 
 **Tech Stack:** `zip`, `quick-xml`, `dotall-ooxml`, blake3, serde JSON.
 
-**Prerequisite:** [`2026-08-15-ooxml-shared-snapshots.md`](2026-08-15-ooxml-shared-snapshots.md)  
-**Recommended after:** [`2026-08-15-pptx-engine-v0.md`](2026-08-15-pptx-engine-v0.md) (copy ZIP rebuild + registry composition patterns).
+**Prerequisite:** [`2026-08-15-pptx-engine-v0.md`](2026-08-15-pptx-engine-v0.md) — **done on `feat/pptx-engine-v0`.**
 
 **Design:** [`docs/superpowers/specs/2026-08-15-office-pdf-format-families-design.md`](../specs/2026-08-15-office-pdf-format-families-design.md)
+
+## Grounded APIs (after PPTX)
+
+Use these; do not re-extract snapshot or ZIP-probe code:
+
+```rust
+dotall_ooxml::encode_package(bytes, format_id, manifest_schema_id, package_hash: Option<&str>)
+    -> Result<EncodedSnapshot>
+dotall_ooxml::decode_package(&encoded) -> Result<Vec<u8>>
+dotall_ooxml::has_zip_magic(prefix: &[u8]) -> bool
+```
+
+Copy `rebuild_package` from `crates/dotall-pptx/src/edits.rs` (raw-copy untouched ZIP entries). Do not extract a shared writer yet.
+
+CLI already has `--selector-kind` / `--selector`. DOCX reads use `paragraphs` + `0:2` or `0`. Compose the registry independently:
+
+```rust
+#[cfg(feature = "xlsx")]
+registry.register(Arc::new(dotall_xlsx::XlsxFormat));
+#[cfg(feature = "pptx")]
+registry.register(Arc::new(dotall_pptx::PptxFormat));
+#[cfg(feature = "docx")]
+registry.register(Arc::new(dotall_docx::DocxFormat));
+```
+
+`PptxFormat` is the template for `DocxFormat` (`parse` → JSON envelope, `inspect`/`read`/`validate_edit`/`apply_edit`, `encode_package(..., "docx", "docx.snapshot-manifest", None)`).
+
+**Branch:** `feat/docx-engine-v0` (stacked on `feat/pptx-engine-v0`).
 
 ## Global Constraints
 
