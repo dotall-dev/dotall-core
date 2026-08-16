@@ -123,6 +123,7 @@ dotall-core/
 │   │       ├── history/
 │   │       └── orchestrate/
 │   ├── dotall-xlsx/
+│   ├── dotall-ooxml/
 │   ├── dotall-cli/
 │   └── dotall-mcp/
 └── fixtures/
