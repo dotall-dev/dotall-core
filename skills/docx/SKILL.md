@@ -95,4 +95,22 @@ part order. Prefer `part` + `index` for clarity.
 
 Rejected: tracked changes (`w:ins`/`w:del`), content controls (`w:sdt`), fields.
 
-Keeps `w:pPr` and clones the first run’s `w:rPr` when present.
+**Multi-run fidelity:** keeps `w:pPr` untouched. Plain `text` clones the **first
+text-run’s** `w:rPr` (not paragraph-mark rPr inside `w:pPr`) and clears subsequent
+runs. Optional `runs` preserves per-run formatting:
+
+```json
+{
+  "kind": "set_paragraph_text",
+  "payload": {
+    "index": 1,
+    "runs": [
+      { "text": "Pilot complete; " },
+      { "text": "expanding to PPTX and PDF." }
+    ]
+  }
+}
+```
+
+When both `text` and `runs` are provided, `text` must equal the concatenation of
+run texts. Header/footer ops accept the same `runs` shape.

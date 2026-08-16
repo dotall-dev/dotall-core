@@ -286,14 +286,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
             operation: "set_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:
-                "Replace the text of one body or table-cell paragraph (document-order index)."
+                "Replace paragraph text (body or table cell). Plain `text` keeps first-run rPr; optional `runs` clones per-run rPr."
                     .into(),
             example: json!({
                 "kind": "set_paragraph_text",
-                "payload": { "index": 1, "text": "Gamma" }
+                "payload": {
+                    "index": 1,
+                    "runs": [
+                        { "text": "Pilot complete; " },
+                        { "text": "expanding to PPTX and PDF." }
+                    ]
+                }
             }),
             safety:
-                "Rejects tracked changes, content controls, and fields. Patches only word/document.xml."
+                "Rejects tracked changes, content controls, and fields. Patches only word/document.xml. Does not steal paragraph-mark rPr from w:pPr."
                     .into(),
         },
         EditCapability {

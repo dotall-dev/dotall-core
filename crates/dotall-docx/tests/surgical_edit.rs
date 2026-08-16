@@ -88,6 +88,133 @@ fn set_paragraph_text_edits_table_cell_and_leaves_header_media_identical() {
 }
 
 #[test]
+fn set_paragraph_text_preserves_first_run_rpr_not_paragraph_mark() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("multi.docx");
+    let before = fixture::multi_run_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(model.payload["paragraphs"][0]["text"], "BoldItalic");
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_text".into(),
+                payload: serde_json::json!({ "index": 0, "text": "Hello" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document = document_xml(&patched.bytes);
+
+    assert!(document.contains("<w:t xml:space=\"preserve\">Hello</w:t>"));
+    assert!(
+        document.contains("<w:r><w:rPr><w:b/></w:rPr>"),
+        "must clone first text-run rPr (bold), not paragraph-mark rPr: {document}"
+    );
+    assert!(
+        !document.contains("<w:i/>"),
+        "subsequent runs must be cleared: {document}"
+    );
+    assert!(
+        document.contains("<w:pPr><w:rPr><w:sz w:val=\"24\"/></w:rPr></w:pPr>"),
+        "paragraph mark rPr must stay in pPr: {document}"
+    );
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.paragraphs[0].text, "Hello");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_text_runs_clones_rpr_per_run() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("multi.docx");
+    let before = fixture::multi_run_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_text".into(),
+                payload: serde_json::json!({
+                    "index": 0,
+                    "runs": [
+                        { "text": "NewBold" },
+                        { "text": "NewItalic" }
+                    ]
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document = document_xml(&patched.bytes);
+
+    assert!(
+        document
+            .contains("<w:r><w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">NewBold</w:t></w:r>")
+    );
+    assert!(
+        document.contains(
+            "<w:r><w:rPr><w:i/></w:rPr><w:t xml:space=\"preserve\">NewItalic</w:t></w:r>"
+        )
+    );
+    assert!(document.contains("<w:pPr><w:rPr><w:sz w:val=\"24\"/></w:rPr></w:pPr>"));
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.paragraphs[0].text, "NewBoldNewItalic");
+    assert_eq!(
+        edit.semantic_diff[0].after.as_deref(),
+        Some("NewBoldNewItalic")
+    );
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn demo_memo_multi_run_edit_preserves_bold_and_italic_rpr() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::demo_memo_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_text".into(),
+                payload: serde_json::json!({
+                    "index": 1,
+                    "runs": [
+                        { "text": "Pilot complete; " },
+                        { "text": "expanding to PPTX and PDF." }
+                    ]
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document = document_xml(&patched.bytes);
+    assert!(
+        document.contains(
+            "<w:r><w:rPr><w:b/></w:rPr><w:t xml:space=\"preserve\">Pilot complete; </w:t></w:r>"
+        ),
+        "bold run lost: {document}"
+    );
+    assert!(
+        document.contains(
+            "<w:r><w:rPr><w:i/></w:rPr><w:t xml:space=\"preserve\">expanding to PPTX and PDF.</w:t></w:r>"
+        ),
+        "italic run lost: {document}"
+    );
+}
+
+#[test]
 fn set_header_paragraph_text_patches_only_header_part() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("table.docx");
@@ -163,6 +290,12 @@ fn after_footer_count(model: &dotall_core::registry::ArtifactEnvelope) -> usize 
         .as_array()
         .expect("footers")
         .len()
+}
+
+fn document_xml(package: &[u8]) -> String {
+    let entries = zip_entries(package);
+    let bytes = entries.get("word/document.xml").expect("document.xml");
+    String::from_utf8(bytes.clone()).expect("utf-8 document")
 }
 
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {

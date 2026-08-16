@@ -25,6 +25,11 @@ pub fn header_footer_docx() -> Vec<u8> {
     package(DOCUMENT_WITH_TABLE, false, Some(HEADER), Some(FOOTER))
 }
 
+/// Paragraph with two styled runs (bold then italic) for multi-run edit fidelity.
+pub fn multi_run_docx() -> Vec<u8> {
+    package(DOCUMENT_MULTI_RUN, false, None, None)
+}
+
 /// Multi-paragraph memo with heading + status table + confidential header. No media blob.
 pub fn demo_memo_docx() -> Vec<u8> {
     package(DEMO_MEMO, false, Some(DEMO_HEADER), None)
@@ -113,5 +118,9 @@ const DOCUMENT_WITH_INS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standa
 /// Intro body paragraph, then a 1×2 table (CellA | CellB) — three paragraphs in document order.
 const DOCUMENT_WITH_TABLE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Intro</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>CellA</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>CellB</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
 
-/// Heading + two body paragraphs + 1×2 status table (indices 0..4 in document order).
-const DEMO_MEMO: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Internal Memo: Agent Pilot</w:t></w:r></w:p><w:p><w:r><w:t>We ran a two-week pilot using Dotall for spreadsheet and document edits.</w:t></w:r></w:p><w:p><w:r><w:t>Please update the status table below before Friday standup.</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Owner</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Platform</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>In progress</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+/// Paragraph-mark rPr (should not steal run formatting) + bold run + italic run.
+const DOCUMENT_MULTI_RUN: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:rPr><w:sz w:val="24"/></w:rPr></w:pPr><w:r><w:rPr><w:b/></w:rPr><w:t>Bold</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t>Italic</w:t></w:r></w:p></w:body></w:document>"#;
+
+/// Heading + multi-run body + body + 1×2 status table (indices 0..4 in document order).
+/// Paragraph 1 has bold + italic runs for Wave 3 multi-run edit fidelity.
+const DEMO_MEMO: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Internal Memo: Agent Pilot</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>We ran a two-week pilot</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t> using Dotall for spreadsheet and document edits.</w:t></w:r></w:p><w:p><w:r><w:t>Please update the status table below before Friday standup.</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Owner</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Platform</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>In progress</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;

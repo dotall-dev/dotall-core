@@ -40,11 +40,23 @@ fn validate_set_paragraph_text(
     operation: &SemanticOperation,
 ) -> Result<ValidatedEdit> {
     let paragraph = resolve_body_paragraph(model, &operation.payload)?;
-    let text = required_str(&operation.payload, "text")?;
+    let text_payload = resolve_text_payload(&operation.payload)?;
     if !paragraph.editable {
         return Err(format_error(
             "paragraph contains tracked changes, a content control, or a field",
         ));
+    }
+    let mut payload = serde_json::json!({
+        "index": paragraph.index,
+        "text": text_payload.text,
+        "element_id": paragraph.element_id,
+    });
+    if let Some(runs) = &text_payload.runs {
+        payload["runs"] = serde_json::Value::Array(
+            runs.iter()
+                .map(|run| serde_json::json!({ "text": run }))
+                .collect(),
+        );
     }
     Ok(ValidatedEdit {
         format_id: FORMAT_ID.into(),
@@ -52,18 +64,14 @@ fn validate_set_paragraph_text(
         schema_version: SCHEMA_VERSION,
         operations: vec![SemanticOperation {
             kind: "set_paragraph_text".into(),
-            payload: serde_json::json!({
-                "index": paragraph.index,
-                "text": text,
-                "element_id": paragraph.element_id,
-            }),
+            payload,
         }],
         semantic_diff: vec![SemanticChange {
             target: format!("paragraph:{}", paragraph.index),
             element_id: paragraph.element_id.clone(),
             change: "set_paragraph_text".into(),
             before: Some(paragraph.text.clone()),
-            after: Some(text.to_owned()),
+            after: Some(text_payload.text),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -78,32 +86,40 @@ fn validate_set_header_footer_text(
     kind: StoryKind,
 ) -> Result<ValidatedEdit> {
     let paragraph = resolve_header_footer_paragraph(model, &operation.payload, kind)?;
-    let text = required_str(&operation.payload, "text")?;
+    let text_payload = resolve_text_payload(&operation.payload)?;
     if !paragraph.editable {
         return Err(format_error(
             "paragraph contains tracked changes, a content control, or a field",
         ));
     }
     let op_kind = kind.edit_kind();
+    let mut payload = serde_json::json!({
+        "part": paragraph.part,
+        "index": paragraph.index,
+        "text": text_payload.text,
+        "element_id": paragraph.element_id,
+    });
+    if let Some(runs) = &text_payload.runs {
+        payload["runs"] = serde_json::Value::Array(
+            runs.iter()
+                .map(|run| serde_json::json!({ "text": run }))
+                .collect(),
+        );
+    }
     Ok(ValidatedEdit {
         format_id: FORMAT_ID.into(),
         schema_id: SCHEMA_ID.into(),
         schema_version: SCHEMA_VERSION,
         operations: vec![SemanticOperation {
             kind: op_kind.into(),
-            payload: serde_json::json!({
-                "part": paragraph.part,
-                "index": paragraph.index,
-                "text": text,
-                "element_id": paragraph.element_id,
-            }),
+            payload,
         }],
         semantic_diff: vec![SemanticChange {
             target: format!("{}:{}:{}", kind.prefix(), paragraph.part, paragraph.index),
             element_id: paragraph.element_id.clone(),
             change: op_kind.into(),
             before: Some(paragraph.text.clone()),
-            after: Some(text.to_owned()),
+            after: Some(text_payload.text),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -132,9 +148,14 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 .get("index")
                 .and_then(serde_json::Value::as_u64)
                 .ok_or_else(|| format_error("`index` is required"))? as u32;
-            let text = required_str(&operation.payload, "text")?;
+            let text_payload = resolve_text_payload(&operation.payload)?;
             let original = entry_bytes(package, "word/document.xml")?;
-            let patched_xml = patch_paragraph_text(&original, index, text)?;
+            let patched_xml = patch_paragraph_text(
+                &original,
+                index,
+                &text_payload.text,
+                text_payload.runs.as_deref(),
+            )?;
             let bytes = rebuild_package(
                 package,
                 &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
@@ -151,10 +172,15 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 .get("index")
                 .and_then(serde_json::Value::as_u64)
                 .ok_or_else(|| format_error("`index` is required"))? as u32;
-            let text = required_str(&operation.payload, "text")?;
+            let text_payload = resolve_text_payload(&operation.payload)?;
             let entry_name = format!("word/{part}.xml");
             let original = entry_bytes(package, &entry_name)?;
-            let patched_xml = patch_paragraph_text(&original, index, text)?;
+            let patched_xml = patch_paragraph_text(
+                &original,
+                index,
+                &text_payload.text,
+                text_payload.runs.as_deref(),
+            )?;
             let bytes = rebuild_package(package, &BTreeMap::from([(entry_name, patched_xml)]))?;
             Ok(PatchedOutput {
                 after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
@@ -167,7 +193,12 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
     }
 }
 
-pub fn patch_paragraph_text(xml: &[u8], index: u32, text: &str) -> Result<Vec<u8>> {
+pub fn patch_paragraph_text(
+    xml: &[u8],
+    index: u32,
+    text: &str,
+    runs: Option<&[String]>,
+) -> Result<Vec<u8>> {
     let source = std::str::from_utf8(xml)
         .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
     let spans = paragraph_spans(source)?;
@@ -188,19 +219,37 @@ pub fn patch_paragraph_text(xml: &[u8], index: u32, text: &str) -> Result<Vec<u8
         .map(|offset| offset + 1)
         .ok_or_else(|| format_error("unterminated w:p"))?;
     let p_pr = extract_p_pr(&paragraph[open_end..]);
-    let r_pr = extract_first_r_pr(paragraph);
+    let run_props = extract_run_r_prs(paragraph);
+    let run_texts: Vec<&str> = match runs {
+        Some(runs) if !runs.is_empty() => runs.iter().map(String::as_str).collect(),
+        _ => vec![text],
+    };
     let mut replacement = String::new();
     replacement.push_str(&paragraph[..open_end]);
     if let Some(p_pr) = p_pr {
         replacement.push_str(p_pr);
     }
-    replacement.push_str("<w:r>");
-    if let Some(r_pr) = r_pr {
-        replacement.push_str(r_pr);
+    for (run_index, run_text) in run_texts.iter().enumerate() {
+        replacement.push_str("<w:r>");
+        let r_pr = if runs.is_some() {
+            // Explicit runs: clone matching run rPr when present; extras reuse first-run rPr.
+            run_props
+                .get(run_index)
+                .copied()
+                .flatten()
+                .or_else(|| run_props.first().copied().flatten())
+        } else {
+            // Plain text: preserve first text-run rPr and clear subsequent runs.
+            run_props.first().copied().flatten()
+        };
+        if let Some(r_pr) = r_pr {
+            replacement.push_str(r_pr);
+        }
+        replacement.push_str("<w:t xml:space=\"preserve\">");
+        replacement.push_str(&xml_escape(run_text));
+        replacement.push_str("</w:t></w:r>");
     }
-    replacement.push_str("<w:t xml:space=\"preserve\">");
-    replacement.push_str(&xml_escape(text));
-    replacement.push_str("</w:t></w:r></w:p>");
+    replacement.push_str("</w:p>");
     let mut output = String::new();
     output.push_str(&source[..span.0]);
     output.push_str(&replacement);
@@ -360,16 +409,111 @@ fn extract_p_pr(inner: &str) -> Option<&str> {
         .map(|rel| &inner[start..start + rel + "</w:pPr>".len()])
 }
 
-fn extract_first_r_pr(paragraph: &str) -> Option<&str> {
-    let start = paragraph.find("<w:rPr")?;
-    if let Some(rel) = paragraph[start..].find("/>")
-        && !paragraph[start..start + rel].contains('>')
-    {
-        return Some(&paragraph[start..start + rel + 2]);
+/// Collect `w:rPr` from each direct `w:r` child (skips paragraph-mark rPr inside `w:pPr`).
+fn extract_run_r_prs(paragraph: &str) -> Vec<Option<&str>> {
+    let mut props = Vec::new();
+    let mut cursor = 0;
+    while cursor < paragraph.len() {
+        let rest = &paragraph[cursor..];
+        let Some(rel) = find_run_open(rest) else {
+            break;
+        };
+        let start = cursor + rel;
+        let Ok(end) = element_end(paragraph, start, "w:r") else {
+            break;
+        };
+        let run = &paragraph[start..end];
+        props.push(extract_r_pr_in_run(run));
+        cursor = end;
     }
-    paragraph[start..]
+    props
+}
+
+fn find_run_open(xml: &str) -> Option<usize> {
+    let mut search = 0;
+    while let Some(rel) = xml[search..].find("<w:r") {
+        let at = search + rel;
+        let after = xml.as_bytes().get(at + 4).copied().unwrap_or(0);
+        // Match <w:r …> / <w:r/> but not <w:rPr …> or <w:rFonts …>.
+        if after == b' ' || after == b'>' || after == b'/' {
+            return Some(at);
+        }
+        search = at + 4;
+    }
+    None
+}
+
+fn element_end(xml: &str, start: usize, local: &str) -> Result<usize> {
+    let open = format!("<{local}");
+    let close = format!("</{local}>");
+    let rest = &xml[start..];
+    if !rest.starts_with(&open) {
+        return Err(format_error(format!("expected `{local}` open tag")));
+    }
+    let gt = rest
+        .find('>')
+        .ok_or_else(|| format_error(format!("unterminated `{local}`")))?;
+    if rest.as_bytes().get(gt.saturating_sub(1)) == Some(&b'/') {
+        return Ok(start + gt + 1);
+    }
+    rest.find(&close)
+        .map(|rel| start + rel + close.len())
+        .ok_or_else(|| format_error(format!("unterminated `{local}`")))
+}
+
+fn extract_r_pr_in_run(run: &str) -> Option<&str> {
+    let open_end = run.find('>')? + 1;
+    let inner = &run[open_end..];
+    let start = inner.find("<w:rPr")?;
+    let abs = open_end + start;
+    if let Some(rel) = run[abs..].find("/>")
+        && !run[abs..abs + rel].contains('>')
+    {
+        return Some(&run[abs..abs + rel + 2]);
+    }
+    run[abs..]
         .find("</w:rPr>")
-        .map(|rel| &paragraph[start..start + rel + "</w:rPr>".len()])
+        .map(|rel| &run[abs..abs + rel + "</w:rPr>".len()])
+}
+
+struct TextPayload {
+    text: String,
+    runs: Option<Vec<String>>,
+}
+
+fn resolve_text_payload(payload: &serde_json::Value) -> Result<TextPayload> {
+    let runs = match payload.get("runs") {
+        Some(serde_json::Value::Array(items)) => {
+            if items.is_empty() {
+                return Err(format_error("`runs` must be a non-empty array"));
+            }
+            let mut texts = Vec::with_capacity(items.len());
+            for item in items {
+                let text = item
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format_error("each run requires `text`"))?;
+                texts.push(text.to_owned());
+            }
+            Some(texts)
+        }
+        Some(_) => return Err(format_error("`runs` must be an array of `{text}` objects")),
+        None => None,
+    };
+    let text = if let Some(runs) = &runs {
+        let joined = runs.concat();
+        if let Some(explicit) = payload.get("text").and_then(serde_json::Value::as_str)
+            && explicit != joined
+        {
+            return Err(format_error(
+                "`text` must equal the concatenation of `runs` when both are provided",
+            ));
+        }
+        joined
+    } else {
+        required_str(payload, "text")?.to_owned()
+    };
+    Ok(TextPayload { text, runs })
 }
 
 fn xml_escape(text: &str) -> String {

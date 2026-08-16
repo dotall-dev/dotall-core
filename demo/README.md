@@ -10,7 +10,7 @@ cargo run -p dotall-cli --example generate_demos
 |------|--------|----------------|
 | [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header, percent/currency formats |
 | [`deck.pptx`](deck.pptx) | PPTX | Title + body + metrics table; second slide next-steps |
-| [`memo.docx`](memo.docx) | DOCX | Heading memo + status table + confidential header |
+| [`memo.docx`](memo.docx) | DOCX | Heading memo + multi-run body + status table + confidential header |
 | [`form.pdf`](form.pdf) | PDF | Intake form: Name, Email, Agree checkbox, Department choice; `/Info` metadata |
 
 Skills: [`xlsx`](../skills/xlsx/SKILL.md) · [`pptx`](../skills/pptx/SKILL.md) · [`docx`](../skills/docx/SKILL.md) · [`pdf`](../skills/pdf/SKILL.md)
@@ -113,6 +113,8 @@ Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; 
 Body document-order indices: `0` heading, `1`–`2` body, `3`–`6` table cells
 (`Owner`/`Status` header row, then `Platform` / `In progress`).
 
+Paragraph `1` is multi-run (bold + italic) for Wave 3 fidelity smoke.
+
 Header part `header1` index `0`: `CONFIDENTIAL - Agent Pilot Memo` (separate from body).
 
 ```bash
@@ -122,9 +124,14 @@ $DOTALL inspect demo/memo.docx
 $DOTALL read demo/memo.docx --selector-kind paragraphs --selector '0:7'
 $DOTALL read demo/memo.docx --selector-kind headers --selector '0:1'
 
-# Prior v0 (body paragraph)
+# Wave 3 (multi-run: preserve bold + italic rPr per run) — run on fresh memo
 $DOTALL edit demo/memo.docx --ops-json \
-  '[{"kind":"set_paragraph_text","payload":{"index":1,"text":"Pilot complete; expanding to PPTX and PDF."}}]'
+  '[{"kind":"set_paragraph_text","payload":{"index":1,"runs":[{"text":"Pilot complete; "},{"text":"expanding to PPTX and PDF."}]}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Prior v0 (plain text — keeps first-run rPr, clears subsequent runs)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_text","payload":{"index":2,"text":"Please update the status table below before Friday standup."}}]'
 $DOTALL apply demo/memo.docx --all
 
 # Wave 1 (table cell)
