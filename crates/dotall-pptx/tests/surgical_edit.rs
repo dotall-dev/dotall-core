@@ -122,15 +122,118 @@ fn set_table_cell_text_rejects_out_of_range() {
     );
 }
 
+#[test]
+fn add_slide_after_slide_increases_count_and_preserves_prior_slide_bytes() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_with_table();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "add_slide".into(),
+                payload: serde_json::json!({ "after": "Slide 1" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.slides.len(), 3);
+    assert_eq!(after.slides[0].shapes[0].text, "Hello");
+    assert_eq!(after.slides[0].tables[0].cells[0].text, "A1");
+    assert_eq!(after.slides[2].shapes[0].text, "Other");
+    assert!(
+        zip_entries(&patched.bytes).contains_key("ppt/slides/slide3.xml"),
+        "new slide part should exist"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "add_slide");
+    assert_untouched_entries_identical(
+        &before,
+        &patched.bytes,
+        &[
+            "ppt/presentation.xml",
+            "ppt/_rels/presentation.xml.rels",
+            "[Content_Types].xml",
+        ],
+    );
+}
+
+#[test]
+fn delete_slide_removes_last_non_only_slide() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_with_table();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "delete_slide".into(),
+                payload: serde_json::json!({ "slide": "Slide 2" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.slides.len(), 1);
+    assert_eq!(after.slides[0].shapes[0].text, "Hello");
+    assert!(!zip_entries(&patched.bytes).contains_key("ppt/slides/slide2.xml"));
+    assert_eq!(edit.semantic_diff[0].change, "delete_slide");
+    assert_untouched_entries_identical(
+        &before,
+        &patched.bytes,
+        &[
+            "ppt/presentation.xml",
+            "ppt/_rels/presentation.xml.rels",
+            "[Content_Types].xml",
+            "ppt/slides/slide2.xml",
+        ],
+    );
+}
+
+#[test]
+fn delete_slide_rejects_sole_slide() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "delete_slide".into(),
+                payload: serde_json::json!({ "slide": "Slide 1" }),
+            }],
+        )
+        .expect_err("sole slide");
+    let message = error.to_string();
+    assert!(
+        message.contains("sole") || message.contains("last") || message.contains("only"),
+        "unexpected error: {message}"
+    );
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);
-    assert_eq!(before_entries.len(), after_entries.len());
     for (name, before_bytes) in &before_entries {
         if patched.contains(&name.as_str()) {
             continue;
         }
-        let after_bytes = after_entries.get(name).expect("entry retained");
+        let after_bytes = after_entries
+            .get(name)
+            .unwrap_or_else(|| panic!("entry retained: {name}"));
         assert_eq!(before_bytes, after_bytes, "bytes changed for {name}");
     }
 }

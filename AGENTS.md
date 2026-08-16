@@ -50,7 +50,7 @@ dotall/
 │   ├── dotall-ooxml/        # shared ZIP part snapshots + package probes (not a format)
 │   ├── dotall-xlsx/         # typed model, processors, views, edits, OOXML writer
 │   ├── dotall-pptx/         # presentation model, slide reads, surgical shape text
-│   ├── dotall-docx/         # document model, paragraph reads, surgical paragraph text
+│   ├── dotall-docx/         # document model, body/table/header/footer reads, surgical paragraph text
 │   ├── dotall-pdf/          # pages, AcroForm fields, form fill (no body edit)
 │   ├── dotall-cli/          # bin: `dotall`
 │   └── dotall-mcp/          # bin: stdio MCP server (`dotall-mcp`)

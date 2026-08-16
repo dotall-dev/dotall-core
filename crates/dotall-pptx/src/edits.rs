@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use dotall_core::{
@@ -13,6 +13,15 @@ use crate::FORMAT_ID;
 use crate::model::{PresentationModel, SCHEMA_ID, SCHEMA_VERSION, TableCellModel, TableModel};
 use crate::selector;
 
+/// Blank slide template duplicated into new `ppt/slides/slideN.xml` parts.
+const BLANK_SLIDE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#;
+
+struct PackagePatch {
+    replacements: BTreeMap<String, Vec<u8>>,
+    additions: BTreeMap<String, Vec<u8>>,
+    removals: BTreeSet<String>,
+}
+
 pub fn validate(
     model: &PresentationModel,
     operations: &[SemanticOperation],
@@ -26,8 +35,10 @@ pub fn validate(
     match operation.kind.as_str() {
         "set_shape_text" => validate_set_shape_text(model, operation),
         "set_table_cell_text" => validate_set_table_cell_text(model, operation),
+        "add_slide" => validate_add_slide(model, operation),
+        "delete_slide" => validate_delete_slide(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text or set_table_cell_text"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, add_slide, or delete_slide"
         ))),
     }
 }
@@ -123,6 +134,89 @@ fn validate_set_table_cell_text(
     })
 }
 
+fn validate_add_slide(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let after = optional_str(&operation.payload, "after")?;
+    let insertion_index = match after {
+        Some(after_ref) => {
+            let slide = selector::resolve_slide(model, after_ref)
+                .ok_or_else(|| format_error(format!("slide `{after_ref}` was not found")))?;
+            (slide.index as usize) + 1
+        }
+        None => model.slides.len(),
+    };
+    let after_name = after
+        .map(|value| {
+            selector::resolve_slide(model, value)
+                .map(|slide| slide.name.clone())
+                .ok_or_else(|| format_error(format!("slide `{value}` was not found")))
+        })
+        .transpose()?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "add_slide".into(),
+            payload: serde_json::json!({
+                "after": after_name,
+                "insertion_index": insertion_index,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("Slide {}", insertion_index + 1),
+            element_id: String::new(),
+            change: "add_slide".into(),
+            before: None,
+            after: Some("blank".into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_delete_slide(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    if model.slides.len() <= 1 {
+        return Err(format_error(
+            "cannot delete the sole slide in a presentation",
+        ));
+    }
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "delete_slide".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "part_name": slide.part_name,
+                "index": slide.index,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: slide.name.clone(),
+            element_id: slide.element_id.clone(),
+            change: "delete_slide".into(),
+            before: Some(slide.name.clone()),
+            after: None,
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn resolve_table<'a>(
     slide: &'a crate::model::SlideModel,
     table_ref: &str,
@@ -145,19 +239,44 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
         .operations
         .first()
         .ok_or_else(|| format_error("validated edit is missing operations"))?;
-    let part_name = required_str(&operation.payload, "part_name")?;
-    let text = required_str(&operation.payload, "text")?;
-    let original = entry_bytes(package, part_name)?;
-    let patched_xml = match operation.kind.as_str() {
+    let patch = match operation.kind.as_str() {
         "set_shape_text" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
             let shape = required_str(&operation.payload, "shape")?;
-            patch_shape_text(&original, shape, text)?
+            let text = required_str(&operation.payload, "text")?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_shape_text(&original, shape, text)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
         }
         "set_table_cell_text" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
             let table = required_str(&operation.payload, "table")?;
             let row = required_u32(&operation.payload, "row")?;
             let col = required_u32(&operation.payload, "col")?;
-            patch_table_cell_text(&original, table, row, col, text)?
+            let text = required_str(&operation.payload, "text")?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_table_cell_text(&original, table, row, col, text)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
+        "add_slide" => {
+            let insertion_index = required_usize(&operation.payload, "insertion_index")?;
+            add_slide_patch(package, insertion_index)?
+        }
+        "delete_slide" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            delete_slide_patch(package, part_name)?
         }
         other => {
             return Err(format_error(format!(
@@ -167,11 +286,143 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
     };
     let bytes = rebuild_package(
         package,
-        &BTreeMap::from([(part_name.to_owned(), patched_xml)]),
+        &patch.replacements,
+        &patch.removals,
+        &patch.additions,
     )?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes,
+    })
+}
+
+fn add_slide_patch(package: &[u8], insertion_index: usize) -> Result<PackagePatch> {
+    let presentation = entry_bytes(package, "ppt/presentation.xml")?;
+    let relationships = entry_bytes(package, "ppt/_rels/presentation.xml.rels")?;
+    let content_types = entry_bytes(package, "[Content_Types].xml")?;
+    let slide_ids = sld_id_numbers(&presentation)?;
+    let relationship_ids = relationship_id_numbers(&relationships)?;
+    let part_numbers = slide_part_numbers(package)?;
+    let sld_id = slide_ids
+        .iter()
+        .copied()
+        .max()
+        .unwrap_or(255)
+        .saturating_add(1);
+    let relationship_id = format!("rId{}", lowest_unused_number(&relationship_ids));
+    let part_number = lowest_unused_number(&part_numbers);
+    let part_name = format!("ppt/slides/slide{part_number}.xml");
+    let target = format!("slides/slide{part_number}.xml");
+    let sld_count = count_sld_ids(&presentation)?;
+    if insertion_index > sld_count {
+        return Err(format_error(format!(
+            "insertion_index {insertion_index} is out of range for {sld_count} slides"
+        )));
+    }
+
+    let mut replacements = BTreeMap::new();
+    replacements.insert(
+        "ppt/presentation.xml".into(),
+        insert_sld_id(
+            &presentation,
+            insertion_index,
+            &format!(r#"<p:sldId id="{sld_id}" r:id="{relationship_id}"/>"#),
+        )?,
+    );
+    replacements.insert(
+        "ppt/_rels/presentation.xml.rels".into(),
+        insert_before_close(
+            &relationships,
+            "Relationships",
+            &format!(
+                r#"<Relationship Id="{relationship_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="{target}"/>"#
+            ),
+        )?,
+    );
+    replacements.insert(
+        "[Content_Types].xml".into(),
+        insert_before_close(
+            &content_types,
+            "Types",
+            &format!(
+                r#"<Override PartName="/{part_name}" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>"#
+            ),
+        )?,
+    );
+
+    Ok(PackagePatch {
+        replacements,
+        additions: BTreeMap::from([(part_name, BLANK_SLIDE.to_vec())]),
+        removals: BTreeSet::new(),
+    })
+}
+
+fn delete_slide_patch(package: &[u8], part_name: &str) -> Result<PackagePatch> {
+    let presentation = entry_bytes(package, "ppt/presentation.xml")?;
+    let relationships = entry_bytes(package, "ppt/_rels/presentation.xml.rels")?;
+    let content_types = entry_bytes(package, "[Content_Types].xml")?;
+    let targets = relationship_targets(&relationships)?;
+    let rid = targets
+        .iter()
+        .find(|(_, target)| resolve_ppt_target(target) == part_name)
+        .map(|(id, _)| id.clone())
+        .ok_or_else(|| {
+            format_error(format!(
+                "presentation relationship for `{part_name}` is missing"
+            ))
+        })?;
+    if count_sld_ids(&presentation)? <= 1 {
+        return Err(format_error(
+            "cannot delete the sole slide in a presentation",
+        ));
+    }
+
+    let mut removals = BTreeSet::from([part_name.to_owned()]);
+    let slide_rels = slide_relationship_part(part_name);
+    if has_entry(package, &slide_rels)? {
+        let slide_rels_xml = entry_bytes(package, &slide_rels)?;
+        for notes in notes_parts_from_slide_rels(&slide_rels_xml) {
+            let notes_rels = relationship_part_name(&notes);
+            if has_entry(package, &notes_rels)? {
+                removals.insert(notes_rels);
+            }
+            removals.insert(notes);
+        }
+        removals.insert(slide_rels);
+    }
+    // Heuristic notes path used by our parser when no slide rels exist.
+    if let Some(number) = part_name
+        .strip_prefix("ppt/slides/slide")
+        .and_then(|name| name.strip_suffix(".xml"))
+    {
+        let notes = format!("ppt/notesSlides/notesSlide{number}.xml");
+        if has_entry(package, &notes)? {
+            removals.insert(notes.clone());
+            let notes_rels = relationship_part_name(&notes);
+            if has_entry(package, &notes_rels)? {
+                removals.insert(notes_rels);
+            }
+        }
+    }
+
+    let mut replacements = BTreeMap::new();
+    replacements.insert(
+        "ppt/presentation.xml".into(),
+        remove_sld_id_for_rid(&presentation, &rid)?,
+    );
+    replacements.insert(
+        "ppt/_rels/presentation.xml.rels".into(),
+        remove_relationship(&relationships, &rid)?,
+    );
+    replacements.insert(
+        "[Content_Types].xml".into(),
+        remove_content_type_overrides(&content_types, &removals)?,
+    );
+
+    Ok(PackagePatch {
+        replacements,
+        additions: BTreeMap::new(),
+        removals,
     })
 }
 
@@ -392,7 +643,12 @@ fn entry_bytes(package: &[u8], name: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn rebuild_package(original: &[u8], replacements: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>> {
+fn rebuild_package(
+    original: &[u8],
+    replacements: &BTreeMap<String, Vec<u8>>,
+    removals: &BTreeSet<String>,
+    additions: &BTreeMap<String, Vec<u8>>,
+) -> Result<Vec<u8>> {
     let mut archive = ZipArchive::new(Cursor::new(original))
         .map_err(|error| format_error(format!("invalid PPTX package: {error}")))?;
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
@@ -401,6 +657,9 @@ fn rebuild_package(original: &[u8], replacements: &BTreeMap<String, Vec<u8>>) ->
             .by_index(index)
             .map_err(|error| format_error(format!("cannot read ZIP entry: {error}")))?;
         let name = entry.name().to_owned();
+        if removals.contains(&name) {
+            continue;
+        }
         if let Some(replacement) = replacements.get(&name) {
             let options = SimpleFileOptions::default()
                 .compression_method(entry.compression())
@@ -417,10 +676,281 @@ fn rebuild_package(original: &[u8], replacements: &BTreeMap<String, Vec<u8>>) ->
                 .map_err(|error| format_error(format!("cannot copy ZIP entry: {error}")))?;
         }
     }
+    for (name, bytes) in additions {
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .map_err(|error| format_error(format!("cannot start added ZIP entry: {error}")))?;
+        writer
+            .write_all(bytes)
+            .map_err(|error| format_error(format!("cannot write added ZIP entry: {error}")))?;
+    }
     writer
         .finish()
         .map_err(|error| format_error(format!("cannot finish PPTX package: {error}")))
         .map(|cursor| cursor.into_inner())
+}
+
+fn insert_sld_id(xml: &[u8], insertion_index: usize, tag: &str) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("presentation XML is not UTF-8: {error}")))?;
+    let spans = sld_id_spans(text)?;
+    if insertion_index > spans.len() {
+        return Err(format_error("cannot insert slide past end of sldIdLst"));
+    }
+    let position = if insertion_index == 0 {
+        let list_open = text
+            .find("<p:sldIdLst>")
+            .or_else(|| text.find("<p:sldIdLst "))
+            .ok_or_else(|| format_error("presentation is missing p:sldIdLst"))?;
+        text[list_open..]
+            .find('>')
+            .map(|offset| list_open + offset + 1)
+            .ok_or_else(|| format_error("unterminated p:sldIdLst"))?
+    } else {
+        spans[insertion_index - 1].1
+    };
+    Ok(format!("{}{}{}", &text[..position], tag, &text[position..]).into_bytes())
+}
+
+fn remove_sld_id_for_rid(xml: &[u8], rid: &str) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("presentation XML is not UTF-8: {error}")))?;
+    let needle = format!(r#"r:id="{rid}""#);
+    let rid_at = text
+        .find(&needle)
+        .ok_or_else(|| format_error(format!("sldId for `{rid}` was not found")))?;
+    let start = text[..rid_at]
+        .rfind("<p:sldId")
+        .ok_or_else(|| format_error("malformed sldId element"))?;
+    let end = if let Some(rel) = text[rid_at..].find("/>") {
+        rid_at + rel + 2
+    } else if let Some(rel) = text[rid_at..].find("</p:sldId>") {
+        rid_at + rel + "</p:sldId>".len()
+    } else {
+        return Err(format_error("unterminated sldId element"));
+    };
+    Ok(format!("{}{}", &text[..start], &text[end..]).into_bytes())
+}
+
+fn insert_before_close(xml: &[u8], element: &str, insertion: &str) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("XML is not UTF-8: {error}")))?;
+    let closing = format!("</{element}>");
+    let position = text
+        .rfind(&closing)
+        .ok_or_else(|| format_error(format!("XML is missing closing `{element}`")))?;
+    Ok(format!("{}{}{}", &text[..position], insertion, &text[position..]).into_bytes())
+}
+
+fn remove_relationship(xml: &[u8], id: &str) -> Result<Vec<u8>> {
+    remove_matching_tag(xml, "Relationship", |tag| {
+        tag_attribute(tag, "Id").as_deref() == Some(id)
+    })
+}
+
+fn remove_content_type_overrides(xml: &[u8], parts: &BTreeSet<String>) -> Result<Vec<u8>> {
+    remove_matching_tag(xml, "Override", |tag| {
+        tag_attribute(tag, "PartName")
+            .is_some_and(|part| parts.contains(part.trim_start_matches('/')))
+    })
+}
+
+fn remove_matching_tag(
+    xml: &[u8],
+    tag_name: &str,
+    matches: impl Fn(&str) -> bool,
+) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("XML is not UTF-8: {error}")))?;
+    let needle = format!("<{tag_name}");
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find(&needle) {
+        let start = cursor + offset;
+        let after_name = &text[start + needle.len()..];
+        if after_name.starts_with(|character: char| character.is_ascii_alphabetic()) {
+            output.push_str(&text[cursor..start + needle.len()]);
+            cursor = start + needle.len();
+            continue;
+        }
+        let end = text[start..]
+            .find('>')
+            .map(|rel| start + rel + 1)
+            .ok_or_else(|| format_error(format!("unterminated `{tag_name}`")))?;
+        let tag = &text[start..end];
+        let self_closing = tag.ends_with("/>");
+        let span_end = if self_closing {
+            end
+        } else {
+            let close = format!("</{tag_name}>");
+            text[end..]
+                .find(&close)
+                .map(|rel| end + rel + close.len())
+                .ok_or_else(|| format_error(format!("missing close for `{tag_name}`")))?
+        };
+        if matches(tag) {
+            output.push_str(&text[cursor..start]);
+            cursor = span_end;
+        } else {
+            output.push_str(&text[cursor..span_end]);
+            cursor = span_end;
+        }
+    }
+    output.push_str(&text[cursor..]);
+    Ok(output.into_bytes())
+}
+
+fn sld_id_spans(text: &str) -> Result<Vec<(usize, usize)>> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find("<p:sldId") {
+        let start = cursor + rel;
+        let after = &text[start + "<p:sldId".len()..];
+        if after.starts_with(|c: char| c.is_ascii_alphabetic()) {
+            cursor = start + "<p:sldId".len();
+            continue;
+        }
+        let end = if let Some(close_rel) = text[start..].find("/>") {
+            start + close_rel + 2
+        } else if let Some(close_rel) = text[start..].find("</p:sldId>") {
+            start + close_rel + "</p:sldId>".len()
+        } else {
+            return Err(format_error("unterminated p:sldId"));
+        };
+        spans.push((start, end));
+        cursor = end;
+    }
+    Ok(spans)
+}
+
+fn count_sld_ids(xml: &[u8]) -> Result<usize> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("presentation XML is not UTF-8: {error}")))?;
+    Ok(sld_id_spans(text)?.len())
+}
+
+fn sld_id_numbers(xml: &[u8]) -> Result<BTreeSet<u32>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("presentation XML is not UTF-8: {error}")))?;
+    let mut numbers = BTreeSet::new();
+    for (start, end) in sld_id_spans(text)? {
+        if let Some(id) =
+            tag_attribute(&text[start..end], "id").and_then(|value| value.parse().ok())
+        {
+            numbers.insert(id);
+        }
+    }
+    Ok(numbers)
+}
+
+fn relationship_targets(xml: &[u8]) -> Result<BTreeMap<String, String>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("relationships XML is not UTF-8: {error}")))?;
+    let mut targets = BTreeMap::new();
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find("<Relationship") {
+        let start = cursor + rel;
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| format_error("unterminated Relationship"))?;
+        let tag = &text[start..end];
+        if let (Some(id), Some(target)) = (tag_attribute(tag, "Id"), tag_attribute(tag, "Target")) {
+            targets.insert(id, target);
+        }
+        cursor = end;
+    }
+    Ok(targets)
+}
+
+fn relationship_id_numbers(xml: &[u8]) -> Result<BTreeSet<u32>> {
+    Ok(relationship_targets(xml)?
+        .keys()
+        .filter_map(|id| id.strip_prefix("rId")?.parse().ok())
+        .collect())
+}
+
+fn slide_part_numbers(package: &[u8]) -> Result<BTreeSet<u32>> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| format_error(format!("invalid PPTX package: {error}")))?;
+    let mut numbers = BTreeSet::new();
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|error| format_error(format!("cannot read ZIP entry: {error}")))?;
+        if let Some(number) = entry
+            .name()
+            .strip_prefix("ppt/slides/slide")
+            .and_then(|name| name.strip_suffix(".xml"))
+            .and_then(|number| number.parse().ok())
+        {
+            numbers.insert(number);
+        }
+    }
+    Ok(numbers)
+}
+
+fn lowest_unused_number(used: &BTreeSet<u32>) -> u32 {
+    let mut number = 1;
+    while used.contains(&number) {
+        number += 1;
+    }
+    number
+}
+
+fn resolve_ppt_target(target: &str) -> String {
+    if target.starts_with("ppt/") || target.starts_with('/') {
+        target.trim_start_matches('/').to_owned()
+    } else {
+        format!("ppt/{target}")
+    }
+}
+
+fn slide_relationship_part(slide_part: &str) -> String {
+    // ppt/slides/slide1.xml -> ppt/slides/_rels/slide1.xml.rels
+    if let Some((dir, file)) = slide_part.rsplit_once('/') {
+        format!("{dir}/_rels/{file}.rels")
+    } else {
+        format!("_rels/{slide_part}.rels")
+    }
+}
+
+fn relationship_part_name(part: &str) -> String {
+    if let Some((dir, file)) = part.rsplit_once('/') {
+        format!("{dir}/_rels/{file}.rels")
+    } else {
+        format!("_rels/{part}.rels")
+    }
+}
+
+fn notes_parts_from_slide_rels(xml: &[u8]) -> Vec<String> {
+    let Ok(targets) = relationship_targets(xml) else {
+        return Vec::new();
+    };
+    targets
+        .into_values()
+        .filter(|target| target.contains("notesSlide"))
+        .map(|target| {
+            if target.starts_with("../") {
+                format!("ppt/{}", target.trim_start_matches("../"))
+            } else {
+                resolve_ppt_target(&target)
+            }
+        })
+        .collect()
+}
+
+fn has_entry(package: &[u8], name: &str) -> Result<bool> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| format_error(format!("invalid PPTX package: {error}")))?;
+    Ok(archive.by_name(name).is_ok())
+}
+
+fn tag_attribute(tag: &str, attribute: &str) -> Option<String> {
+    let needle = format!("{attribute}=\"");
+    let start = tag.find(&needle)? + needle.len();
+    let end = tag[start..].find('"')? + start;
+    Some(tag[start..end].to_owned())
 }
 
 fn table_ref(payload: &serde_json::Value) -> Result<&str> {
@@ -428,6 +958,17 @@ fn table_ref(payload: &serde_json::Value) -> Result<&str> {
         return Ok(value);
     }
     required_str(payload, "shape").map_err(|_| format_error("`table` is required"))
+}
+
+fn optional_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option<&'a str>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .filter(|text| !text.is_empty())
+            .map(Some)
+            .ok_or_else(|| format_error(format!("`{key}` must be a non-empty string"))),
+    }
 }
 
 fn required_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<&'a str> {
@@ -449,6 +990,26 @@ fn required_u32(payload: &serde_json::Value, key: &str) -> Result<u32> {
                     value
                         .as_i64()
                         .and_then(|n| if n >= 0 { u32::try_from(n).ok() } else { None })
+                })
+        })
+        .ok_or_else(|| format_error(format!("`{key}` is required")))
+}
+
+fn required_usize(payload: &serde_json::Value, key: &str) -> Result<usize> {
+    payload
+        .get(key)
+        .and_then(|value| {
+            value
+                .as_u64()
+                .and_then(|n| usize::try_from(n).ok())
+                .or_else(|| {
+                    value.as_i64().and_then(|n| {
+                        if n >= 0 {
+                            usize::try_from(n).ok()
+                        } else {
+                            None
+                        }
+                    })
                 })
         })
         .ok_or_else(|| format_error(format!("`{key}` is required")))

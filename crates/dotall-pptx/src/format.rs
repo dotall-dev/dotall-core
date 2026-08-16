@@ -247,5 +247,25 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Patches only the slide part that owns the table. Rejects out-of-range row/col. Media and other slides stay byte-identical.".into(),
         },
+        EditCapability {
+            operation: "add_slide".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert a blank slide after an existing slide (or at the end when `after` is omitted).".into(),
+            example: json!({
+                "kind": "add_slide",
+                "payload": { "after": "Slide 1" }
+            }),
+            safety: "Updates presentation.xml, presentation.xml.rels, and [Content_Types].xml; duplicates a blank slide template. Prior slide parts stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "delete_slide".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Remove a slide by identity. Rejects deleting the sole remaining slide.".into(),
+            example: json!({
+                "kind": "delete_slide",
+                "payload": { "slide": "Slide 2" }
+            }),
+            safety: "Updates presentation.xml, presentation.xml.rels, and [Content_Types].xml; removes the slide part (and notes/rels when present). Other slides and media stay byte-identical.".into(),
+        },
     ]
 }

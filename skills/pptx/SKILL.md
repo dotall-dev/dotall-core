@@ -97,12 +97,25 @@ Table cell text (`p:graphicFrame` → `a:tbl`):
 }
 ```
 
+Add / delete slides:
+
+```json
+{ "kind": "add_slide", "payload": { "after": "Slide 1" } }
+```
+
+```json
+{ "kind": "delete_slide", "payload": { "slide": "Slide 2" } }
+```
+
+Omit `after` on `add_slide` to append at the end. `delete_slide` rejects the sole remaining slide.
+
 Safety:
 
 - `set_shape_text`: text frames only (`p:sp` + `p:txBody`). Rejects SmartArt, charts, and grouped drawingML the writer cannot patch.
 - `set_table_cell_text`: patches one cell; rejects out-of-range `row`/`col`. First `a:t` in the cell is replaced; later runs in that cell are cleared.
-- Both ops patch only the target slide part; media and other slides stay byte-identical.
-- No slide add/delete/reorder yet.
+- `add_slide` / `delete_slide`: surgically update `presentation.xml`, `presentation.xml.rels`, and `[Content_Types].xml`; duplicate a blank slide template or remove the target slide part. Untouched slide/media parts stay byte-identical.
+- Text ops patch only the target slide part; media and other slides stay byte-identical.
+- No slide reorder yet.
 
 ### 4. Apply, history, revert
 

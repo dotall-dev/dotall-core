@@ -80,7 +80,19 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_table_cell_text","payload":{"slide":"Slide 1","table":"Metrics","row":1,"col":1,"text":"58"}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 2 — add blank slide after Slide 1, then delete the trailing Next Steps slide
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"add_slide","payload":{"after":"Slide 1"}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL inspect demo/deck.pptx   # expect 3 slides
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"delete_slide","payload":{"slide":"Slide 3"}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL inspect demo/deck.pptx   # expect 2 slides (updated title slide + blank)
 ```
+
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2.
 
 ---
 
