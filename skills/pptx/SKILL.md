@@ -107,6 +107,12 @@ Add / delete slides:
 { "kind": "delete_slide", "payload": { "slide": "Slide 2" } }
 ```
 
+Reorder slides (presentation.xml `sldIdLst` only):
+
+```json
+{ "kind": "move_slide", "payload": { "slide": "Slide 2", "to_index": 0 } }
+```
+
 Speaker notes (existing notes slide part only):
 
 ```json
@@ -117,6 +123,7 @@ Speaker notes (existing notes slide part only):
 ```
 
 Omit `after` on `add_slide` to append at the end. `delete_slide` rejects the sole remaining slide.
+`move_slide` uses a 0-based `to_index` (final position); rejects no-ops and single-slide decks.
 
 Safety:
 
@@ -124,8 +131,8 @@ Safety:
 - `set_table_cell_text`: patches one cell; rejects out-of-range `row`/`col`. First `a:t` in the cell is replaced; later runs in that cell are cleared.
 - `set_notes_text`: patches only the notes slide part; rejects slides without a notes part. First `a:t` is replaced; later runs cleared. Slide XML stays byte-identical.
 - `add_slide` / `delete_slide`: surgically update `presentation.xml`, `presentation.xml.rels`, and `[Content_Types].xml`; duplicate a blank slide template or remove the target slide part. Untouched slide/media parts stay byte-identical.
+- `move_slide`: reorders only `p:sldId` entries in `ppt/presentation.xml`. Slide parts, notes, rels, and Content_Types stay byte-identical.
 - Text ops patch only the target slide part; media and other slides stay byte-identical.
-- No slide reorder yet.
 
 ### 4. Apply, history, revert
 

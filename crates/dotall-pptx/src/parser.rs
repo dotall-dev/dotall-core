@@ -39,14 +39,7 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
         let slide_xml = zip_entry(&mut archive, &part_name)?;
         let name = format!("Slide {}", index + 1);
         let (shapes, tables) = parse_shapes_and_tables(&slide_xml, &name)?;
-        let notes_part = format!("ppt/notesSlides/notesSlide{}.xml", index + 1);
-        let (notes, notes_part_name) = match zip_entry(&mut archive, &notes_part) {
-            Ok(xml) => {
-                let text = collect_text(&xml);
-                ((!text.is_empty()).then_some(text), Some(notes_part.clone()))
-            }
-            Err(_) => (None, None),
-        };
+        let (notes, notes_part_name) = resolve_notes(&mut archive, &part_name);
         slides.push(SlideModel {
             element_id: ids::slide_id(&name, index as u32, SCHEMA_VERSION),
             name,
@@ -97,6 +90,60 @@ fn resolve_ppt_target(target: &str) -> String {
     } else {
         format!("ppt/{target}")
     }
+}
+
+/// Resolve notes for a slide via its relationships, then fall back to the part-number
+/// heuristic (`slideN.xml` → `notesSlideN.xml`). Never key notes by presentation index —
+/// reorder (`move_slide`) changes order without renaming parts.
+fn resolve_notes(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    slide_part: &str,
+) -> (Option<String>, Option<String>) {
+    let mut candidates = Vec::new();
+    let slide_rels = slide_relationship_part(slide_part);
+    if let Ok(rels_xml) = zip_entry(archive, &slide_rels) {
+        candidates.extend(notes_parts_from_slide_rels(&rels_xml));
+    }
+    if let Some(number) = slide_part
+        .strip_prefix("ppt/slides/slide")
+        .and_then(|name| name.strip_suffix(".xml"))
+    {
+        candidates.push(format!("ppt/notesSlides/notesSlide{number}.xml"));
+    }
+    candidates.sort();
+    candidates.dedup();
+    for notes_part in candidates {
+        if let Ok(xml) = zip_entry(archive, &notes_part) {
+            let text = collect_text(&xml);
+            return ((!text.is_empty()).then_some(text), Some(notes_part));
+        }
+    }
+    (None, None)
+}
+
+fn slide_relationship_part(slide_part: &str) -> String {
+    if let Some((dir, file)) = slide_part.rsplit_once('/') {
+        format!("{dir}/_rels/{file}.rels")
+    } else {
+        format!("_rels/{slide_part}.rels")
+    }
+}
+
+fn notes_parts_from_slide_rels(xml: &[u8]) -> Vec<String> {
+    let Ok(targets) = relationship_targets(xml) else {
+        return Vec::new();
+    };
+    targets
+        .into_values()
+        .filter(|target| target.contains("notesSlide"))
+        .map(|target| {
+            if let Some(rest) = target.strip_prefix("../") {
+                format!("ppt/{rest}")
+            } else {
+                resolve_ppt_target(&target)
+            }
+        })
+        .collect()
 }
 
 fn slide_rids(xml: &[u8]) -> Result<Vec<String>> {

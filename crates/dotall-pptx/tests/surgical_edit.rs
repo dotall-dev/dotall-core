@@ -294,6 +294,117 @@ fn delete_slide_rejects_sole_slide() {
     );
 }
 
+#[test]
+fn move_slide_reorders_and_leaves_slide_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_with_table();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let before_model = parse_presentation_bytes(&before).expect("parse bytes");
+    assert_eq!(before_model.slides.len(), 2);
+    assert_eq!(before_model.slides[0].shapes[0].text, "Hello");
+    assert_eq!(before_model.slides[1].shapes[0].text, "Other");
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "move_slide".into(),
+                payload: serde_json::json!({ "slide": "Slide 2", "to_index": 0 }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.slides.len(), 2);
+    assert_eq!(after.slides[0].shapes[0].text, "Other");
+    assert_eq!(after.slides[1].shapes[0].text, "Hello");
+    assert_eq!(after.slides[1].tables[0].cells[0].text, "A1");
+    assert_eq!(edit.semantic_diff[0].change, "move_slide");
+    assert_eq!(edit.semantic_diff[0].before.as_deref(), Some("1"));
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("0"));
+    // Only presentation.xml changes; slide parts and rels stay byte-identical.
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/presentation.xml"]);
+}
+
+#[test]
+fn move_slide_keeps_notes_on_title_part_after_reorder() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_notes()).expect("write");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let add = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "add_slide".into(),
+                payload: serde_json::json!({ "after": "Slide 1" }),
+            }],
+        )
+        .expect("validate add");
+    let with_blank = handler.apply_edit(&path, &add).expect("add");
+    fs::write(&path, &with_blank.bytes).expect("rewrite");
+    let model = handler.parse(&path).expect("reparse");
+    let mov = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "move_slide".into(),
+                payload: serde_json::json!({ "slide": "Slide 2", "to_index": 0 }),
+            }],
+        )
+        .expect("validate move");
+    let patched = handler.apply_edit(&path, &mov).expect("move");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.slides.len(), 2);
+    assert!(after.slides[0].shapes.is_empty());
+    assert!(after.slides[0].notes.is_none());
+    assert_eq!(after.slides[1].notes.as_deref(), Some("Talk through NPS."));
+}
+
+#[test]
+fn move_slide_rejects_noop_and_sole_slide() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_table()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let noop = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "move_slide".into(),
+                payload: serde_json::json!({ "slide": "Slide 1", "to_index": 0 }),
+            }],
+        )
+        .expect_err("noop");
+    assert!(noop.to_string().contains("already"), "unexpected: {noop}");
+
+    let sole_path = directory.path().join("one.pptx");
+    fs::write(&sole_path, minimal_pptx()).expect("write sole");
+    let sole_model = handler.parse(&sole_path).expect("parse sole");
+    let sole = handler
+        .validate_edit(
+            &sole_model,
+            &[SemanticOperation {
+                kind: "move_slide".into(),
+                payload: serde_json::json!({ "slide": "Slide 1", "to_index": 0 }),
+            }],
+        )
+        .expect_err("sole");
+    assert!(
+        sole.to_string().contains("fewer than two") || sole.to_string().contains("move_slide"),
+        "unexpected: {sole}"
+    );
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);

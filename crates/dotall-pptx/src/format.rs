@@ -277,5 +277,15 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Updates presentation.xml, presentation.xml.rels, and [Content_Types].xml; removes the slide part (and notes/rels when present). Other slides and media stay byte-identical.".into(),
         },
+        EditCapability {
+            operation: "move_slide".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Reorder a slide to a 0-based `to_index` by rewriting only presentation.xml sldIdLst order.".into(),
+            example: json!({
+                "kind": "move_slide",
+                "payload": { "slide": "Slide 2", "to_index": 0 }
+            }),
+            safety: "Patches only ppt/presentation.xml (p:sldId order). Slide parts, notes, rels, and Content_Types stay byte-identical. Rejects no-op and single-slide decks.".into(),
+        },
     ]
 }

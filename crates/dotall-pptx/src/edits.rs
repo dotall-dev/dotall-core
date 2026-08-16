@@ -38,8 +38,9 @@ pub fn validate(
         "set_notes_text" => validate_set_notes_text(model, operation),
         "add_slide" => validate_add_slide(model, operation),
         "delete_slide" => validate_delete_slide(model, operation),
+        "move_slide" => validate_move_slide(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, add_slide, or delete_slide"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, add_slide, delete_slide, or move_slide"
         ))),
     }
 }
@@ -259,6 +260,59 @@ fn validate_delete_slide(
     })
 }
 
+fn validate_move_slide(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    if model.slides.len() <= 1 {
+        return Err(format_error(
+            "cannot move_slide in a presentation with fewer than two slides",
+        ));
+    }
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let to_index = required_usize(&operation.payload, "to_index")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let from_index = slide.index as usize;
+    if to_index >= model.slides.len() {
+        return Err(format_error(format!(
+            "to_index {to_index} is out of range for {} slides",
+            model.slides.len()
+        )));
+    }
+    if to_index == from_index {
+        return Err(format_error(format!(
+            "slide `{}` is already at index {to_index}",
+            slide.name
+        )));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "move_slide".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "part_name": slide.part_name,
+                "from_index": from_index,
+                "to_index": to_index,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: slide.name.clone(),
+            element_id: slide.element_id.clone(),
+            change: "move_slide".into(),
+            before: Some(from_index.to_string()),
+            after: Some(to_index.to_string()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn resolve_table<'a>(
     slide: &'a crate::model::SlideModel,
     table_ref: &str,
@@ -332,6 +386,11 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
         "delete_slide" => {
             let part_name = required_str(&operation.payload, "part_name")?;
             delete_slide_patch(package, part_name)?
+        }
+        "move_slide" => {
+            let from_index = required_usize(&operation.payload, "from_index")?;
+            let to_index = required_usize(&operation.payload, "to_index")?;
+            move_slide_patch(package, from_index, to_index)?
         }
         other => {
             return Err(format_error(format!(
@@ -408,6 +467,16 @@ fn add_slide_patch(package: &[u8], insertion_index: usize) -> Result<PackagePatc
     Ok(PackagePatch {
         replacements,
         additions: BTreeMap::from([(part_name, BLANK_SLIDE.to_vec())]),
+        removals: BTreeSet::new(),
+    })
+}
+
+fn move_slide_patch(package: &[u8], from_index: usize, to_index: usize) -> Result<PackagePatch> {
+    let presentation = entry_bytes(package, "ppt/presentation.xml")?;
+    let patched = reorder_sld_id(&presentation, from_index, to_index)?;
+    Ok(PackagePatch {
+        replacements: BTreeMap::from([("ppt/presentation.xml".into(), patched)]),
+        additions: BTreeMap::new(),
         removals: BTreeSet::new(),
     })
 }
@@ -788,6 +857,47 @@ fn insert_sld_id(xml: &[u8], insertion_index: usize, tag: &str) -> Result<Vec<u8
         spans[insertion_index - 1].1
     };
     Ok(format!("{}{}{}", &text[..position], tag, &text[position..]).into_bytes())
+}
+
+fn reorder_sld_id(xml: &[u8], from_index: usize, to_index: usize) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("presentation XML is not UTF-8: {error}")))?;
+    let spans = sld_id_spans(text)?;
+    if from_index >= spans.len() {
+        return Err(format_error(format!(
+            "from_index {from_index} is out of range for {} slides",
+            spans.len()
+        )));
+    }
+    if to_index >= spans.len() {
+        return Err(format_error(format!(
+            "to_index {to_index} is out of range for {} slides",
+            spans.len()
+        )));
+    }
+    if from_index == to_index {
+        return Ok(xml.to_vec());
+    }
+    let (from_start, from_end) = spans[from_index];
+    let tag = text[from_start..from_end].to_owned();
+    let without = format!("{}{}", &text[..from_start], &text[from_end..]);
+    let remaining = sld_id_spans(&without)?;
+    let insert_at = if to_index == 0 {
+        let list_open = without
+            .find("<p:sldIdLst>")
+            .or_else(|| without.find("<p:sldIdLst "))
+            .ok_or_else(|| format_error("presentation is missing p:sldIdLst"))?;
+        without[list_open..]
+            .find('>')
+            .map(|offset| list_open + offset + 1)
+            .ok_or_else(|| format_error("unterminated p:sldIdLst"))?
+    } else if to_index > remaining.len() {
+        return Err(format_error("cannot move slide past end of sldIdLst"));
+    } else {
+        // After removal, insert so the slide lands at final `to_index`.
+        remaining[to_index - 1].1
+    };
+    Ok(format!("{}{}{}", &without[..insert_at], tag, &without[insert_at..]).into_bytes())
 }
 
 fn remove_sld_id_for_rid(xml: &[u8], rid: &str) -> Result<Vec<u8>> {
