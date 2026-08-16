@@ -55,12 +55,15 @@ before `dotall_read` or `dotall_edit` on a file.
 From the response, capture:
 
 - `format_id` — must be the XLSX handler (typically `xlsx`).
-- `selectors` — valid `dotall_read` selector kinds (`full`, `range`, `sheet`, …).
+- `selectors` — valid `dotall_read` selector kinds (`full`, `range`, `sheet`,
+  `ast_range`, `named_ranges`, `merges`, …).
 - `edit_capabilities[]` — supported operation names, descriptions, **example**
   payloads, and safety notes.
 - `source_hash` — required for `dotall_edit` and `dotall_revert` as
   `expected_source_hash`.
 - `suggested_reads` — good starting selectors when exploring a workbook.
+- Inspect `summary.sheets[].merges` — merged cell refs (e.g. `A1:B2`).
+- Inspect `summary.named_ranges[]` — `{ name, formula }` (not names alone).
 
 Never assume an operation exists because another `.xlsx` supported it — always
 re-check after external edits or a failed apply.
@@ -70,6 +73,9 @@ re-check after external edits or a failed apply.
 - **`dotall_read`**: token-budgeted projections. Use `selector_kind` + `selector`
   from capabilities (e.g. `range` + `Revenue!A1:D20`). Follow `continuation`
   cursors until the slice is complete.
+  - `named_ranges` — JSON list of `{ name, formula, element_id }` (selector value
+    unused).
+  - `merges` — JSON `{ sheet, merges }` for one sheet (selector value = sheet name).
 - **`dotall_deps`**: precedents or dependents for a cell (`Sheet1!B2`). Use before
   formula changes, row/column inserts, or sheet renames/deletes.
 

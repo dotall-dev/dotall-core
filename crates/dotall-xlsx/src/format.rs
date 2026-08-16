@@ -13,7 +13,14 @@ use crate::edits;
 use crate::model::{SCHEMA_ID, SCHEMA_VERSION, WorkbookModel};
 use crate::{FORMAT_ID, parser, projection, selector, structure};
 
-const AVAILABLE_READS: [&str; 4] = ["read.full", "read.sheet", "read.range", "read.ast_range"];
+const AVAILABLE_READS: [&str; 6] = [
+    "read.full",
+    "read.sheet",
+    "read.range",
+    "read.ast_range",
+    "read.named_ranges",
+    "read.merges",
+];
 const PREVIEW_SHEET_LIMIT: usize = 3;
 const PREVIEW_ROW_LIMIT: u32 = 10;
 const PREVIEW_CELL_LIMIT: usize = 200;
@@ -70,6 +77,7 @@ impl FormatHandler for XlsxFormat {
                     "rows": sheet.dimensions.rows,
                     "cols": sheet.dimensions.cols,
                     "formula_count": sheet.cells.iter().filter(|cell| cell.formula.is_some()).count(),
+                    "merges": sheet.merges,
                 })
             })
             .collect::<Vec<_>>();
@@ -101,7 +109,10 @@ impl FormatHandler for XlsxFormat {
             format_id: FORMAT_ID.into(),
             summary: json!({
                 "sheets": sheets,
-                "named_ranges": workbook.named_ranges.iter().map(|range| &range.name).collect::<Vec<_>>(),
+                "named_ranges": workbook.named_ranges.iter().map(|range| json!({
+                    "name": range.name,
+                    "formula": range.formula,
+                })).collect::<Vec<_>>(),
                 "preserved": ["charts", "pivots", "vba", "other_ooxml_parts"],
                 "structure": structure,
             }),
@@ -119,7 +130,7 @@ impl FormatHandler for XlsxFormat {
                 .as_ref()
                 .map_or(Ok(selector::Selector::Preview), |selector| {
                     match selector.kind.as_str() {
-                        "full" | "sheet" | "range" | "ast_range" => {
+                        "full" | "sheet" | "range" | "ast_range" | "named_ranges" | "merges" => {
                             selector::parse(&selector.kind, &selector.value).map_err(selector_error)
                         }
                         _ => Err(unsupported(&selector.kind)),
@@ -179,6 +190,36 @@ impl FormatHandler for XlsxFormat {
                         address(start),
                         address(end)
                     )],
+                )
+            }
+            selector::Selector::NamedRanges => (
+                serde_json::to_string_pretty(&projection::named_ranges(&workbook)).map_err(
+                    |source| DotallError::Serialization {
+                        context: "XLSX named ranges projection".into(),
+                        source,
+                    },
+                )?,
+                vec![
+                    "Use `merges` with a sheet name for worksheet merge refs".into(),
+                    "Use `range` or `ast_range` for cell values".into(),
+                ],
+            ),
+            selector::Selector::Merges { name } => {
+                let sheet = find_sheet(&workbook, &name)?;
+                (
+                    serde_json::to_string_pretty(&projection::merges(sheet)).map_err(|source| {
+                        DotallError::Serialization {
+                            context: "XLSX merges projection".into(),
+                            source,
+                        }
+                    })?,
+                    vec![
+                        "Use `named_ranges` for defined name formulas".into(),
+                        format!(
+                            "Use `range` with `{}` for a Markdown table",
+                            used_range(sheet)
+                        ),
+                    ],
                 )
             }
         };
@@ -304,6 +345,12 @@ fn capabilities() -> Vec<Capability> {
         },
         Capability::ReadSelector {
             kind: "ast_range".into(),
+        },
+        Capability::ReadSelector {
+            kind: "named_ranges".into(),
+        },
+        Capability::ReadSelector {
+            kind: "merges".into(),
         },
     ]
 }

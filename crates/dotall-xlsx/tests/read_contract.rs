@@ -129,6 +129,89 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
 }
 
 #[test]
+fn format_handler_inspects_merges_and_named_range_formulas() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("merges_and_names.xlsx");
+
+    let mut workbook = Workbook::new();
+    let inputs = workbook.add_worksheet().set_name("Inputs").expect("sheet");
+    inputs
+        .merge_range(0, 0, 1, 1, "title", &Format::new())
+        .expect("merge A1:B2");
+    workbook
+        .define_name("Rate", "=Inputs!$B$2")
+        .expect("defined name");
+    workbook.save(&path).expect("workbook fixture");
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&path).expect("parse through handler");
+    let inspection = handler.inspect(&model).expect("inspect workbook");
+
+    let sheets = inspection.summary["sheets"]
+        .as_array()
+        .expect("sheets array");
+    let inputs_sheet = sheets
+        .iter()
+        .find(|sheet| sheet["name"] == "Inputs")
+        .expect("Inputs sheet summary");
+    assert_eq!(inputs_sheet["merges"][0], "A1:B2");
+
+    let named_ranges = inspection.summary["named_ranges"]
+        .as_array()
+        .expect("named_ranges array");
+    let rate = named_ranges
+        .iter()
+        .find(|range| range["name"] == "Rate")
+        .expect("Rate named range");
+    let formula = rate["formula"].as_str().expect("Rate formula");
+    assert!(
+        formula.contains("Inputs!$B$2"),
+        "expected named range formula to reference Inputs!$B$2, got {formula}"
+    );
+
+    let response = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "named_ranges".into(),
+                    value: String::new(),
+                }),
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect("read named_ranges");
+    let named: serde_json::Value =
+        serde_json::from_str(&response.content).expect("named_ranges JSON");
+    assert_eq!(named[0]["name"], "Rate");
+    assert!(
+        named[0]["formula"]
+            .as_str()
+            .expect("formula")
+            .contains("Inputs!$B$2")
+    );
+
+    let merges_response = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "merges".into(),
+                    value: "Inputs".into(),
+                }),
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect("read merges");
+    let merges: serde_json::Value =
+        serde_json::from_str(&merges_response.content).expect("merges JSON");
+    assert_eq!(merges["sheet"], "Inputs");
+    assert_eq!(merges["merges"][0], "A1:B2");
+}
+
+#[test]
 fn format_handler_projects_markdown_range_with_drill_down_hint() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("financials.xlsx");

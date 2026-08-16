@@ -108,6 +108,29 @@ pub fn ast_range(sheet: &SheetModel, start: CellAddress, end: CellAddress) -> se
     })
 }
 
+pub fn named_ranges(workbook: &WorkbookModel) -> serde_json::Value {
+    json!(
+        workbook
+            .named_ranges
+            .iter()
+            .map(|range| {
+                json!({
+                    "name": range.name,
+                    "formula": range.formula,
+                    "element_id": range.element_id,
+                })
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
+pub fn merges(sheet: &SheetModel) -> serde_json::Value {
+    json!({
+        "sheet": sheet.name,
+        "merges": sheet.merges,
+    })
+}
+
 fn table_row(cells: &[String]) -> String {
     format!("| {} |\n", cells.join(" | "))
 }

@@ -21,6 +21,10 @@ pub enum Selector {
         start: CellAddress,
         end: CellAddress,
     },
+    NamedRanges,
+    Merges {
+        name: String,
+    },
 }
 
 pub fn parse(kind: &str, value: &str) -> std::result::Result<Selector, String> {
@@ -35,6 +39,11 @@ pub fn parse(kind: &str, value: &str) -> std::result::Result<Selector, String> {
         "ast_range" => {
             parse_range(value).map(|(name, start, end)| Selector::AstRange { name, start, end })
         }
+        "named_ranges" => Ok(Selector::NamedRanges),
+        "merges" if !value.trim().is_empty() => Ok(Selector::Merges {
+            name: value.trim().to_owned(),
+        }),
+        "merges" => Err("merges selector requires a sheet name".into()),
         "sheet" => Err("sheet selector requires a sheet name".into()),
         _ => Err(format!("unsupported selector `{kind}`")),
     }
