@@ -4,6 +4,7 @@ members = [
     "crates/dotall-ooxml",
     "crates/dotall-xlsx",
     "crates/dotall-pptx",
+    "crates/dotall-docx",
     "crates/dotall-cli",
     "crates/dotall-mcp",
 ]
