@@ -56,6 +56,15 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"set_range","payload":{"sheet":"Revenue","start_cell":"B2","values":[[110]]}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 2: merge / unmerge on Revenue labels
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"merge_cells","payload":{"sheet":"Revenue","range":"A1:B1"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL read demo/financials.xlsx --selector-kind merges --selector Revenue
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"unmerge_cells","payload":{"sheet":"Revenue","range":"A1:B1"}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
