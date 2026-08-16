@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use dotall_core::registry::{FormatHandler, FormatRegistry};
 use dotall_core::{Actor, ActorKind, DotallStore, EditRequest, Engine, SemanticOperation};
-use dotall_pdf::{PdfFormat, minimal_checkbox_pdf, minimal_form_pdf, parse_pdf_bytes};
+use dotall_pdf::{
+    PdfFormat, demo_form_pdf, minimal_checkbox_pdf, minimal_form_pdf, parse_pdf_bytes,
+};
 use tempfile::tempdir;
 
 #[test]
@@ -86,6 +88,87 @@ fn rejects_unknown_field() {
         )
         .expect_err("unknown field");
     assert!(error.to_string().contains("was not found"));
+}
+
+#[test]
+fn set_document_metadata_updates_info_dict() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(model.payload["metadata"]["title"], "Vendor Intake Form");
+    assert_eq!(model.payload["metadata"]["author"], "Dotall Demo");
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_document_metadata".into(),
+                payload: serde_json::json!({
+                    "title": "Updated Intake",
+                    "author": "Wave 4 Agent",
+                    "subject": "Onboarding refresh"
+                }),
+            }],
+        )
+        .expect("validate metadata");
+    let patched = handler.apply_edit(&path, &edit).expect("apply metadata");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.metadata.title.as_deref(), Some("Updated Intake"));
+    assert_eq!(after.metadata.author.as_deref(), Some("Wave 4 Agent"));
+    assert_eq!(
+        after.metadata.subject.as_deref(),
+        Some("Onboarding refresh")
+    );
+    // Creator / Producer from Wave 2 inspect stay untouched when omitted.
+    assert_eq!(after.metadata.creator.as_deref(), Some("dotall-pdf"));
+    assert_eq!(after.metadata.producer.as_deref(), Some("dotall-pdf"));
+}
+
+#[test]
+fn set_document_metadata_creates_info_when_missing() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert!(model.payload["metadata"]["title"].is_null());
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_document_metadata".into(),
+                payload: serde_json::json!({ "title": "Hello Form" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.metadata.title.as_deref(), Some("Hello Form"));
+    assert_eq!(after.fields[0].value, "Ada");
+}
+
+#[test]
+fn set_document_metadata_requires_at_least_one_field() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_document_metadata".into(),
+                payload: serde_json::json!({}),
+            }],
+        )
+        .expect_err("empty payload");
+    assert!(error.to_string().contains("title"), "{error}");
 }
 
 #[test]

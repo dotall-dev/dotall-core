@@ -2,20 +2,21 @@
 name: pdf
 description: >-
   Work with .pdf files through Dotall MCP. Use when inspecting pages, listing
-  AcroForm fields, filling a text or checkbox field, or reverting a PDF in a
-  Dotall workspace. Do not rewrite page content streams.
+  AcroForm fields, filling a text or checkbox field, setting /Info metadata, or
+  reverting a PDF in a Dotall workspace. Do not rewrite page content streams.
 ---
 
 # PDF via Dotall MCP
 
-v0 is **form fill only**. Do not unzip, reprint, or rewrite page operators.
+v0 is **form fill + document metadata**. Do not unzip, reprint, or rewrite page
+operators.
 
 ## Workflow
 
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field (stage)
+  → dotall_edit set_form_field | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -56,6 +57,19 @@ Checkbox (`Btn`): use `On` / `Off`, or an explicit export value from `export_val
 
 `On` maps to the sole non-`Off` export value when unambiguous; radios with multiple on-states require an explicit export value.
 
-Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios without an export value.
+Document `/Info` (Title / Author / Subject — omit keys to leave unchanged):
+
+```json
+{
+  "kind": "set_document_metadata",
+  "payload": {
+    "title": "Updated Intake",
+    "author": "Wave 4 Agent",
+    "subject": "Onboarding refresh"
+  }
+}
+```
+
+Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios without an export value, empty metadata payloads.
 
 Snapshots are opaque whole-file blobs (not OOXML part manifests).

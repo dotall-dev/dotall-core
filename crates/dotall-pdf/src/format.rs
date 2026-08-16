@@ -221,14 +221,30 @@ fn capabilities() -> Vec<Capability> {
 }
 
 fn edit_capabilities() -> Vec<EditCapability> {
-    vec![EditCapability {
-        operation: "set_form_field".into(),
-        schema_version: SCHEMA_VERSION,
-        description: "Set an AcroForm text, choice, or checkbox (Btn) field value.".into(),
-        example: json!({
-            "kind": "set_form_field",
-            "payload": { "name": "Agree", "value": "On" }
-        }),
-        safety: "Form fill only. Checkboxes accept On/Off or export values. Rejects encrypted and signed PDFs. Does not rewrite page content streams.".into(),
-    }]
+    vec![
+        EditCapability {
+            operation: "set_form_field".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set an AcroForm text, choice, or checkbox (Btn) field value.".into(),
+            example: json!({
+                "kind": "set_form_field",
+                "payload": { "name": "Agree", "value": "On" }
+            }),
+            safety: "Form fill only. Checkboxes accept On/Off or export values. Rejects encrypted and signed PDFs. Does not rewrite page content streams.".into(),
+        },
+        EditCapability {
+            operation: "set_document_metadata".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set PDF /Info Title, Author, and/or Subject.".into(),
+            example: json!({
+                "kind": "set_document_metadata",
+                "payload": {
+                    "title": "Updated Intake",
+                    "author": "Wave 4 Agent",
+                    "subject": "Onboarding refresh"
+                }
+            }),
+            safety: "Patches trailer /Info only. Omit keys you want to leave unchanged. Rejects encrypted and signed PDFs.".into(),
+        },
+    ]
 }

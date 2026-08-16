@@ -192,6 +192,13 @@ $DOTALL apply demo/form.pdf --all
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field","payload":{"name":"Department","value":"Sales"}}]'
 $DOTALL apply demo/form.pdf --all
+
+# Wave 4 — /Info Title/Author/Subject (inspect metadata)
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_document_metadata","payload":{"title":"Updated Intake","author":"Wave 4 Agent","subject":"Onboarding refresh"}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect summary.metadata.title Updated Intake, author Wave 4 Agent
 ```
 
 ---

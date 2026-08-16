@@ -13,9 +13,9 @@ pub fn validate(
     model: &PdfDocumentModel,
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
-    if operations.len() != 1 || operations[0].kind != "set_form_field" {
+    if operations.len() != 1 {
         return Err(format_error(
-            "pdf v0 supports a single set_form_field operation per transaction",
+            "pdf supports a single edit operation per transaction",
         ));
     }
     if model.encrypted {
@@ -25,6 +25,19 @@ pub fn validate(
         return Err(format_error("cannot edit signed PDF"));
     }
     let operation = &operations[0];
+    match operation.kind.as_str() {
+        "set_form_field" => validate_set_form_field(model, operation),
+        "set_document_metadata" => validate_set_document_metadata(model, operation),
+        other => Err(format_error(format!(
+            "unsupported pdf edit `{other}`; use set_form_field or set_document_metadata"
+        ))),
+    }
+}
+
+fn validate_set_form_field(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
     let name = required_str(&operation.payload, "name")?;
     let value = required_str(&operation.payload, "value")?;
     let field = model
@@ -71,6 +84,75 @@ pub fn validate(
     })
 }
 
+fn validate_set_document_metadata(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let title = optional_str(&operation.payload, "title")?;
+    let author = optional_str(&operation.payload, "author")?;
+    let subject = optional_str(&operation.payload, "subject")?;
+    if title.is_none() && author.is_none() && subject.is_none() {
+        return Err(format_error(
+            "set_document_metadata requires at least one of title, author, or subject",
+        ));
+    }
+
+    let mut payload = serde_json::Map::new();
+    let mut before_parts = Vec::new();
+    let mut after_parts = Vec::new();
+    if let Some(title) = title {
+        payload.insert("title".into(), serde_json::Value::String(title.to_owned()));
+        before_parts.push(format!(
+            "title={}",
+            model.metadata.title.as_deref().unwrap_or("")
+        ));
+        after_parts.push(format!("title={title}"));
+    }
+    if let Some(author) = author {
+        payload.insert(
+            "author".into(),
+            serde_json::Value::String(author.to_owned()),
+        );
+        before_parts.push(format!(
+            "author={}",
+            model.metadata.author.as_deref().unwrap_or("")
+        ));
+        after_parts.push(format!("author={author}"));
+    }
+    if let Some(subject) = subject {
+        payload.insert(
+            "subject".into(),
+            serde_json::Value::String(subject.to_owned()),
+        );
+        before_parts.push(format!(
+            "subject={}",
+            model.metadata.subject.as_deref().unwrap_or("")
+        ));
+        after_parts.push(format!("subject={subject}"));
+    }
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_document_metadata".into(),
+            payload: serde_json::Value::Object(payload),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: "document:/Info".into(),
+            element_id: model.document_id.clone(),
+            change: "set_document_metadata".into(),
+            before: Some(before_parts.join("; ")),
+            after: Some(after_parts.join("; ")),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 pub fn apply(source: &std::path::Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
         path: source.to_path_buf(),
@@ -84,17 +166,32 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
         .operations
         .first()
         .ok_or_else(|| format_error("validated edit is missing operations"))?;
-    let name = required_str(&operation.payload, "name")?;
-    let value = required_str(&operation.payload, "value")?;
-    let field_type = operation
-        .payload
-        .get("field_type")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("tx");
     let mut document = Document::load_mem(package)
         .map_err(|error| format_error(format!("invalid PDF: {error}")))?;
-    set_field_value(&mut document, name, value, field_type)?;
-    set_need_appearances(&mut document)?;
+    match operation.kind.as_str() {
+        "set_form_field" => {
+            let name = required_str(&operation.payload, "name")?;
+            let value = required_str(&operation.payload, "value")?;
+            let field_type = operation
+                .payload
+                .get("field_type")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("tx");
+            set_field_value(&mut document, name, value, field_type)?;
+            set_need_appearances(&mut document)?;
+        }
+        "set_document_metadata" => {
+            let title = optional_str(&operation.payload, "title")?;
+            let author = optional_str(&operation.payload, "author")?;
+            let subject = optional_str(&operation.payload, "subject")?;
+            set_info_metadata(&mut document, title, author, subject)?;
+        }
+        other => {
+            return Err(format_error(format!(
+                "unsupported pdf edit `{other}` in apply"
+            )));
+        }
+    }
     let mut bytes = Vec::new();
     document
         .save_to(&mut Cursor::new(&mut bytes))
@@ -103,6 +200,52 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes,
     })
+}
+
+fn set_info_metadata(
+    document: &mut Document,
+    title: Option<&str>,
+    author: Option<&str>,
+    subject: Option<&str>,
+) -> Result<()> {
+    let info_id = ensure_info_dict(document)?;
+    let object = document
+        .get_object_mut(info_id)
+        .map_err(|error| format_error(format!("cannot update Info: {error}")))?;
+    let Object::Dictionary(dict) = object else {
+        return Err(format_error("Info is not a dictionary"));
+    };
+    if let Some(title) = title {
+        dict.set("Title", Object::string_literal(title));
+    }
+    if let Some(author) = author {
+        dict.set("Author", Object::string_literal(author));
+    }
+    if let Some(subject) = subject {
+        dict.set("Subject", Object::string_literal(subject));
+    }
+    Ok(())
+}
+
+fn ensure_info_dict(document: &mut Document) -> Result<ObjectId> {
+    match document.trailer.get(b"Info") {
+        Ok(Object::Reference(id)) => Ok(*id),
+        Ok(Object::Dictionary(_)) => {
+            let dict = match document.trailer.remove(b"Info") {
+                Some(Object::Dictionary(dict)) => dict,
+                _ => Dictionary::new(),
+            };
+            let id = document.add_object(Object::Dictionary(dict));
+            document.trailer.set("Info", Object::Reference(id));
+            Ok(id)
+        }
+        Ok(_) => Err(format_error("Info entry has an unsupported type")),
+        Err(_) => {
+            let id = document.add_object(Object::Dictionary(Dictionary::new()));
+            document.trailer.set("Info", Object::Reference(id));
+            Ok(id)
+        }
+    }
 }
 
 fn resolve_btn_value(field: &PdfFieldModel, value: &str) -> Result<String> {
@@ -302,6 +445,14 @@ fn required_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<&'a str
         .get(key)
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| format_error(format!("`{key}` is required")))
+}
+
+fn optional_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option<&'a str>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) => Ok(Some(value.as_str())),
+        Some(_) => Err(format_error(format!("`{key}` must be a string"))),
+    }
 }
 
 fn format_error(message: impl Into<String>) -> DotallError {
