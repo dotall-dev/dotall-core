@@ -316,6 +316,17 @@ After Wave 3 integrates:
 
 Each task ends with the standing demo gate.
 
+## Wave 5 — next openpyxl-class gaps (parallel)
+
+After Wave 4 integrates (col/row size, move_slide, insert_paragraph, set_document_metadata):
+
+1. **XLSX:** `freeze_panes` read + surgical set (sheet view) — common openpyxl workflow
+2. **PPTX:** `add_textbox` (or add simple text shape) on a slide — grow content beyond editing existing shapes
+3. **DOCX:** `delete_paragraph` by index/element_id — pair with insert_paragraph
+4. **PDF:** radio-group `Btn` support via `set_form_field` (export values) OR `clear_form_field` — prefer radios if fixture-friendly
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
