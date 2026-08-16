@@ -125,6 +125,7 @@ dotall-core/
 │   ├── dotall-xlsx/
 │   ├── dotall-pptx/
 │   ├── dotall-docx/
+│   ├── dotall-pdf/
 │   ├── dotall-ooxml/
 │   ├── dotall-cli/
 │   └── dotall-mcp/

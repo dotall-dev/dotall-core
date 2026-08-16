@@ -8,9 +8,25 @@
 
 **Tech Stack:** `lopdf` (pin a current 0.3x/0.4x that builds on edition 2024 — verify at implementation time and record the exact version in `Cargo.toml`), blake3, serde JSON.
 
-**Prerequisite:** Engine already supports opaque snapshots (default encode/decode). No `dotall-ooxml` dependency.
+**Prerequisite:** [`2026-08-15-docx-engine-v0.md`](2026-08-15-docx-engine-v0.md) — **done on `feat/docx-engine-v0`.** CLI already composes xlsx/pptx/docx and has `--selector-kind`.
 
 **Design:** [`docs/superpowers/specs/2026-08-15-office-pdf-format-families-design.md`](../specs/2026-08-15-office-pdf-format-families-design.md)
+
+## Grounded APIs (after DOCX)
+
+- Do **not** use `dotall-ooxml`. PDF snapshots stay on the default opaque `FormatHandler::encode_snapshot` / `decode_snapshot`.
+- Register like other formats:
+
+```rust
+#[cfg(feature = "pdf")]
+registry.register(Arc::new(dotall_pdf::PdfFormat));
+```
+
+- CLI `--selector-kind page|field|full` is already wired.
+- Pin `lopdf = "0.44.0"` (edition 2024). If APIs differ, adapt; do not add a second PDF crate.
+- Copy `PptxFormat`/`DocxFormat` envelope + inspect/read/validate/apply shape; omit snapshot overrides.
+
+**Branch:** `feat/pdf-engine-v0` (stacked on `feat/docx-engine-v0`).
 
 ## Global Constraints
 

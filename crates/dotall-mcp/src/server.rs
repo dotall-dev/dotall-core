@@ -594,5 +594,7 @@ pub fn registry() -> FormatRegistry {
     registry.register(Arc::new(dotall_pptx::PptxFormat));
     #[cfg(feature = "docx")]
     registry.register(Arc::new(dotall_docx::DocxFormat));
+    #[cfg(feature = "pdf")]
+    registry.register(Arc::new(dotall_pdf::PdfFormat));
     registry
 }

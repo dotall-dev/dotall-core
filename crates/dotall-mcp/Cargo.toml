@@ -9,6 +9,7 @@ dotall-core = { version = "0.1.0", path = "../dotall-core" }
 dotall-xlsx = { version = "0.1.0", path = "../dotall-xlsx", optional = true }
 dotall-pptx = { version = "0.1.0", path = "../dotall-pptx", optional = true }
 dotall-docx = { version = "0.1.0", path = "../dotall-docx", optional = true }
+dotall-pdf = { version = "0.1.0", path = "../dotall-pdf", optional = true }
 rmcp = { version = "2.2.0", features = ["server", "macros", "transport-io"] }
 schemars = "1.2.1"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -21,7 +22,8 @@ rust_xlsxwriter = "0.96.0"
 tempfile = "3.27.0"
 
 [features]
-default = ["xlsx", "pptx", "docx"]
+default = ["xlsx", "pptx", "docx", "pdf"]
 xlsx = ["dep:dotall-xlsx"]
 pptx = ["dep:dotall-pptx"]
 docx = ["dep:dotall-docx"]
+pdf = ["dep:dotall-pdf"]
