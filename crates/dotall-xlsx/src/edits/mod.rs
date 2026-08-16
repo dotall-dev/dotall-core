@@ -96,6 +96,16 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 range: required_string(operation, "range")?,
             }),
+            "set_column_width" => Ok(XlsxEditOp::SetColumnWidth {
+                sheet: required_string(operation, "sheet")?,
+                column: required_string(operation, "column")?,
+                width: required_positive_f64(operation, "width")?,
+            }),
+            "set_row_height" => Ok(XlsxEditOp::SetRowHeight {
+                sheet: required_string(operation, "sheet")?,
+                row: required_positive_u32(operation, "row")?,
+                height: required_positive_f64(operation, "height")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
@@ -116,6 +126,22 @@ fn required_positive_u32(
         .and_then(serde_json::Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
         .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            invalid_operation(format!(
+                "validated edit operation requires positive `{field}`"
+            ))
+        })
+}
+
+fn required_positive_f64(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<f64> {
+    operation
+        .payload
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
         .ok_or_else(|| {
             invalid_operation(format!(
                 "validated edit operation requires positive `{field}`"

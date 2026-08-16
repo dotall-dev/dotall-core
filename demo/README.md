@@ -8,7 +8,7 @@ cargo run -p dotall-cli --example generate_demos
 
 | File | Format | Agent workload |
 |------|--------|----------------|
-| [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header, percent/currency formats |
+| [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header, percent/currency formats, seeded column widths |
 | [`deck.pptx`](deck.pptx) | PPTX | Title + metrics table + speaker notes; second slide next-steps |
 | [`memo.docx`](memo.docx) | DOCX | Heading memo + multi-run body + status table + confidential header |
 | [`form.pdf`](form.pdf) | PDF | Intake form + page labels; Name/Email/Agree/Department; `/Info` metadata |
@@ -68,6 +68,14 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"unmerge_cells","payload":{"sheet":"Revenue","range":"A1:B1"}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 4: column width / row height (worksheet XML only)
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_column_width","payload":{"sheet":"Inputs","column":"A","width":22.5}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_row_height","payload":{"sheet":"Inputs","row":1,"height":36}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -110,9 +118,16 @@ $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_notes_text","payload":{"slide":"Slide 1","text":"Call out the NPS jump to 58."}}]'
 $DOTALL apply demo/deck.pptx --all
 $DOTALL read demo/deck.pptx --selector-kind notes --selector 'Slide 1'
+
+# Wave 4 — reorder: move blank Slide 2 to front (title+notes become Slide 2)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"move_slide","payload":{"slide":"Slide 2","to_index":0}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL inspect demo/deck.pptx   # expect blank first, then title slide
+$DOTALL read demo/deck.pptx --selector-kind notes --selector 'Slide 2'
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical.
 
 ---
 

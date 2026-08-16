@@ -112,6 +112,16 @@ Merge / unmerge (surgical worksheet `mergeCells` patch; overlapping merges are r
 { "kind": "unmerge_cells", "payload": { "sheet": "Sheet1", "range": "A1:B2" } }
 ```
 
+Column width / row height (surgical worksheet `cols` / row attrs; other sheets byte-identical):
+
+```json
+{ "kind": "set_column_width", "payload": { "sheet": "Sheet1", "column": "A", "width": 18.5 } }
+```
+
+```json
+{ "kind": "set_row_height", "payload": { "sheet": "Sheet1", "row": 1, "height": 30.0 } }
+```
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

@@ -26,7 +26,9 @@ pub(super) fn patch(
             | XlsxEditOp::DeleteSheet { .. }
             | XlsxEditOp::SetRange { .. }
             | XlsxEditOp::MergeCells { .. }
-            | XlsxEditOp::UnmergeCells { .. } => {
+            | XlsxEditOp::UnmergeCells { .. }
+            | XlsxEditOp::SetColumnWidth { .. }
+            | XlsxEditOp::SetRowHeight { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -128,7 +130,9 @@ pub(super) fn patch(
                 | XlsxEditOp::DeleteSheet { .. }
                 | XlsxEditOp::SetRange { .. }
                 | XlsxEditOp::MergeCells { .. }
-                | XlsxEditOp::UnmergeCells { .. } => {
+                | XlsxEditOp::UnmergeCells { .. }
+                | XlsxEditOp::SetColumnWidth { .. }
+                | XlsxEditOp::SetRowHeight { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -153,7 +157,9 @@ pub(super) fn patch(
             | XlsxEditOp::DeleteSheet { .. }
             | XlsxEditOp::SetRange { .. }
             | XlsxEditOp::MergeCells { .. }
-            | XlsxEditOp::UnmergeCells { .. } => {
+            | XlsxEditOp::UnmergeCells { .. }
+            | XlsxEditOp::SetColumnWidth { .. }
+            | XlsxEditOp::SetRowHeight { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -278,7 +284,9 @@ fn render_new_cell(
         | XlsxEditOp::DeleteSheet { .. }
         | XlsxEditOp::SetRange { .. }
         | XlsxEditOp::MergeCells { .. }
-        | XlsxEditOp::UnmergeCells { .. } => {
+        | XlsxEditOp::UnmergeCells { .. }
+        | XlsxEditOp::SetColumnWidth { .. }
+        | XlsxEditOp::SetRowHeight { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -448,7 +456,9 @@ fn render_cell_parts(
         | XlsxEditOp::DeleteSheet { .. }
         | XlsxEditOp::SetRange { .. }
         | XlsxEditOp::MergeCells { .. }
-        | XlsxEditOp::UnmergeCells { .. } => {
+        | XlsxEditOp::UnmergeCells { .. }
+        | XlsxEditOp::SetColumnWidth { .. }
+        | XlsxEditOp::SetRowHeight { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

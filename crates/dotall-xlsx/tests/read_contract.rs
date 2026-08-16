@@ -120,6 +120,8 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "delete_sheet",
             "merge_cells",
             "unmerge_cells",
+            "set_column_width",
+            "set_row_height",
         ]
     );
     assert_eq!(

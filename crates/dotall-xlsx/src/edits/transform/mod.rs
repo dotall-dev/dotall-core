@@ -6,8 +6,8 @@ pub mod sqref;
 
 pub(crate) use address::column_number;
 pub use address::{
-    Axis, AxisChange, CellRef, RangeRef, TransformResult, parse_cell, parse_range, transform_cell,
-    transform_range,
+    Axis, AxisChange, CellRef, MAX_COLUMNS, MAX_ROWS, RangeRef, TransformResult, parse_cell,
+    parse_range, transform_cell, transform_range,
 };
 pub use formula::transform_formula;
 pub use sqref::{SqrefError, transform_sqref};

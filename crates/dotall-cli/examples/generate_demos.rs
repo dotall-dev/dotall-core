@@ -38,6 +38,9 @@ fn write_financials(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let currency = Format::new().set_num_format("$#,##0.00");
 
     let inputs = workbook.add_worksheet().set_name("Inputs")?;
+    inputs.set_column_width(0, 14.0)?;
+    inputs.set_column_width(1, 12.0)?;
+    inputs.set_row_height(0, 22.0)?;
     inputs.merge_range(0, 0, 0, 1, "Assumptions", &header)?;
     inputs.write_string(1, 0, "Rate")?;
     inputs.write_number_with_format(1, 1, 0.10, &percent)?;
@@ -45,6 +48,8 @@ fn write_financials(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     inputs.write_number_with_format(2, 1, 100.0, &currency)?;
 
     let revenue = workbook.add_worksheet().set_name("Revenue")?;
+    revenue.set_column_width(0, 14.0)?;
+    revenue.set_column_width(1, 14.0)?;
     revenue.write_string_with_format(0, 0, "Label", &header)?;
     revenue.write_string_with_format(0, 1, "Amount", &header)?;
     revenue.write_string(1, 0, "Jan")?;

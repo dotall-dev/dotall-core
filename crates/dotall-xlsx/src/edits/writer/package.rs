@@ -13,6 +13,7 @@ use crate::FORMAT_ID;
 use crate::edits::transform::{Axis, AxisChange};
 use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
+use super::dimensions;
 use super::merges;
 use super::shared_strings;
 use super::structural;
@@ -44,6 +45,33 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             sheet,
             &merges::MergeEdit::Unmerge {
                 range: range.clone(),
+            },
+        );
+    }
+    if let [
+        XlsxEditOp::SetColumnWidth {
+            sheet,
+            column,
+            width,
+        },
+    ] = operations.as_slice()
+    {
+        return patch_dimension(
+            &original,
+            sheet,
+            &dimensions::DimensionEdit::ColumnWidth {
+                column: column.clone(),
+                width: *width,
+            },
+        );
+    }
+    if let [XlsxEditOp::SetRowHeight { sheet, row, height }] = operations.as_slice() {
+        return patch_dimension(
+            &original,
+            sheet,
+            &dimensions::DimensionEdit::RowHeight {
+                row: *row,
+                height: *height,
             },
         );
     }
@@ -161,6 +189,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetRange { .. }
                 | XlsxEditOp::MergeCells { .. }
                 | XlsxEditOp::UnmergeCells { .. }
+                | XlsxEditOp::SetColumnWidth { .. }
+                | XlsxEditOp::SetRowHeight { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -185,7 +215,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::DeleteSheet { .. }
             | XlsxEditOp::SetRange { .. }
             | XlsxEditOp::MergeCells { .. }
-            | XlsxEditOp::UnmergeCells { .. } => {
+            | XlsxEditOp::UnmergeCells { .. }
+            | XlsxEditOp::SetColumnWidth { .. }
+            | XlsxEditOp::SetRowHeight { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -546,6 +578,25 @@ fn patch_merge(original: &[u8], sheet: &str, edit: &merges::MergeEdit) -> Result
     let xml = entry_bytes(original, path)?;
     let mut replacements = BTreeMap::new();
     replacements.insert(path.clone(), merges::patch(&xml, edit)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_dimension(
+    original: &[u8],
+    sheet: &str,
+    edit: &dimensions::DimensionEdit,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), dimensions::patch(&xml, edit)?);
     let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),

@@ -66,6 +66,16 @@ pub enum XlsxEditOp {
         sheet: String,
         range: String,
     },
+    SetColumnWidth {
+        sheet: String,
+        column: String,
+        width: f64,
+    },
+    SetRowHeight {
+        sheet: String,
+        row: u32,
+        height: f64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

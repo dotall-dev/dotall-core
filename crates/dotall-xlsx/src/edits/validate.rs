@@ -48,6 +48,14 @@ pub fn validate(
     {
         return validate_merge_operations(model, operations);
     }
+    if operations.iter().any(|operation| {
+        matches!(
+            operation.kind.as_str(),
+            "set_column_width" | "set_row_height"
+        )
+    }) {
+        return validate_dimension_operations(model, operations);
+    }
 
     let workbook = decode(model)?;
     let graph = build(&workbook);
@@ -91,6 +99,14 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "merge_cells" | "unmerge_cells"))
     {
         return validate_merge_operations(model, operations);
+    }
+    if operations.iter().any(|operation| {
+        matches!(
+            operation.kind.as_str(),
+            "set_column_width" | "set_row_height"
+        )
+    }) {
+        return validate_dimension_operations(model, operations);
     }
     if operations.iter().all(|operation| {
         !matches!(
@@ -486,6 +502,155 @@ fn ranges_overlap(left: &RangeRef, right: &RangeRef) -> bool {
         || right.end.row < left.start.row
         || left_end_col < right_start_col
         || right_end_col < left_start_col)
+}
+
+fn validate_dimension_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "dimension edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| {
+            format_error(format!(
+                "{} requires a non-empty `sheet` field",
+                operation.kind
+            ))
+        })?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+
+    match operation.kind.as_str() {
+        "set_column_width" => {
+            let column_text = operation
+                .payload
+                .get("column")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|column| !column.is_empty())
+                .ok_or_else(|| {
+                    format_error("set_column_width requires a non-empty `column` field")
+                })?;
+            let column = canonicalize_column(column_text)?;
+            let width = required_positive_dimension(operation, "width")?;
+            if width > 255.0 {
+                return Err(format_error("set_column_width `width` must be at most 255"));
+            }
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "set_column_width".into(),
+                    payload: serde_json::json!({
+                        "sheet": canonical_sheet,
+                        "column": column,
+                        "width": width,
+                    }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: format!("{canonical_sheet}!{column}"),
+                    element_id: format!("col:{canonical_sheet}:{column}"),
+                    change: "set_column_width".into(),
+                    before: None,
+                    after: Some(format_dimension(width)),
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["refs parsed; values not evaluated".into()],
+                },
+            })
+        }
+        "set_row_height" => {
+            let row = operation
+                .payload
+                .get("row")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok())
+                .filter(|value| *value > 0)
+                .ok_or_else(|| format_error("set_row_height requires a positive `row` field"))?;
+            if row > crate::edits::transform::MAX_ROWS {
+                return Err(format_error(format!(
+                    "set_row_height `row` must be between 1 and {}",
+                    crate::edits::transform::MAX_ROWS
+                )));
+            }
+            let height = required_positive_dimension(operation, "height")?;
+            if height > 409.0 {
+                return Err(format_error("set_row_height `height` must be at most 409"));
+            }
+            Ok(ValidatedEdit {
+                format_id: FORMAT_ID.into(),
+                schema_id: SCHEMA_ID.into(),
+                schema_version: SCHEMA_VERSION,
+                operations: vec![SemanticOperation {
+                    kind: "set_row_height".into(),
+                    payload: serde_json::json!({
+                        "sheet": canonical_sheet,
+                        "row": row,
+                        "height": height,
+                    }),
+                }],
+                semantic_diff: vec![SemanticChange {
+                    target: format!("{canonical_sheet}!R{row}"),
+                    element_id: format!("row:{canonical_sheet}:{row}"),
+                    change: "set_row_height".into(),
+                    before: None,
+                    after: Some(format_dimension(height)),
+                }],
+                dependency_impact: DependencyImpact {
+                    forward: Vec::new(),
+                    notes: vec!["refs parsed; values not evaluated".into()],
+                },
+            })
+        }
+        _ => Err(format_error("unsupported dimension edit")),
+    }
+}
+
+fn canonicalize_column(column: &str) -> Result<String> {
+    let upper = column.to_ascii_uppercase();
+    if upper.is_empty()
+        || !upper.bytes().all(|byte| byte.is_ascii_uppercase())
+        || column_number(&upper) == 0
+        || column_number(&upper) > crate::edits::transform::MAX_COLUMNS
+    {
+        return Err(format_error(format!(
+            "set_column_width `column` must be a valid Excel column letter (got `{column}`)"
+        )));
+    }
+    Ok(upper)
+}
+
+fn required_positive_dimension(operation: &SemanticOperation, field: &str) -> Result<f64> {
+    operation
+        .payload
+        .get(field)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| format_error(format!("{} requires a positive `{field}`", operation.kind)))
+}
+
+fn format_dimension(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() <= i64::MAX as f64 {
+        format!("{}", value as i64)
+    } else {
+        let formatted = format!("{value}");
+        formatted
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_owned()
+    }
 }
 
 fn decode(model: &ArtifactEnvelope) -> Result<WorkbookModel> {
@@ -984,8 +1149,10 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::DeleteSheet { .. }
             | XlsxEditOp::MergeCells { .. }
-            | XlsxEditOp::UnmergeCells { .. } => {
-                unreachable!("sheet and merge edits are validated separately")
+            | XlsxEditOp::UnmergeCells { .. }
+            | XlsxEditOp::SetColumnWidth { .. }
+            | XlsxEditOp::SetRowHeight { .. } => {
+                unreachable!("sheet, merge, and dimension edits are validated separately")
             }
         })
         .collect()
@@ -1089,8 +1256,10 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::RenameSheet { .. }
         | XlsxEditOp::DeleteSheet { .. }
         | XlsxEditOp::MergeCells { .. }
-        | XlsxEditOp::UnmergeCells { .. } => {
-            unreachable!("sheet and merge edits are validated separately")
+        | XlsxEditOp::UnmergeCells { .. }
+        | XlsxEditOp::SetColumnWidth { .. }
+        | XlsxEditOp::SetRowHeight { .. } => {
+            unreachable!("sheet, merge, and dimension edits are validated separately")
         }
     }
 }

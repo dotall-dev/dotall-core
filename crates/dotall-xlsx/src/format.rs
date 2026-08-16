@@ -484,6 +484,28 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Removes the matching mergeCell ref; surgically patches only the target worksheet."
                 .into(),
         },
+        EditCapability {
+            operation: "set_column_width".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set a worksheet column width (character units).".into(),
+            example: json!({
+                "kind": "set_column_width",
+                "payload": { "sheet": "Sheet1", "column": "A", "width": 18.5 }
+            }),
+            safety: "Surgically patches only the target worksheet cols; other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_row_height".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set a worksheet row height (points).".into(),
+            example: json!({
+                "kind": "set_row_height",
+                "payload": { "sheet": "Sheet1", "row": 1, "height": 30.0 }
+            }),
+            safety: "Surgically patches only the target worksheet row attributes; other sheets stay byte-identical."
+                .into(),
+        },
     ]
 }
 
