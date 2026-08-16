@@ -11,7 +11,7 @@ cargo run -p dotall-cli --example generate_demos
 | [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header |
 | [`deck.pptx`](deck.pptx) | PPTX | Title + metrics table + speaker notes; second slide next-steps |
 | [`memo.docx`](memo.docx) | DOCX | Heading memo + status table + confidential header |
-| [`form.pdf`](form.pdf) | PDF | Intake form: Name, Email, Agree checkbox, Department choice; `/Info` metadata |
+| [`form.pdf`](form.pdf) | PDF | Intake form + page labels; Name/Email/Agree/Department; `/Info` metadata |
 
 Skills: [`xlsx`](../skills/xlsx/SKILL.md) · [`pptx`](../skills/pptx/SKILL.md) · [`docx`](../skills/docx/SKILL.md) · [`pdf`](../skills/pdf/SKILL.md)
 
@@ -150,12 +150,15 @@ $DOTALL apply demo/memo.docx --all
 Fields: `Name` (tx), `Email` (tx), `Agree` (btn checkbox, export `Yes`/`Off`),
 `Department` (ch: Engineering / Sales / Operations).
 `/Info`: Title `Vendor Intake Form`, Author `Dotall Demo`, Subject `Vendor onboarding`.
+Page text (labels): Vendor Intake Form, Name, Email, Agree to terms, Department.
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/form.pdf
 # summary.metadata.title / author / …; fields[].options for Department
+$DOTALL read demo/form.pdf --selector-kind page --selector 1
+# Vendor Intake Form / Name / Email / Agree to terms / Department
 $DOTALL read demo/form.pdf --selector-kind field --selector Department
 
 # Prior v0
