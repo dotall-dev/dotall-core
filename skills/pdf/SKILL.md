@@ -26,7 +26,8 @@ dotall_capabilities or dotall_inspect
 - `selector_kind=field` — field name (`Name`)
 - `selector_kind=full` — pages plus field list
 
-Text extraction is best-effort. Inspect `encrypted` and `has_signature` before editing.
+Text extraction is best-effort but operator-aware (`Tj` / `TJ` / `'` / `"`, line
+breaks from `Td` / `T*`). Inspect `encrypted` and `has_signature` before editing.
 Inspect `metadata` for `/Info` Title / Author / Subject / Creator / Producer when present.
 Checkbox fields (`btn`) may include `export_values` (e.g. `Yes`, `Off`) from `/AP /N`.
 Choice fields (`ch`) expose `options` from `/Opt` on inspect and field read.

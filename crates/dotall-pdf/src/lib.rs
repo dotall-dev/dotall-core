@@ -7,6 +7,7 @@ pub mod model;
 pub mod parser;
 pub mod projection;
 pub mod selector;
+pub mod text;
 
 pub const FORMAT_ID: &str = "pdf";
 

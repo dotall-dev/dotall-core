@@ -49,6 +49,36 @@ fn inspect_and_read_page_and_field() {
 }
 
 #[test]
+fn demo_form_page_read_returns_labels() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let page = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "page".into(),
+                    value: "1".into(),
+                }),
+                max_tokens: 2_000,
+                continuation: None,
+            },
+        )
+        .expect("read page");
+    assert!(
+        page.content.contains("Vendor Intake Form"),
+        "{}",
+        page.content
+    );
+    assert!(page.content.contains("Name"), "{}", page.content);
+    assert!(page.content.contains("Department"), "{}", page.content);
+}
+
+#[test]
 fn inspect_includes_info_metadata() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("form.pdf");

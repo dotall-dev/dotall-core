@@ -62,36 +62,7 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
 }
 
 fn page_text(document: &Document, page_id: lopdf::ObjectId, number: u32) -> String {
-    let literals = extract_literals(&document.get_page_content(page_id));
-    if !literals.is_empty() {
-        return literals;
-    }
-    document
-        .extract_text(&[number])
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
-}
-
-fn extract_literals(content: &[u8]) -> String {
-    let mut texts = Vec::new();
-    let mut cursor = 0;
-    while cursor < content.len() {
-        if content[cursor] == b'(' {
-            cursor += 1;
-            let mut bytes = Vec::new();
-            while cursor < content.len() && content[cursor] != b')' {
-                if content[cursor] == b'\\' && cursor + 1 < content.len() {
-                    cursor += 1;
-                }
-                bytes.push(content[cursor]);
-                cursor += 1;
-            }
-            texts.push(String::from_utf8_lossy(&bytes).into_owned());
-        }
-        cursor += 1;
-    }
-    texts.join(" ").trim().to_owned()
+    crate::text::page_text(document, page_id, number)
 }
 
 fn encrypted_stub(source_hash: &str) -> PdfDocumentModel {
