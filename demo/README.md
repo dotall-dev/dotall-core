@@ -8,7 +8,7 @@ cargo run -p dotall-cli --example generate_demos
 
 | File | Format | Agent workload |
 |------|--------|----------------|
-| [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header, percent/currency formats, seeded column widths |
+| [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header, percent/currency formats, seeded column widths + freeze panes at B2 |
 | [`deck.pptx`](deck.pptx) | PPTX | Title + metrics table + speaker notes; second slide next-steps |
 | [`memo.docx`](memo.docx) | DOCX | Heading memo + multi-run body + status table + confidential header |
 | [`form.pdf`](form.pdf) | PDF | Intake form + page labels; Name/Email/Agree/Priority/Department; `/Info` metadata |
@@ -74,6 +74,16 @@ $DOTALL edit demo/financials.xlsx --ops-json \
 $DOTALL apply demo/financials.xlsx --all
 $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"set_row_height","payload":{"sheet":"Inputs","row":1,"height":36}}]'
+$DOTALL apply demo/financials.xlsx --all
+
+# Wave 5: freeze_panes (sheet view); inspect shows freeze_panes
+$DOTALL inspect demo/financials.xlsx   # Inputs freeze_panes: B2 (seeded)
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"freeze_panes","payload":{"sheet":"Inputs","cell":"A2"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx   # expect freeze_panes A2
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"freeze_panes","payload":{"sheet":"Inputs","cell":"B2"}}]'
 $DOTALL apply demo/financials.xlsx --all
 
 $DOTALL history demo/financials.xlsx

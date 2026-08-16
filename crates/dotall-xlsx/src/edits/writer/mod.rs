@@ -1,4 +1,5 @@
 mod dimensions;
+mod freeze_panes;
 mod merges;
 mod package;
 mod shared_strings;

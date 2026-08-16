@@ -14,6 +14,7 @@ use crate::edits::transform::{Axis, AxisChange};
 use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
 use super::dimensions;
+use super::freeze_panes;
 use super::merges;
 use super::shared_strings;
 use super::structural;
@@ -74,6 +75,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 height: *height,
             },
         );
+    }
+    if let [XlsxEditOp::FreezePanes { sheet, cell }] = operations.as_slice() {
+        return patch_freeze_panes(&original, sheet, cell.as_deref());
     }
     if let [XlsxEditOp::AddSheet { name, after }] = operations.as_slice() {
         let patch = workbook::add_sheet(&original, name, after.as_deref())?;
@@ -191,6 +195,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::UnmergeCells { .. }
                 | XlsxEditOp::SetColumnWidth { .. }
                 | XlsxEditOp::SetRowHeight { .. }
+                | XlsxEditOp::FreezePanes { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -217,7 +222,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::MergeCells { .. }
             | XlsxEditOp::UnmergeCells { .. }
             | XlsxEditOp::SetColumnWidth { .. }
-            | XlsxEditOp::SetRowHeight { .. } => {
+            | XlsxEditOp::SetRowHeight { .. }
+            | XlsxEditOp::FreezePanes { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -597,6 +603,21 @@ fn patch_dimension(
     let xml = entry_bytes(original, path)?;
     let mut replacements = BTreeMap::new();
     replacements.insert(path.clone(), dimensions::patch(&xml, edit)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_freeze_panes(original: &[u8], sheet: &str, cell: Option<&str>) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), freeze_panes::patch(&xml, cell)?);
     let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),

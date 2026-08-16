@@ -20,6 +20,9 @@ pub struct SheetModel {
     pub index: u32,
     pub dimensions: SheetDimensions,
     pub merges: Vec<String>,
+    /// Openpyxl-style freeze cell (`B2` freezes row 1 + col A). Absent when unfrozen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freeze_panes: Option<String>,
     pub cells: Vec<CellModel>,
 }
 

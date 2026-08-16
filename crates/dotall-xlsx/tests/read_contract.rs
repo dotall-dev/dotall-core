@@ -122,6 +122,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "unmerge_cells",
             "set_column_width",
             "set_row_height",
+            "freeze_panes",
         ]
     );
     assert_eq!(
@@ -597,6 +598,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                     cols: 16_384,
                 },
                 merges: Vec::new(),
+                freeze_panes: None,
                 cells,
             }],
             named_ranges: Vec::new(),

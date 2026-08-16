@@ -78,6 +78,7 @@ impl FormatHandler for XlsxFormat {
                     "cols": sheet.dimensions.cols,
                     "formula_count": sheet.cells.iter().filter(|cell| cell.formula.is_some()).count(),
                     "merges": sheet.merges,
+                    "freeze_panes": sheet.freeze_panes,
                 })
             })
             .collect::<Vec<_>>();
@@ -504,6 +505,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Sheet1", "row": 1, "height": 30.0 }
             }),
             safety: "Surgically patches only the target worksheet row attributes; other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "freeze_panes".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Freeze worksheet panes at a cell (openpyxl-style), or clear with null/A1."
+                .into(),
+            example: json!({
+                "kind": "freeze_panes",
+                "payload": { "sheet": "Sheet1", "cell": "B2" }
+            }),
+            safety: "Surgically patches only the target worksheet sheetViews; other sheets stay byte-identical."
                 .into(),
         },
     ]

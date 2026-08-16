@@ -76,6 +76,11 @@ pub enum XlsxEditOp {
         row: u32,
         height: f64,
     },
+    FreezePanes {
+        sheet: String,
+        /// Openpyxl-style freeze cell; `None` clears freeze panes.
+        cell: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

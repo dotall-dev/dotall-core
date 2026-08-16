@@ -25,6 +25,7 @@ struct StyleCatalog {
 #[derive(Clone, Debug)]
 struct WorksheetPart {
     merges: Vec<String>,
+    freeze_panes: Option<String>,
     cell_styles: BTreeMap<String, u32>,
 }
 
@@ -68,6 +69,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                 .cloned()
                 .unwrap_or_else(|| WorksheetPart {
                     merges: Vec::new(),
+                    freeze_panes: None,
                     cell_styles: BTreeMap::new(),
                 });
             parse_sheet(
@@ -179,6 +181,7 @@ where
         index,
         dimensions,
         merges: part.merges,
+        freeze_panes: part.freeze_panes,
         cells,
     })
 }
@@ -225,11 +228,13 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
         let path = normalize_relationship_target(target);
         let worksheet = entry_bytes(package, &path, source)?;
         let merges = parse_merge_refs(&worksheet, source)?;
+        let freeze_panes = parse_freeze_panes(&worksheet, source)?;
         let cell_styles = parse_cell_style_indices(&worksheet, source)?;
         parts.insert(
             name,
             WorksheetPart {
                 merges,
+                freeze_panes,
                 cell_styles,
             },
         );
@@ -406,6 +411,70 @@ fn parse_u32_attr(value: &[u8]) -> Option<u32> {
     std::str::from_utf8(value)
         .ok()
         .and_then(|value| value.parse().ok())
+}
+
+fn parse_freeze_panes(xml: &[u8], source: &Path) -> Result<Option<String>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if local_name(element.name().as_ref()) == b"pane" =>
+            {
+                let mut state = None;
+                let mut top_left = None;
+                let mut x_split = 0.0_f64;
+                let mut y_split = 0.0_f64;
+                for attribute in element.attributes().flatten() {
+                    match local_name(attribute.key.as_ref()) {
+                        b"state" => {
+                            state =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
+                        b"topLeftCell" => {
+                            top_left =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
+                        b"xSplit" => {
+                            x_split = std::str::from_utf8(attribute.value.as_ref())
+                                .ok()
+                                .and_then(|value| value.parse().ok())
+                                .unwrap_or(0.0);
+                        }
+                        b"ySplit" => {
+                            y_split = std::str::from_utf8(attribute.value.as_ref())
+                                .ok()
+                                .and_then(|value| value.parse().ok())
+                                .unwrap_or(0.0);
+                        }
+                        _ => {}
+                    }
+                }
+                let frozen = state.as_deref().is_some_and(|value| {
+                    value.eq_ignore_ascii_case("frozen")
+                        || value.eq_ignore_ascii_case("frozenSplit")
+                });
+                if frozen {
+                    if let Some(cell) = top_left.filter(|value| !value.is_empty()) {
+                        return Ok(Some(cell.to_ascii_uppercase()));
+                    }
+                    let cols = x_split.floor().max(0.0) as u32;
+                    let rows = y_split.floor().max(0.0) as u32;
+                    if cols == 0 && rows == 0 {
+                        return Ok(None);
+                    }
+                    return Ok(Some(format!("{}{}", column_name(cols as usize), rows + 1)));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(None)
 }
 
 fn parse_merge_refs(xml: &[u8], source: &Path) -> Result<Vec<String>> {

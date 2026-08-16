@@ -106,6 +106,10 @@ pub(crate) fn parse_validated_operations(
                 row: required_positive_u32(operation, "row")?,
                 height: required_positive_f64(operation, "height")?,
             }),
+            "freeze_panes" => Ok(XlsxEditOp::FreezePanes {
+                sheet: required_string(operation, "sheet")?,
+                cell: optional_string(operation, "cell")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),

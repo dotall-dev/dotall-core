@@ -305,6 +305,7 @@ fn fixture_sheet(name: &str) -> SheetModel {
         index: 0,
         dimensions: SheetDimensions { rows: 10, cols: 2 },
         merges: Vec::new(),
+        freeze_panes: None,
         cells: Vec::new(),
     }
 }

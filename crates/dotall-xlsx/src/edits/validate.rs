@@ -56,6 +56,12 @@ pub fn validate(
     }) {
         return validate_dimension_operations(model, operations);
     }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "freeze_panes"))
+    {
+        return validate_freeze_panes_operations(model, operations);
+    }
 
     let workbook = decode(model)?;
     let graph = build(&workbook);
@@ -107,6 +113,12 @@ pub fn validate_with_source(
         )
     }) {
         return validate_dimension_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "freeze_panes"))
+    {
+        return validate_freeze_panes_operations(model, operations);
     }
     if operations.iter().all(|operation| {
         !matches!(
@@ -653,6 +665,80 @@ fn format_dimension(value: f64) -> String {
     }
 }
 
+fn validate_freeze_panes_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "freeze_panes edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "freeze_panes" {
+        return Err(format_error("unsupported freeze panes edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("freeze_panes requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.freeze_panes.clone();
+
+    let cell = match operation.payload.get("cell") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(format_error(
+                    "freeze_panes `cell` must be a non-empty cell address when present",
+                ));
+            }
+            let address = parse_address(trimmed)?;
+            let canonical = format_address(address);
+            if address.row == 1 && address.col == 1 {
+                None
+            } else {
+                Some(canonical)
+            }
+        }
+        _ => {
+            return Err(format_error(
+                "freeze_panes `cell` must be a cell address string or null",
+            ));
+        }
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "freeze_panes".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "cell": cell,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!freeze_panes"),
+            element_id: format!("freeze:{canonical_sheet}"),
+            change: "freeze_panes".into(),
+            before,
+            after: cell.clone(),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: vec!["refs parsed; values not evaluated".into()],
+        },
+    })
+}
+
 fn decode(model: &ArtifactEnvelope) -> Result<WorkbookModel> {
     if model.format_id != FORMAT_ID
         || model.schema_id != MODEL_SCHEMA_ID
@@ -1151,8 +1237,9 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::MergeCells { .. }
             | XlsxEditOp::UnmergeCells { .. }
             | XlsxEditOp::SetColumnWidth { .. }
-            | XlsxEditOp::SetRowHeight { .. } => {
-                unreachable!("sheet, merge, and dimension edits are validated separately")
+            | XlsxEditOp::SetRowHeight { .. }
+            | XlsxEditOp::FreezePanes { .. } => {
+                unreachable!("sheet, merge, dimension, and freeze edits are validated separately")
             }
         })
         .collect()
@@ -1258,8 +1345,9 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::MergeCells { .. }
         | XlsxEditOp::UnmergeCells { .. }
         | XlsxEditOp::SetColumnWidth { .. }
-        | XlsxEditOp::SetRowHeight { .. } => {
-            unreachable!("sheet, merge, and dimension edits are validated separately")
+        | XlsxEditOp::SetRowHeight { .. }
+        | XlsxEditOp::FreezePanes { .. } => {
+            unreachable!("sheet, merge, dimension, and freeze edits are validated separately")
         }
     }
 }
@@ -1327,6 +1415,7 @@ mod tests {
             index: 0,
             dimensions: SheetDimensions { rows: 10, cols: 4 },
             merges: Vec::new(),
+            freeze_panes: None,
             cells,
         }
     }

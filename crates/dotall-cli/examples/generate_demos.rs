@@ -41,6 +41,7 @@ fn write_financials(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     inputs.set_column_width(0, 14.0)?;
     inputs.set_column_width(1, 12.0)?;
     inputs.set_row_height(0, 22.0)?;
+    inputs.set_freeze_panes(1, 1)?;
     inputs.merge_range(0, 0, 0, 1, "Assumptions", &header)?;
     inputs.write_string(1, 0, "Rate")?;
     inputs.write_number_with_format(1, 1, 0.10, &percent)?;

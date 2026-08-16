@@ -66,6 +66,8 @@ From the response, capture:
 - Inspect `summary.named_ranges[]` — `{ name, formula }` (not names alone).
 - Inspect `summary.style_table[]` — `{ style_id }` for non-default cell styles
   used in the workbook (ids only; no full style writer).
+- Inspect `summary.sheets[].freeze_panes` — openpyxl-style freeze cell (e.g. `B2`),
+  or absent/null when panes are not frozen.
 
 Never assume an operation exists because another `.xlsx` supported it — always
 re-check after external edits or a failed apply.
@@ -120,6 +122,12 @@ Column width / row height (surgical worksheet `cols` / row attrs; other sheets b
 
 ```json
 { "kind": "set_row_height", "payload": { "sheet": "Sheet1", "row": 1, "height": 30.0 } }
+```
+
+Freeze panes (surgical worksheet `sheetViews`; `null` or `A1` clears):
+
+```json
+{ "kind": "freeze_panes", "payload": { "sheet": "Sheet1", "cell": "B2" } }
 ```
 
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
