@@ -317,6 +317,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "delete_paragraph".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Delete a paragraph by document-order index or element_id (body or table cell)."
+                    .into(),
+            example: json!({
+                "kind": "delete_paragraph",
+                "payload": { "index": 3 }
+            }),
+            safety:
+                "Patches only word/document.xml. Removes the entire w:p; subsequent indices shift down."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

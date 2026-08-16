@@ -83,6 +83,16 @@ Insert after an existing paragraph (body or table cell). Subsequent indices shif
 }
 ```
 
+Delete by document-order `index` or `element_id` (body or table cell). Subsequent
+indices shift down:
+
+```json
+{
+  "kind": "delete_paragraph",
+  "payload": { "index": 3 }
+}
+```
+
 Header / footer:
 
 ```json

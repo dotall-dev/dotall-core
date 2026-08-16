@@ -173,6 +173,13 @@ $DOTALL edit demo/memo.docx --ops-json \
 $DOTALL apply demo/memo.docx --all
 $DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:5'
 # expect index 3 = Action: confirm owners before Friday.
+
+# Wave 5 — delete the inserted action paragraph (index 3 after insert); later indices shift -1
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"delete_paragraph","payload":{"index":3}}]'
+$DOTALL apply demo/memo.docx --all
+$DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:5'
+# expect no "Action: confirm owners…" paragraph; table cells resume at index 3.
 ```
 
 ---

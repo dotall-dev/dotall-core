@@ -296,6 +296,116 @@ fn insert_paragraph_rejects_unknown_after_index() {
 }
 
 #[test]
+fn delete_paragraph_by_index_shifts_following() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "delete_paragraph".into(),
+                payload: serde_json::json!({ "index": 0 }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs.len(), 1);
+    assert_eq!(after.paragraphs[0].text, "Beta");
+    assert_eq!(after.paragraphs[0].index, 0);
+    assert_eq!(edit.semantic_diff[0].change, "delete_paragraph");
+    assert_eq!(edit.semantic_diff[0].before.as_deref(), Some("Alpha"));
+    assert_eq!(edit.semantic_diff[0].after, None);
+    assert_eq!(edit.semantic_diff[0].target, "paragraph:0");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn delete_paragraph_by_element_id() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let element_id = model.payload["paragraphs"][1]["element_id"]
+        .as_str()
+        .expect("element_id")
+        .to_owned();
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "delete_paragraph".into(),
+                payload: serde_json::json!({ "element_id": element_id }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs.len(), 1);
+    assert_eq!(after.paragraphs[0].text, "Alpha");
+    assert_eq!(edit.operations[0].payload["index"], 1);
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn delete_paragraph_removes_table_cell_paragraph() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    let before = fixture::table_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "delete_paragraph".into(),
+                payload: serde_json::json!({ "index": 1 }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs.len(), 2);
+    assert_eq!(after.paragraphs[0].text, "Intro");
+    assert_eq!(after.paragraphs[1].text, "CellB");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn delete_paragraph_rejects_unknown_index() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "delete_paragraph".into(),
+                payload: serde_json::json!({ "index": 9 }),
+            }],
+        )
+        .expect_err("unknown index must fail");
+
+    assert!(error.to_string().contains("paragraph `9`"));
+}
+
+#[test]
 fn set_header_paragraph_text_patches_only_header_part() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("table.docx");
