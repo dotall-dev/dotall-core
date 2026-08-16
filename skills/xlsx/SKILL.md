@@ -64,6 +64,8 @@ From the response, capture:
 - `suggested_reads` — good starting selectors when exploring a workbook.
 - Inspect `summary.sheets[].merges` — merged cell refs (e.g. `A1:B2`).
 - Inspect `summary.named_ranges[]` — `{ name, formula }` (not names alone).
+- Inspect `summary.style_table[]` — `{ style_id }` for non-default cell styles
+  used in the workbook (ids only; no full style writer).
 
 Never assume an operation exists because another `.xlsx` supported it — always
 re-check after external edits or a failed apply.
@@ -76,6 +78,8 @@ re-check after external edits or a failed apply.
   - `named_ranges` — JSON list of `{ name, formula, element_id }` (selector value
     unused).
   - `merges` — JSON `{ sheet, merges }` for one sheet (selector value = sheet name).
+  - `ast_range` — JSON cells include optional `style_id` and `number_format`
+    (e.g. `0%`, `$#,##0.00`) when the source cell has a non-default style.
 - **`dotall_deps`**: precedents or dependents for a cell (`Sheet1!B2`). Use before
   formula changes, row/column inserts, or sheet renames/deletes.
 

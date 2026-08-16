@@ -113,6 +113,9 @@ impl FormatHandler for XlsxFormat {
                     "name": range.name,
                     "formula": range.formula,
                 })).collect::<Vec<_>>(),
+                "style_table": workbook.style_table.iter().map(|entry| json!({
+                    "style_id": entry.style_id,
+                })).collect::<Vec<_>>(),
                 "preserved": ["charts", "pivots", "vba", "other_ooxml_parts"],
                 "structure": structure,
             }),

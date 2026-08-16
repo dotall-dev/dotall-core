@@ -8,10 +8,10 @@ cargo run -p dotall-cli --example generate_demos
 
 | File | Format | Agent workload |
 |------|--------|----------------|
-| [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header |
-| [`deck.pptx`](deck.pptx) | PPTX | Title + metrics table + speaker notes; second slide next-steps |
+| [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header, percent/currency formats |
+| [`deck.pptx`](deck.pptx) | PPTX | Title + body + metrics table; second slide next-steps |
 | [`memo.docx`](memo.docx) | DOCX | Heading memo + status table + confidential header |
-| [`form.pdf`](form.pdf) | PDF | Intake form + page labels; Name/Email/Agree/Department; `/Info` metadata |
+| [`form.pdf`](form.pdf) | PDF | Intake form: Name, Email, Agree checkbox, Department choice; `/Info` metadata |
 
 Skills: [`xlsx`](../skills/xlsx/SKILL.md) · [`pptx`](../skills/pptx/SKILL.md) · [`docx`](../skills/docx/SKILL.md) · [`pdf`](../skills/pdf/SKILL.md)
 
@@ -31,19 +31,22 @@ Use `./target/debug/dotall` below (or a release build). Paths are relative to th
 | Sheet | Cell | Value / formula |
 |-------|------|-----------------|
 | `Inputs` | A1:B1 | merged header `Assumptions` |
-| `Inputs` | B2 | `0.10` (Rate) — named range `Rate` |
-| `Inputs` | B3 | `100` (Base) |
-| `Revenue` | B2 / B3 | Jan / Feb amounts |
-| `Revenue` | B4 | `=B2+B3` (Total) |
-| `Revenue` | B5 | `=B4*Inputs!B2` (Commission) |
+| `Inputs` | B2 | `0.10` (Rate) — named range `Rate`, number format `0%` |
+| `Inputs` | B3 | `100` (Base) — number format `$#,##0.00` |
+| `Revenue` | B2 / B3 | Jan / Feb amounts (`$#,##0.00`) |
+| `Revenue` | B4 | `=B2+B3` (Total, currency) |
+| `Revenue` | B5 | `=B4*Inputs!B2` (Commission, currency) |
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/financials.xlsx
+# summary.style_table[] lists style_ids; cells carry number_format via ast_range
 $DOTALL read demo/financials.xlsx --selector-kind named_ranges
 $DOTALL read demo/financials.xlsx --selector-kind merges --selector Inputs
 $DOTALL read demo/financials.xlsx --range 'Revenue!A1:B5'
+$DOTALL read demo/financials.xlsx --selector-kind ast_range --selector 'Inputs!B2:B3'
+# expect B2 number_format "0%", B3 "$#,##0.00", plus style_id
 $DOTALL deps demo/financials.xlsx --cell 'Revenue!B5'
 
 # Prior v0 path
@@ -72,15 +75,13 @@ $DOTALL history demo/financials.xlsx
 
 ## PPTX — `deck.pptx`
 
-Slide 1: title `Q3 Product Review`, body blurb, table `Metrics` (NPS=42), speaker notes.
-Slide 2: `Next Steps`.
+Slide 1: title `Q3 Product Review`, body blurb, table `Metrics` (NPS=42). Slide 2: `Next Steps`.
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/deck.pptx
 $DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 1'
-$DOTALL read demo/deck.pptx --selector-kind notes --selector 'Slide 1'
 
 # Prior v0
 $DOTALL edit demo/deck.pptx --ops-json \
@@ -101,15 +102,9 @@ $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"delete_slide","payload":{"slide":"Slide 3"}}]'
 $DOTALL apply demo/deck.pptx --all
 $DOTALL inspect demo/deck.pptx   # expect 2 slides (updated title slide + blank)
-
-# Wave 3 — speaker notes (notes part only)
-$DOTALL edit demo/deck.pptx --ops-json \
-  '[{"kind":"set_notes_text","payload":{"slide":"Slide 1","text":"Call out the NPS jump to 58."}}]'
-$DOTALL apply demo/deck.pptx --all
-$DOTALL read demo/deck.pptx --selector-kind notes --selector 'Slide 1'
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2.
 
 ---
 
@@ -150,15 +145,12 @@ $DOTALL apply demo/memo.docx --all
 Fields: `Name` (tx), `Email` (tx), `Agree` (btn checkbox, export `Yes`/`Off`),
 `Department` (ch: Engineering / Sales / Operations).
 `/Info`: Title `Vendor Intake Form`, Author `Dotall Demo`, Subject `Vendor onboarding`.
-Page text (labels): Vendor Intake Form, Name, Email, Agree to terms, Department.
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/form.pdf
 # summary.metadata.title / author / …; fields[].options for Department
-$DOTALL read demo/form.pdf --selector-kind page --selector 1
-# Vendor Intake Form / Name / Email / Agree to terms / Department
 $DOTALL read demo/form.pdf --selector-kind field --selector Department
 
 # Prior v0

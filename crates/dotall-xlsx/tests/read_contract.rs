@@ -214,6 +214,106 @@ fn format_handler_inspects_merges_and_named_range_formulas() {
 }
 
 #[test]
+fn format_handler_surfaces_cell_number_format_and_style_id() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("styled.xlsx");
+
+    let percent = Format::new().set_num_format("0%");
+    let currency = Format::new().set_num_format("$#,##0.00");
+
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet().set_name("Inputs").expect("sheet");
+    sheet
+        .write_number_with_format(0, 0, 0.10, &percent)
+        .expect("percent cell");
+    sheet
+        .write_number_with_format(1, 0, 100.0, &currency)
+        .expect("currency cell");
+    workbook.save(&path).expect("workbook fixture");
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&path).expect("parse through handler");
+    let workbook_model = parse_workbook(&path).expect("parse workbook model");
+
+    let percent_cell = workbook_model.sheets[0]
+        .cells
+        .iter()
+        .find(|cell| cell.address == "A1")
+        .expect("percent cell");
+    assert_eq!(percent_cell.number_format.as_deref(), Some("0%"));
+    let percent_style = percent_cell.style_id.as_deref().expect("percent style_id");
+    assert!(
+        percent_style.starts_with("st_"),
+        "expected style_id prefix st_, got {percent_style}"
+    );
+
+    let currency_cell = workbook_model.sheets[0]
+        .cells
+        .iter()
+        .find(|cell| cell.address == "A2")
+        .expect("currency cell");
+    assert_eq!(currency_cell.number_format.as_deref(), Some("$#,##0.00"));
+    assert!(
+        currency_cell
+            .style_id
+            .as_ref()
+            .is_some_and(|id| id.starts_with("st_"))
+    );
+
+    assert!(
+        !workbook_model.style_table.is_empty(),
+        "style_table should list style entries used by the workbook"
+    );
+    assert!(
+        workbook_model
+            .style_table
+            .iter()
+            .any(|entry| entry.style_id == percent_style)
+    );
+
+    let inspection = handler.inspect(&model).expect("inspect workbook");
+    let style_table = inspection.summary["style_table"]
+        .as_array()
+        .expect("inspect style_table");
+    assert!(
+        !style_table.is_empty(),
+        "inspect summary should surface style_table ids"
+    );
+
+    let response = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "ast_range".into(),
+                    value: "Inputs!A1:A2".into(),
+                }),
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect("read ast_range");
+    let slice: serde_json::Value = serde_json::from_str(&response.content).expect("ast_range JSON");
+    let cells = slice["cells"].as_array().expect("cells");
+    let a1 = cells
+        .iter()
+        .find(|cell| cell["address"] == "A1")
+        .expect("A1 in projection");
+    assert_eq!(a1["number_format"], "0%");
+    assert!(
+        a1["style_id"]
+            .as_str()
+            .expect("style_id")
+            .starts_with("st_")
+    );
+    let a2 = cells
+        .iter()
+        .find(|cell| cell["address"] == "A2")
+        .expect("A2 in projection");
+    assert_eq!(a2["number_format"], "$#,##0.00");
+}
+
+#[test]
 fn format_handler_projects_markdown_range_with_drill_down_hint() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("financials.xlsx");

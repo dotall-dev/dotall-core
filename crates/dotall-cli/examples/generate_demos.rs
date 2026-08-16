@@ -34,25 +34,27 @@ fn demo_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 fn write_financials(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let mut workbook = Workbook::new();
     let header = Format::new().set_bold();
+    let percent = Format::new().set_num_format("0%");
+    let currency = Format::new().set_num_format("$#,##0.00");
 
     let inputs = workbook.add_worksheet().set_name("Inputs")?;
     inputs.merge_range(0, 0, 0, 1, "Assumptions", &header)?;
     inputs.write_string(1, 0, "Rate")?;
-    inputs.write_number(1, 1, 0.10)?;
+    inputs.write_number_with_format(1, 1, 0.10, &percent)?;
     inputs.write_string(2, 0, "Base")?;
-    inputs.write_number(2, 1, 100.0)?;
+    inputs.write_number_with_format(2, 1, 100.0, &currency)?;
 
     let revenue = workbook.add_worksheet().set_name("Revenue")?;
     revenue.write_string_with_format(0, 0, "Label", &header)?;
     revenue.write_string_with_format(0, 1, "Amount", &header)?;
     revenue.write_string(1, 0, "Jan")?;
-    revenue.write_number(1, 1, 100.0)?;
+    revenue.write_number_with_format(1, 1, 100.0, &currency)?;
     revenue.write_string(2, 0, "Feb")?;
-    revenue.write_number(2, 1, 150.0)?;
+    revenue.write_number_with_format(2, 1, 150.0, &currency)?;
     revenue.write_string(3, 0, "Total")?;
-    revenue.write_formula(3, 1, "=B2+B3")?;
+    revenue.write_formula_with_format(3, 1, "=B2+B3", &currency)?;
     revenue.write_string(4, 0, "Commission")?;
-    revenue.write_formula(4, 1, "=B4*Inputs!B2")?;
+    revenue.write_formula_with_format(4, 1, "=B4*Inputs!B2", &currency)?;
 
     workbook.define_name("Rate", "=Inputs!$B$2")?;
     workbook.save(path)?;
