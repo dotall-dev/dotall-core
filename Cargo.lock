@@ -368,6 +368,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "dotall-core",
+ "dotall-pptx",
  "dotall-xlsx",
  "predicates",
  "rust_xlsxwriter",
@@ -397,6 +398,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "dotall-core",
+ "dotall-pptx",
  "dotall-xlsx",
  "rmcp",
  "rust_xlsxwriter",
@@ -417,6 +419,22 @@ dependencies = [
  "flate2",
  "serde",
  "serde_json",
+ "zip 8.6.0",
+]
+
+[[package]]
+name = "dotall-pptx"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dotall-core",
+ "dotall-ooxml",
+ "flate2",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
  "zip 8.6.0",
 ]
 

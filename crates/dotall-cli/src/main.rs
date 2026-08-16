@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-#[cfg(feature = "xlsx")]
+#[cfg(any(feature = "xlsx", feature = "pptx"))]
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
@@ -37,12 +37,20 @@ enum Command {
     },
     Read {
         path: PathBuf,
-        #[arg(long, conflicts_with_all = ["sheet", "ast_range"])]
+        #[arg(long, conflicts_with_all = ["sheet", "ast_range", "selector_kind"])]
         range: Option<String>,
-        #[arg(long, conflicts_with_all = ["range", "ast_range"])]
+        #[arg(long, conflicts_with_all = ["range", "ast_range", "selector_kind"])]
         sheet: Option<String>,
-        #[arg(long, conflicts_with_all = ["range", "sheet"])]
+        #[arg(long, conflicts_with_all = ["range", "sheet", "selector_kind"])]
         ast_range: Option<String>,
+        #[arg(long, conflicts_with_all = ["range", "sheet", "ast_range"])]
+        selector_kind: Option<String>,
+        #[arg(
+            long,
+            conflicts_with_all = ["range", "sheet", "ast_range"],
+            requires = "selector_kind"
+        )]
+        selector: Option<String>,
         #[arg(long, default_value_t = 2_000)]
         max_tokens: usize,
         #[arg(long)]
@@ -204,7 +212,7 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
             }
         }
         Command::Inspect { path } => {
-            require_xlsx_support()?;
+            require_format_support()?;
             let (store, relative) = open_file_workspace(path)?;
             let mut engine = Engine::new(store, default_registry());
             let output = engine.inspect(&relative)?;
@@ -215,14 +223,16 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
             range,
             sheet,
             ast_range,
+            selector_kind,
+            selector,
             max_tokens,
             continuation,
         } => {
-            require_xlsx_support()?;
+            require_format_support()?;
             let (store, relative) = open_file_workspace(path)?;
             let mut engine = Engine::new(store, default_registry());
             let request = ReadRequest {
-                selector: selector_from_args(range, sheet, ast_range),
+                selector: selector_from_args(range, sheet, ast_range, selector_kind, selector),
                 max_tokens: *max_tokens,
                 continuation: continuation.clone(),
             };
@@ -282,9 +292,9 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "xlsx")]
+#[cfg(any(feature = "xlsx", feature = "pptx"))]
 fn run_edit(cli: &Cli, path: &Path, options: &EditOptions<'_>) -> dotall_core::Result<()> {
-    require_xlsx_support()?;
+    require_format_support()?;
     let (store, relative) = open_file_workspace(path)?;
     let mut engine = Engine::new(store, default_registry());
     let operations = build_operations(
@@ -313,14 +323,14 @@ fn run_edit(cli: &Cli, path: &Path, options: &EditOptions<'_>) -> dotall_core::R
     Ok(())
 }
 
-#[cfg(not(feature = "xlsx"))]
+#[cfg(not(any(feature = "xlsx", feature = "pptx")))]
 fn run_edit(_cli: &Cli, _path: &Path, _options: &EditOptions<'_>) -> dotall_core::Result<()> {
-    require_xlsx_support()
+    require_format_support()
 }
 
-#[cfg(feature = "xlsx")]
+#[cfg(any(feature = "xlsx", feature = "pptx"))]
 fn run_apply(cli: &Cli, path: &Path, tx: Option<Uuid>, all: bool) -> dotall_core::Result<()> {
-    require_xlsx_support()?;
+    require_format_support()?;
     let (store, relative) = open_file_workspace(path)?;
     let mut engine = Engine::new(store, default_registry());
 
@@ -345,14 +355,14 @@ fn run_apply(cli: &Cli, path: &Path, tx: Option<Uuid>, all: bool) -> dotall_core
     Ok(())
 }
 
-#[cfg(not(feature = "xlsx"))]
+#[cfg(not(any(feature = "xlsx", feature = "pptx")))]
 fn run_apply(_cli: &Cli, _path: &Path, _tx: Option<Uuid>, _all: bool) -> dotall_core::Result<()> {
-    require_xlsx_support()
+    require_format_support()
 }
 
-#[cfg(feature = "xlsx")]
+#[cfg(any(feature = "xlsx", feature = "pptx"))]
 fn run_discard(cli: &Cli, path: &Path, tx: Uuid) -> dotall_core::Result<()> {
-    require_xlsx_support()?;
+    require_format_support()?;
     let (store, relative) = open_file_workspace(path)?;
     let engine = Engine::new(store, default_registry());
     engine.discard(&relative, tx)?;
@@ -364,14 +374,14 @@ fn run_discard(cli: &Cli, path: &Path, tx: Uuid) -> dotall_core::Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "xlsx"))]
+#[cfg(not(any(feature = "xlsx", feature = "pptx")))]
 fn run_discard(_cli: &Cli, _path: &Path, _tx: Uuid) -> dotall_core::Result<()> {
-    require_xlsx_support()
+    require_format_support()
 }
 
-#[cfg(feature = "xlsx")]
+#[cfg(any(feature = "xlsx", feature = "pptx"))]
 fn run_staged(cli: &Cli, path: &Path) -> dotall_core::Result<()> {
-    require_xlsx_support()?;
+    require_format_support()?;
     let (store, relative) = open_file_workspace(path)?;
     let engine = Engine::new(store, default_registry());
     let edits = engine.staged(&relative)?;
@@ -392,14 +402,14 @@ fn run_staged(cli: &Cli, path: &Path) -> dotall_core::Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "xlsx"))]
+#[cfg(not(any(feature = "xlsx", feature = "pptx")))]
 fn run_staged(_cli: &Cli, _path: &Path) -> dotall_core::Result<()> {
-    require_xlsx_support()
+    require_format_support()
 }
 
-#[cfg(feature = "xlsx")]
+#[cfg(any(feature = "xlsx", feature = "pptx"))]
 fn run_history(cli: &Cli, path: &Path) -> dotall_core::Result<()> {
-    require_xlsx_support()?;
+    require_format_support()?;
     let (store, relative) = open_file_workspace(path)?;
     let engine = Engine::new(store, default_registry());
     let entries = engine.history(&relative)?;
@@ -418,14 +428,14 @@ fn run_history(cli: &Cli, path: &Path) -> dotall_core::Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "xlsx"))]
+#[cfg(not(any(feature = "xlsx", feature = "pptx")))]
 fn run_history(_cli: &Cli, _path: &Path) -> dotall_core::Result<()> {
-    require_xlsx_support()
+    require_format_support()
 }
 
-#[cfg(feature = "xlsx")]
+#[cfg(any(feature = "xlsx", feature = "pptx"))]
 fn run_diff(cli: &Cli, path: &Path, version: u64) -> dotall_core::Result<()> {
-    require_xlsx_support()?;
+    require_format_support()?;
     let (store, relative) = open_file_workspace(path)?;
     let engine = Engine::new(store, default_registry());
     let record = engine.diff(&relative, version)?;
@@ -433,14 +443,14 @@ fn run_diff(cli: &Cli, path: &Path, version: u64) -> dotall_core::Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "xlsx"))]
+#[cfg(not(any(feature = "xlsx", feature = "pptx")))]
 fn run_diff(_cli: &Cli, _path: &Path, _version: u64) -> dotall_core::Result<()> {
-    require_xlsx_support()
+    require_format_support()
 }
 
-#[cfg(feature = "xlsx")]
+#[cfg(any(feature = "xlsx", feature = "pptx"))]
 fn run_revert(cli: &Cli, path: &Path, version: u64, tx: Option<Uuid>) -> dotall_core::Result<()> {
-    require_xlsx_support()?;
+    require_format_support()?;
     let (store, relative) = open_file_workspace(path)?;
     let mut engine = Engine::new(store, default_registry());
     let staged = engine.revert(&relative, version, tx.unwrap_or_else(Uuid::new_v4))?;
@@ -448,14 +458,14 @@ fn run_revert(cli: &Cli, path: &Path, version: u64, tx: Option<Uuid>) -> dotall_
     Ok(())
 }
 
-#[cfg(not(feature = "xlsx"))]
+#[cfg(not(any(feature = "xlsx", feature = "pptx")))]
 fn run_revert(
     _cli: &Cli,
     _path: &Path,
     _version: u64,
     _tx: Option<Uuid>,
 ) -> dotall_core::Result<()> {
-    require_xlsx_support()
+    require_format_support()
 }
 
 fn build_operations(
@@ -613,7 +623,15 @@ fn selector_from_args(
     range: &Option<String>,
     sheet: &Option<String>,
     ast_range: &Option<String>,
+    selector_kind: &Option<String>,
+    selector: &Option<String>,
 ) -> Option<ReadSelector> {
+    if let Some(kind) = selector_kind {
+        return Some(ReadSelector {
+            kind: kind.clone(),
+            value: selector.clone().unwrap_or_default(),
+        });
+    }
     let (kind, value) = match (range, sheet, ast_range) {
         (Some(value), None, None) => ("range", value),
         (None, Some(value), None) => ("sheet", value),
@@ -638,7 +656,11 @@ fn run_deps(path: &Path, cell: &str, dependents: bool) -> dotall_core::Result<()
 
 #[cfg(not(feature = "xlsx"))]
 fn run_deps(_path: &Path, _cell: &str, _dependents: bool) -> dotall_core::Result<()> {
-    require_xlsx_support()
+    Err(DotallError::Format {
+        format_id: "dotall-cli".into(),
+        path: PathBuf::from("<build>"),
+        message: "XLSX support is disabled; rebuild with `--features xlsx`.".into(),
+    })
 }
 
 fn open_file_workspace(path: &Path) -> dotall_core::Result<(DotallStore, String)> {
@@ -664,29 +686,27 @@ fn open_file_workspace(path: &Path) -> dotall_core::Result<(DotallStore, String)
     Ok((store, relative))
 }
 
-#[cfg(feature = "xlsx")]
 fn default_registry() -> FormatRegistry {
     let mut registry = FormatRegistry::default();
+    #[cfg(feature = "xlsx")]
     registry.register(Arc::new(dotall_xlsx::XlsxFormat));
+    #[cfg(feature = "pptx")]
+    registry.register(Arc::new(dotall_pptx::PptxFormat));
     registry
 }
 
-#[cfg(not(feature = "xlsx"))]
-fn default_registry() -> FormatRegistry {
-    FormatRegistry::default()
-}
-
-#[cfg(feature = "xlsx")]
-fn require_xlsx_support() -> dotall_core::Result<()> {
+#[cfg(any(feature = "xlsx", feature = "pptx"))]
+fn require_format_support() -> dotall_core::Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "xlsx"))]
-fn require_xlsx_support() -> dotall_core::Result<()> {
+#[cfg(not(any(feature = "xlsx", feature = "pptx")))]
+fn require_format_support() -> dotall_core::Result<()> {
     Err(DotallError::Format {
         format_id: "dotall-cli".into(),
         path: PathBuf::from("<build>"),
-        message: "XLSX support is disabled; rebuild with `--features xlsx`.".into(),
+        message: "no format handlers are enabled; rebuild with `--features xlsx` and/or `--features pptx`."
+            .into(),
     })
 }
 
@@ -706,7 +726,7 @@ fn render_error(error: &DotallError, json: bool) {
     let next_action = match error {
         DotallError::WorkspaceNotInitialized(_) => "Run `dotall init <workspace>` first.",
         DotallError::Format { format_id, .. } if format_id == "dotall-cli" => {
-            "Rebuild dotall-cli with --features xlsx."
+            "Rebuild with --features xlsx and/or --features pptx."
         }
         _ => "Inspect the path and retry the operation.",
     };

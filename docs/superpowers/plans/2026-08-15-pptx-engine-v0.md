@@ -8,9 +8,42 @@
 
 **Tech Stack:** `zip`, `quick-xml`, `dotall-ooxml`, blake3, serde JSON.
 
-**Prerequisite:** [`2026-08-15-ooxml-shared-snapshots.md`](2026-08-15-ooxml-shared-snapshots.md)
+**Prerequisite:** [`2026-08-15-ooxml-shared-snapshots.md`](2026-08-15-ooxml-shared-snapshots.md) — **done on `feat/ooxml-shared-snapshots`.**
 
 **Design:** [`docs/superpowers/specs/2026-08-15-office-pdf-format-families-design.md`](../specs/2026-08-15-office-pdf-format-families-design.md)
+
+## Grounded APIs (after plan 1)
+
+Use these signatures; do not re-extract snapshot code:
+
+```rust
+dotall_ooxml::encode_package(bytes, format_id, manifest_schema_id, package_hash: Option<&str>)
+    -> Result<EncodedSnapshot>
+dotall_ooxml::decode_package(&encoded) -> Result<Vec<u8>>
+dotall_ooxml::has_zip_magic(prefix: &[u8]) -> bool
+dotall_ooxml::zip_contains_entry(package: &[u8], name: &str) -> bool
+```
+
+XLSX detection is now `.xlsx` + ZIP magic only (generic ZIP scores 0). PPTX must score 100 on `.pptx` + ZIP magic so it wins the registry.
+
+`XlsxFormat` wrappers: `crate::snapshot::encode` / `decode` still exist for XLSX tests; PPTX should call `dotall_ooxml` directly.
+
+CLI/MCP still register only `XlsxFormat` via `#[cfg(feature = "xlsx")]` exclusive empty-registry. Compose features independently:
+
+```rust
+fn default_registry() -> FormatRegistry {
+    let mut registry = FormatRegistry::default();
+    #[cfg(feature = "xlsx")]
+    registry.register(Arc::new(dotall_xlsx::XlsxFormat));
+    #[cfg(feature = "pptx")]
+    registry.register(Arc::new(dotall_pptx::PptxFormat));
+    registry
+}
+```
+
+Do not gate inspect/read/edit on `require_xlsx_support()` once PPTX is registered.
+
+**Branch:** `feat/pptx-engine-v0` (stacked on `feat/ooxml-shared-snapshots`).
 
 ## Global Constraints
 
