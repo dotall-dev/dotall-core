@@ -23,6 +23,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
     let operation = &operations[0];
     match operation.kind.as_str() {
         "set_paragraph_text" => validate_set_paragraph_text(model, operation),
+        "insert_paragraph" => validate_insert_paragraph(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -30,7 +31,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -72,6 +73,48 @@ fn validate_set_paragraph_text(
             change: "set_paragraph_text".into(),
             before: Some(paragraph.text.clone()),
             after: Some(text_payload.text),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_insert_paragraph(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let after = operation
+        .payload
+        .get("after")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format_error("`after` is required"))? as u32;
+    let text = required_str(&operation.payload, "text")?.to_owned();
+    let anchor = model
+        .paragraphs
+        .iter()
+        .find(|paragraph| paragraph.index == after)
+        .ok_or_else(|| format_error(format!("paragraph `{after}` was not found")))?;
+    let new_index = after.saturating_add(1);
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_paragraph".into(),
+            payload: serde_json::json!({
+                "after": after,
+                "text": text,
+                "element_id": anchor.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{new_index}"),
+            element_id: String::new(),
+            change: "insert_paragraph".into(),
+            before: None,
+            after: Some(text),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -165,6 +208,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 bytes,
             })
         }
+        "insert_paragraph" => {
+            let after = operation
+                .payload
+                .get("after")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`after` is required"))? as u32;
+            let text = required_str(&operation.payload, "text")?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = insert_paragraph_after(&original, after, text)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
         "set_header_paragraph_text" | "set_footer_paragraph_text" => {
             let part = required_str(&operation.payload, "part")?;
             let index = operation
@@ -191,6 +252,23 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             "unsupported validated edit `{other}`"
         ))),
     }
+}
+
+pub fn insert_paragraph_after(xml: &[u8], after: u32, text: &str) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(after as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{after}` was not found")))?;
+    let mut insertion = String::from("<w:p><w:r><w:t xml:space=\"preserve\">");
+    insertion.push_str(&xml_escape(text));
+    insertion.push_str("</w:t></w:r></w:p>");
+    let mut output = String::new();
+    output.push_str(&source[..span.1]);
+    output.push_str(&insertion);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
 }
 
 pub fn patch_paragraph_text(

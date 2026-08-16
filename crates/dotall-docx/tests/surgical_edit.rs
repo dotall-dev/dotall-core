@@ -215,6 +215,87 @@ fn demo_memo_multi_run_edit_preserves_bold_and_italic_rpr() {
 }
 
 #[test]
+fn insert_paragraph_after_body_index_shifts_following() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "insert_paragraph".into(),
+                payload: serde_json::json!({ "after": 0, "text": "Inserted" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs.len(), 3);
+    assert_eq!(after.paragraphs[0].text, "Alpha");
+    assert_eq!(after.paragraphs[1].text, "Inserted");
+    assert_eq!(after.paragraphs[2].text, "Beta");
+    assert_eq!(edit.semantic_diff[0].change, "insert_paragraph");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("Inserted"));
+    assert_eq!(edit.semantic_diff[0].target, "paragraph:1");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn insert_paragraph_after_table_cell_inserts_inside_cell() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    let before = fixture::table_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "insert_paragraph".into(),
+                payload: serde_json::json!({ "after": 1, "text": "ExtraInCell" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs.len(), 4);
+    assert_eq!(after.paragraphs[0].text, "Intro");
+    assert_eq!(after.paragraphs[1].text, "CellA");
+    assert_eq!(after.paragraphs[2].text, "ExtraInCell");
+    assert_eq!(after.paragraphs[3].text, "CellB");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn insert_paragraph_rejects_unknown_after_index() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "insert_paragraph".into(),
+                payload: serde_json::json!({ "after": 9, "text": "Nope" }),
+            }],
+        )
+        .expect_err("unknown after index must fail");
+
+    assert!(error.to_string().contains("paragraph `9`"));
+}
+
+#[test]
 fn set_header_paragraph_text_patches_only_header_part() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("table.docx");

@@ -303,6 +303,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "insert_paragraph".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Insert a new paragraph immediately after the given document-order index (body or table cell)."
+                    .into(),
+            example: json!({
+                "kind": "insert_paragraph",
+                "payload": { "after": 2, "text": "Action: confirm owners before Friday." }
+            }),
+            safety:
+                "Patches only word/document.xml. New paragraph is a single plain run; subsequent indices shift."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

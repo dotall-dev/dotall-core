@@ -74,6 +74,15 @@ Single operation per transaction:
 `element_id` is also accepted instead of `index`. Same op targets body or
 table-cell paragraphs by document-order index.
 
+Insert after an existing paragraph (body or table cell). Subsequent indices shift:
+
+```json
+{
+  "kind": "insert_paragraph",
+  "payload": { "after": 2, "text": "Action: confirm owners before Friday." }
+}
+```
+
 Header / footer:
 
 ```json

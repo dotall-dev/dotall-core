@@ -151,6 +151,13 @@ $DOTALL apply demo/memo.docx --all
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_header_paragraph_text","payload":{"part":"header1","index":0,"text":"CONFIDENTIAL - Updated"}}]'
 $DOTALL apply demo/memo.docx --all
+
+# Wave 4 — insert after body paragraph 2 (before the status table); later indices shift +1
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"insert_paragraph","payload":{"after":2,"text":"Action: confirm owners before Friday."}}]'
+$DOTALL apply demo/memo.docx --all
+$DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:5'
+# expect index 3 = Action: confirm owners before Friday.
 ```
 
 ---
