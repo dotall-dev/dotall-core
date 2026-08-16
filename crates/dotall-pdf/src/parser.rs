@@ -5,7 +5,7 @@ use lopdf::{Document, Object};
 
 use crate::FORMAT_ID;
 use crate::ids;
-use crate::model::{PdfDocumentModel, PdfFieldModel, PdfPageModel, SCHEMA_VERSION};
+use crate::model::{PdfDocumentModel, PdfFieldModel, PdfMetadata, PdfPageModel, SCHEMA_VERSION};
 
 pub fn parse_pdf(source: &Path) -> Result<PdfDocumentModel> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
@@ -48,6 +48,7 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
     let mut fields = Vec::new();
     collect_fields(&document, &mut fields)?;
     let outline = collect_outline(&document);
+    let metadata = collect_metadata(&document);
 
     Ok(PdfDocumentModel {
         document_id: ids::document_id(&source_hash, SCHEMA_VERSION),
@@ -56,6 +57,7 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
         fields,
         outline,
         encrypted: false,
+        metadata,
     })
 }
 
@@ -100,6 +102,23 @@ fn encrypted_stub(source_hash: &str) -> PdfDocumentModel {
         fields: Vec::new(),
         outline: Vec::new(),
         encrypted: true,
+        metadata: PdfMetadata::default(),
+    }
+}
+
+fn collect_metadata(document: &Document) -> PdfMetadata {
+    let Ok(info_obj) = document.trailer.get(b"Info") else {
+        return PdfMetadata::default();
+    };
+    let Some(dict) = resolve_dict(document, info_obj).ok().flatten() else {
+        return PdfMetadata::default();
+    };
+    PdfMetadata {
+        title: dict.get(b"Title").ok().and_then(object_string),
+        author: dict.get(b"Author").ok().and_then(object_string),
+        subject: dict.get(b"Subject").ok().and_then(object_string),
+        creator: dict.get(b"Creator").ok().and_then(object_string),
+        producer: dict.get(b"Producer").ok().and_then(object_string),
     }
 }
 
@@ -173,6 +192,7 @@ fn walk_field(
         .unwrap_or(0);
     let read_only = flags & 1 == 1;
     let export_values = collect_export_values(document, dict);
+    let options = collect_choice_options(document, dict);
     if let Some(field_type) = field_type.clone() {
         fields.push(PdfFieldModel {
             element_id: ids::field_id(&name, SCHEMA_VERSION),
@@ -180,6 +200,7 @@ fn walk_field(
             field_type,
             value,
             export_values,
+            options,
             page: None,
             read_only,
         });
@@ -232,6 +253,39 @@ fn finalize_export_values(mut values: Vec<String>) -> Vec<String> {
     values.sort();
     values.dedup();
     values
+}
+
+fn collect_choice_options(document: &Document, dict: &lopdf::Dictionary) -> Vec<String> {
+    let Ok(opt) = dict.get(b"Opt") else {
+        return Vec::new();
+    };
+    let Ok(Object::Array(items)) = dereference(document, opt) else {
+        return Vec::new();
+    };
+    let mut options = Vec::new();
+    for item in items {
+        let Ok(resolved) = dereference(document, item) else {
+            continue;
+        };
+        match resolved {
+            Object::String(_, _) | Object::Name(_) => {
+                if let Some(value) = object_string(resolved) {
+                    options.push(value);
+                }
+            }
+            Object::Array(pair) => {
+                // `/Opt` entries may be `[export display]`; agents set the export value.
+                if let Some(first) = pair.first()
+                    && let Ok(export_obj) = dereference(document, first)
+                    && let Some(export) = object_string(export_obj)
+                {
+                    options.push(export);
+                }
+            }
+            _ => {}
+        }
+    }
+    options
 }
 
 fn collect_outline(document: &Document) -> Vec<String> {

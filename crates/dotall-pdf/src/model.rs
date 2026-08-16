@@ -11,6 +11,22 @@ pub struct PdfDocumentModel {
     pub fields: Vec<PdfFieldModel>,
     pub outline: Vec<String>,
     pub encrypted: bool,
+    #[serde(default)]
+    pub metadata: PdfMetadata,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct PdfMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -29,6 +45,9 @@ pub struct PdfFieldModel {
     /// Appearance-state names from `/AP /N` (e.g. `Yes`, `Off`) when discoverable.
     #[serde(default)]
     pub export_values: Vec<String>,
+    /// Choice (`/Ch`) options from `/Opt` (export values agents can set).
+    #[serde(default)]
+    pub options: Vec<String>,
     pub page: Option<u32>,
     pub read_only: bool,
 }

@@ -10,8 +10,8 @@ cargo run -p dotall-cli --example generate_demos
 |------|--------|----------------|
 | [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header |
 | [`deck.pptx`](deck.pptx) | PPTX | Title + body + metrics table; second slide next-steps |
-| [`memo.docx`](memo.docx) | DOCX | Heading memo + status table (document-order paragraphs) |
-| [`form.pdf`](form.pdf) | PDF | Intake form: Name, Email, Agree checkbox |
+| [`memo.docx`](memo.docx) | DOCX | Heading memo + status table + confidential header |
+| [`form.pdf`](form.pdf) | PDF | Intake form: Name, Email, Agree checkbox, Department choice; `/Info` metadata |
 
 Skills: [`xlsx`](../skills/xlsx/SKILL.md) · [`pptx`](../skills/pptx/SKILL.md) · [`docx`](../skills/docx/SKILL.md) · [`pdf`](../skills/pdf/SKILL.md)
 
@@ -109,13 +109,16 @@ $DOTALL apply demo/memo.docx --all
 
 ## PDF — `form.pdf`
 
-Fields: `Name` (tx), `Email` (tx), `Agree` (btn checkbox, export `Yes`/`Off`).
+Fields: `Name` (tx), `Email` (tx), `Agree` (btn checkbox, export `Yes`/`Off`),
+`Department` (ch: Engineering / Sales / Operations).
+`/Info`: Title `Vendor Intake Form`, Author `Dotall Demo`, Subject `Vendor onboarding`.
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/form.pdf
-$DOTALL read demo/form.pdf --selector-kind field --selector Name
+# summary.metadata.title / author / …; fields[].options for Department
+$DOTALL read demo/form.pdf --selector-kind field --selector Department
 
 # Prior v0
 $DOTALL edit demo/form.pdf --ops-json \
@@ -125,6 +128,11 @@ $DOTALL apply demo/form.pdf --all
 # Wave 1
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field","payload":{"name":"Agree","value":"Yes"}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 2
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field","payload":{"name":"Department","value":"Sales"}}]'
 $DOTALL apply demo/form.pdf --all
 ```
 

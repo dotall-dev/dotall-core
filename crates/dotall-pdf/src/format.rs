@@ -10,7 +10,7 @@ use serde_json::json;
 
 use crate::detection;
 use crate::edits;
-use crate::model::{PdfDocumentModel, SCHEMA_ID, SCHEMA_VERSION};
+use crate::model::{PdfDocumentModel, PdfFieldModel, PdfMetadata, SCHEMA_ID, SCHEMA_VERSION};
 use crate::{FORMAT_ID, parser, projection, selector};
 
 const AVAILABLE_READS: [&str; 3] = ["read.full", "read.page", "read.field"];
@@ -61,8 +61,10 @@ impl FormatHandler for PdfFormat {
             summary: json!({
                 "page_count": document.page_count,
                 "field_names": document.fields.iter().map(|field| &field.name).collect::<Vec<_>>(),
+                "fields": document.fields.iter().map(field_summary).collect::<Vec<_>>(),
                 "encrypted": document.encrypted,
                 "has_signature": document.fields.iter().any(|field| field.field_type == "sig"),
+                "metadata": metadata_summary(&document.metadata),
             }),
             capabilities: capabilities(),
             edit_capabilities: edit_capabilities(),
@@ -115,13 +117,7 @@ impl FormatHandler for PdfFormat {
             }
             "field" => {
                 let field = selector::resolve_field(&document, value).map_err(selector_error)?;
-                Ok(projection::render_field(
-                    &field.name,
-                    &field.field_type,
-                    &field.value,
-                    request.max_tokens,
-                    offset,
-                ))
+                Ok(projection::render_field(field, request.max_tokens, offset))
             }
             other => Err(unsupported(other)),
         }
@@ -154,6 +150,31 @@ fn decode(model: &ArtifactEnvelope) -> Result<PdfDocumentModel> {
     serde_json::from_value(model.payload.clone()).map_err(|source| DotallError::Serialization {
         context: "PDF document artifact payload".into(),
         source,
+    })
+}
+
+fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
+    let mut summary = json!({
+        "name": field.name,
+        "field_type": field.field_type,
+        "value": field.value,
+    });
+    if !field.export_values.is_empty() {
+        summary["export_values"] = json!(field.export_values);
+    }
+    if !field.options.is_empty() {
+        summary["options"] = json!(field.options);
+    }
+    summary
+}
+
+fn metadata_summary(metadata: &PdfMetadata) -> serde_json::Value {
+    json!({
+        "title": metadata.title,
+        "author": metadata.author,
+        "subject": metadata.subject,
+        "creator": metadata.creator,
+        "producer": metadata.producer,
     })
 }
 
