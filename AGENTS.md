@@ -41,6 +41,7 @@ dotall/
 ├── Cargo.toml               # [workspace]
 ├── crates/
 │   ├── dotall-core/         # store, registry, pipeline, read, history, orchestration
+│   ├── dotall-ooxml/        # shared ZIP part snapshots + package probes (not a format)
 │   ├── dotall-xlsx/         # typed model, processors, views, edits, OOXML writer
 │   ├── dotall-cli/          # bin: `dotall`
 │   └── dotall-mcp/          # bin: stdio MCP server (`dotall-mcp`)
