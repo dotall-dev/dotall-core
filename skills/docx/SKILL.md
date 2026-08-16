@@ -20,7 +20,7 @@ For `.docx` files in an initialized Dotall workspace:
 - **Do not** unzip the package or rewrite `word/document.xml` by hand.
 - **Do not** hardcode operations — discover them per file.
 
-Dotall patches only `word/document.xml` for v0 paragraph edits. Untouched ZIP
+Dotall patches only `word/document.xml` for paragraph edits. Untouched ZIP
 parts stay byte-identical.
 
 ## Prerequisites
@@ -43,10 +43,16 @@ dotall_capabilities or dotall_inspect
 
 ### Read
 
-- `selector_kind=full` — numbered body paragraphs (`0. text`).
+- `selector_kind=full` — numbered paragraphs (`0. text`).
 - `selector_kind=paragraphs` — `0:2` (start inclusive, end exclusive) or a single index `0`.
 
-v0 **skips table paragraphs**. Inspect `skipped_tables` if the document has tables.
+**Indexing:** paragraphs are numbered in **document order** across the body of
+`word/document.xml`, including table cell paragraphs. A body paragraph followed
+by a 1×2 table yields indices `0` (body), `1` (first cell), `2` (second cell).
+Inspect reports `table_count` and `skipped_tables: false` when tables are modeled.
+
+Header/footer paragraphs are not included yet (`skipped_tables` stays false;
+headers are simply absent from the model).
 
 v0 does not expose `dotall_deps`.
 
@@ -61,9 +67,10 @@ Single operation per transaction:
 }
 ```
 
-`element_id` is also accepted instead of `index`.
+`element_id` is also accepted instead of `index`. Same op targets body or
+table-cell paragraphs by document-order index.
 
 Rejected: tracked changes (`w:ins`/`w:del`), content controls (`w:sdt`), fields.
-No header/footer/comment/style/table edits in v0.
+No header/footer/comment/style edits yet.
 
 Keeps `w:pPr` and clones the first run’s `w:rPr` when present.

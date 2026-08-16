@@ -55,6 +55,38 @@ fn rejects_tracked_changes() {
     assert!(error.to_string().contains("tracked changes"));
 }
 
+#[test]
+fn set_paragraph_text_edits_table_cell_and_leaves_header_media_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    let before = fixture::table_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(
+        model.payload["paragraphs"].as_array().expect("paras").len(),
+        3
+    );
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_text".into(),
+                payload: serde_json::json!({ "index": 1, "text": "UpdatedA" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs[0].text, "Intro");
+    assert_eq!(after.paragraphs[1].text, "UpdatedA");
+    assert_eq!(after.paragraphs[2].text, "CellB");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);

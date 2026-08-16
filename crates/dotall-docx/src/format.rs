@@ -80,6 +80,7 @@ impl FormatHandler for DocxFormat {
             summary: json!({
                 "paragraph_count": document.paragraphs.len(),
                 "headings": headings,
+                "table_count": document.table_count,
                 "skipped_tables": document.skipped_tables,
             }),
             capabilities: capabilities(),
@@ -218,13 +219,15 @@ fn edit_capabilities() -> Vec<EditCapability> {
     vec![EditCapability {
         operation: "set_paragraph_text".into(),
         schema_version: SCHEMA_VERSION,
-        description: "Replace the text of one body paragraph (tables are skipped in v0).".into(),
+        description:
+            "Replace the text of one body or table-cell paragraph (document-order index)."
+                .into(),
         example: json!({
             "kind": "set_paragraph_text",
             "payload": { "index": 1, "text": "Gamma" }
         }),
         safety:
-            "Rejects tracked changes, content controls, and fields. Patches only word/document.xml."
+            "Rejects tracked changes, content controls, and fields. Patches only word/document.xml. Header/footer parts are not modeled yet."
                 .into(),
     }]
 }

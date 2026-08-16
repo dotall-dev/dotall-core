@@ -7,8 +7,12 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub struct DocumentModel {
     pub document_id: String,
     pub paragraphs: Vec<ParagraphModel>,
+    /// Always false when table cell paragraphs are included in `paragraphs`.
     #[serde(default)]
     pub skipped_tables: bool,
+    /// Number of top-level `w:tbl` elements in `word/document.xml`.
+    #[serde(default)]
+    pub table_count: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

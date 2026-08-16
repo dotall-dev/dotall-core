@@ -154,31 +154,12 @@ fn resolve_paragraph<'a>(
 fn paragraph_spans(xml: &str) -> Result<Vec<(usize, usize)>> {
     let mut spans = Vec::new();
     let mut cursor = 0;
-    let mut table_depth = 0u32;
     while cursor < xml.len() {
         let rest = &xml[cursor..];
-        let next_tbl = rest.find("<w:tbl");
-        let next_tbl_end = rest.find("</w:tbl>");
-        let next_p = find_paragraph_open(rest);
-        let next = [next_tbl, next_tbl_end, next_p].into_iter().flatten().min();
-        let Some(rel) = next else {
+        let Some(rel) = find_paragraph_open(rest) else {
             break;
         };
-        if Some(rel) == next_tbl {
-            table_depth += 1;
-            cursor += rel + 6;
-            continue;
-        }
-        if Some(rel) == next_tbl_end {
-            table_depth = table_depth.saturating_sub(1);
-            cursor += rel + 8;
-            continue;
-        }
         let start = cursor + rel;
-        if table_depth > 0 {
-            cursor = start + 4;
-            continue;
-        }
         let end = paragraph_end(xml, start)?;
         spans.push((start, end));
         cursor = end;

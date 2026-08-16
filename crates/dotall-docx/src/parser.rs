@@ -23,11 +23,12 @@ pub fn parse_document_bytes(package: &[u8]) -> Result<DocumentModel> {
     let mut archive = ZipArchive::new(Cursor::new(package))
         .map_err(|error| format_error(format!("invalid DOCX package: {error}")))?;
     let document_xml = zip_entry(&mut archive, "word/document.xml")?;
-    let (paragraphs, skipped_tables) = parse_body(&document_xml)?;
+    let (paragraphs, table_count) = parse_body(&document_xml)?;
     Ok(DocumentModel {
         document_id: ids::document_id(&source_hash, SCHEMA_VERSION),
         paragraphs,
-        skipped_tables,
+        skipped_tables: false,
+        table_count,
     })
 }
 
@@ -42,12 +43,12 @@ fn zip_entry(archive: &mut ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<
     Ok(bytes)
 }
 
-fn parse_body(xml: &[u8]) -> Result<(Vec<ParagraphModel>, bool)> {
+fn parse_body(xml: &[u8]) -> Result<(Vec<ParagraphModel>, u32)> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
     let mut paragraphs = Vec::new();
-    let mut skipped_tables = false;
+    let mut table_count = 0u32;
     let mut table_depth = 0u32;
     let mut in_paragraph = false;
     let mut texts = Vec::new();
@@ -61,13 +62,15 @@ fn parse_body(xml: &[u8]) -> Result<(Vec<ParagraphModel>, bool)> {
             .map_err(|error| format_error(format!("invalid document XML: {error}")))?
         {
             Event::Start(tag) if tag.local_name().as_ref() == b"tbl" => {
+                if table_depth == 0 {
+                    table_count += 1;
+                }
                 table_depth += 1;
-                skipped_tables = true;
             }
             Event::End(tag) if tag.local_name().as_ref() == b"tbl" => {
                 table_depth = table_depth.saturating_sub(1);
             }
-            Event::Start(tag) if tag.local_name().as_ref() == b"p" && table_depth == 0 => {
+            Event::Start(tag) if tag.local_name().as_ref() == b"p" => {
                 in_paragraph = true;
                 texts.clear();
                 style_id = None;
@@ -117,7 +120,7 @@ fn parse_body(xml: &[u8]) -> Result<(Vec<ParagraphModel>, bool)> {
         }
         buffer.clear();
     }
-    Ok((paragraphs, skipped_tables))
+    Ok((paragraphs, table_count))
 }
 
 fn attribute_val(tag: &quick_xml::events::BytesStart<'_>, name: &[u8]) -> Result<Option<String>> {
@@ -161,5 +164,18 @@ mod tests {
         assert_eq!(model.paragraphs[0].text, "Alpha");
         assert_eq!(model.paragraphs[1].text, "Beta");
         assert_eq!(model.paragraphs[0].style_id.as_deref(), Some("Heading1"));
+        assert_eq!(model.table_count, 0);
+        assert!(!model.skipped_tables);
+    }
+
+    #[test]
+    fn parses_table_cell_paragraphs_in_document_order() {
+        let model = parse_document_bytes(&crate::fixture::table_docx()).expect("parse");
+        assert_eq!(model.paragraphs.len(), 3);
+        assert_eq!(model.paragraphs[0].text, "Intro");
+        assert_eq!(model.paragraphs[1].text, "CellA");
+        assert_eq!(model.paragraphs[2].text, "CellB");
+        assert_eq!(model.table_count, 1);
+        assert!(!model.skipped_tables);
     }
 }
