@@ -9,9 +9,9 @@ cargo run -p dotall-cli --example generate_demos
 | File | Format | Agent workload |
 |------|--------|----------------|
 | [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header, percent/currency formats |
-| [`deck.pptx`](deck.pptx) | PPTX | Title + body + metrics table; second slide next-steps |
+| [`deck.pptx`](deck.pptx) | PPTX | Title + metrics table + speaker notes; second slide next-steps |
 | [`memo.docx`](memo.docx) | DOCX | Heading memo + multi-run body + status table + confidential header |
-| [`form.pdf`](form.pdf) | PDF | Intake form: Name, Email, Agree checkbox, Department choice; `/Info` metadata |
+| [`form.pdf`](form.pdf) | PDF | Intake form + page labels; Name/Email/Agree/Department; `/Info` metadata |
 
 Skills: [`xlsx`](../skills/xlsx/SKILL.md) · [`pptx`](../skills/pptx/SKILL.md) · [`docx`](../skills/docx/SKILL.md) · [`pdf`](../skills/pdf/SKILL.md)
 
@@ -75,13 +75,15 @@ $DOTALL history demo/financials.xlsx
 
 ## PPTX — `deck.pptx`
 
-Slide 1: title `Q3 Product Review`, body blurb, table `Metrics` (NPS=42). Slide 2: `Next Steps`.
+Slide 1: title `Q3 Product Review`, body blurb, table `Metrics` (NPS=42), speaker notes.
+Slide 2: `Next Steps`.
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/deck.pptx
 $DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 1'
+$DOTALL read demo/deck.pptx --selector-kind notes --selector 'Slide 1'
 
 # Prior v0
 $DOTALL edit demo/deck.pptx --ops-json \
@@ -102,9 +104,15 @@ $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"delete_slide","payload":{"slide":"Slide 3"}}]'
 $DOTALL apply demo/deck.pptx --all
 $DOTALL inspect demo/deck.pptx   # expect 2 slides (updated title slide + blank)
+
+# Wave 3 — speaker notes (notes part only)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_notes_text","payload":{"slide":"Slide 1","text":"Call out the NPS jump to 58."}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL read demo/deck.pptx --selector-kind notes --selector 'Slide 1'
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part.
 
 ---
 
@@ -152,12 +160,15 @@ $DOTALL apply demo/memo.docx --all
 Fields: `Name` (tx), `Email` (tx), `Agree` (btn checkbox, export `Yes`/`Off`),
 `Department` (ch: Engineering / Sales / Operations).
 `/Info`: Title `Vendor Intake Form`, Author `Dotall Demo`, Subject `Vendor onboarding`.
+Page text (labels): Vendor Intake Form, Name, Email, Agree to terms, Department.
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/form.pdf
 # summary.metadata.title / author / …; fields[].options for Department
+$DOTALL read demo/form.pdf --selector-kind page --selector 1
+# Vendor Intake Form / Name / Email / Agree to terms / Department
 $DOTALL read demo/form.pdf --selector-kind field --selector Department
 
 # Prior v0

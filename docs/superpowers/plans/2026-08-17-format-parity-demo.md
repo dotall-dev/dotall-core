@@ -305,6 +305,17 @@ Execute after Wave 2 integrates (merge/unmerge, add/delete slide, headers/footer
 
 Each task ends with the standing demo gate (README + regenerate + CLI smoke new + prior paths).
 
+## Wave 4 — next openpyxl-class gaps (parallel)
+
+After Wave 3 integrates:
+
+1. **XLSX:** surgical `set_column_width` and/or `set_row_height` (sheet dims write) — demo-visible layout control without a full style engine
+2. **PPTX:** `move_slide` / reorder (or `duplicate_slide` if safer) — keep add/delete/notes working
+3. **DOCX:** `insert_paragraph` after index (body; optionally table) — thin vertical slice
+4. **PDF:** `set_document_metadata` for `/Info` Title/Author/Subject (edit path for Wave 2 inspect)
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
