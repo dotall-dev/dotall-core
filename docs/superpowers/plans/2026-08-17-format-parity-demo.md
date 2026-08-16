@@ -292,9 +292,28 @@ Execute in priority order when Wave 1 demo bar is met for all four formats:
 4. P3 notes edit
 5. F3 choice options + F2 if not done
 6. XLSX `merges`/`named_ranges` dedicated selectors if only inspect was done in X1
-7. Demo README multi-format story + sample files under `demo/`
+7. Keep expanding demos as Wave 2+ ops land (standing demo gate above)
 
 ---
+
+## Standing requirement — end every format wave with demos
+
+After **each** format wave completes (Wave 1 and every future wave):
+
+1. **Improve `demo/`** for that format with realistic examples (not only tiny test stubs):
+   - Expand `demo/README.md` with a short CLI walkthrough per touched format.
+   - Add/update demo files under `demo/` (`financials.xlsx`, `deck.pptx`, `memo.docx`,
+     `form.pdf`, …) that look like real agent workloads.
+   - Prefer regenerating via `cargo run -p dotall-cli --example generate_demos`
+     (crate `demo_*` fixtures + rust_xlsxwriter). Keep binaries small; document generation.
+   - Wire MCP example / skill pointers so agents know the demo paths.
+2. **Verify nothing broke**
+   - `cargo test -p <touched crates>`; periodically `--workspace` + clippy `-D warnings`
+   - CLI smoke on BOTH the wave’s new capability AND prior v0 paths using `demo/` files
+     (xlsx `set_cell_value`/read/deps; pptx `set_shape_text`; docx `set_paragraph_text`;
+     pdf `set_form_field`)
+   - Fix any broken demo or test before starting the next wave
+3. Commit demo + README updates on `feat/format-parity-demo`; push; **do not merge**.
 
 ## Verification gates (every wave)
 
@@ -305,16 +324,11 @@ cargo clippy -p <touched-crate> -- -D warnings
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo fmt --check
+cargo run -p dotall-cli --example generate_demos
+# then CLI smoke from demo/README.md
 ```
 
-CLI smoke pattern (`/tmp/dotall-parity-<format>`):
-
-```bash
-cargo build -p dotall-cli
-DOTALL=./target/debug/dotall
-$DOTALL init /tmp/dotall-parity-xlsx
-# copy fixture → inspect → read → edit → apply → history
-```
+CLI smoke uses committed files under `demo/` (preferred) or `/tmp` copies.
 
 ---
 

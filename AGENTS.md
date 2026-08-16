@@ -18,7 +18,10 @@ brainstorming notes live elsewhere.
 - `skills/pptx/SKILL.md` — agent workflow for `.pptx` via Dotall MCP.
 - `skills/docx/SKILL.md` — agent workflow for `.docx` via Dotall MCP.
 - `skills/pdf/SKILL.md` — agent workflow for `.pdf` form fill via Dotall MCP.
-- `demo/README.md` — sample workbook + CLI/MCP walkthrough.
+- `demo/README.md` — multi-format samples (`financials.xlsx`, `deck.pptx`, `memo.docx`,
+  `form.pdf`) + CLI/MCP walkthroughs. Regenerate with
+  `cargo run -p dotall-cli --example generate_demos`. After each format capability
+  wave, refresh demos + README and CLI-smoke both new ops and prior v0 paths.
 
 Specs are the source of truth. If code and spec disagree, fix one deliberately —
 don't silently drift.

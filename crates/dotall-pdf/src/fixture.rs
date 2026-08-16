@@ -27,6 +27,26 @@ pub fn minimal_checkbox_pdf() -> Vec<u8> {
     ])
 }
 
+/// Intake form: Name + Email text fields and Agree checkbox (demo/`form.pdf`).
+pub fn demo_form_pdf() -> Vec<u8> {
+    assemble(&[
+        "1 0 obj<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>endobj\n",
+        "2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n",
+        "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 300] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> /Annots [7 0 R 9 0 R 11 0 R] >>endobj\n",
+        "4 0 obj<< /Length 58 >>stream\nBT /F1 16 Tf 20 260 Td (Vendor Intake Form) Tj ET\nendstream\nendobj\n",
+        "5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n",
+        "6 0 obj<< /Fields [8 0 R 10 0 R 12 0 R] /NeedAppearances true >>endobj\n",
+        "7 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 210 280 235] /P 3 0 R /Parent 8 0 R /F 4 >>endobj\n",
+        "8 0 obj<< /FT /Tx /T (Name) /V (Ada Lovelace) /Kids [7 0 R] >>endobj\n",
+        "9 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 170 280 195] /P 3 0 R /Parent 10 0 R /F 4 >>endobj\n",
+        "10 0 obj<< /FT /Tx /T (Email) /V (ada@example.com) /Kids [9 0 R] >>endobj\n",
+        "11 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 120 100 140] /P 3 0 R /Parent 12 0 R /F 4 /AS /Off /AP << /N << /Yes 13 0 R /Off 14 0 R >> >> >>endobj\n",
+        "12 0 obj<< /FT /Btn /T (Agree) /V /Off /Kids [11 0 R] >>endobj\n",
+        "13 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+        "14 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+    ])
+}
+
 fn assemble(objects: &[&str]) -> Vec<u8> {
     let mut body = String::from("%PDF-1.4\n%\u{00e2}\u{00e3}\u{00cf}\u{00d3}\n");
     let mut offsets = Vec::new();

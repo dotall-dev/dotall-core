@@ -1,85 +1,149 @@
 # Dotall demo workspace
 
-Sample spreadsheet for a 3–5 minute walkthrough of Dotall CLI and MCP.
+Multi-format samples for CLI and MCP walkthroughs. Regenerate after format changes:
 
-## Workbook: `financials.xlsx`
+```bash
+cargo run -p dotall-cli --example generate_demos
+```
 
-| Sheet | Cell | Value / formula |
-|-------|------|-----------------|
-| `Inputs` | B2 | `0.10` (Rate) |
-| `Inputs` | B3 | `100` (Base) |
-| `Revenue` | B2 | `100` (Jan) |
-| `Revenue` | B3 | `150` (Feb) |
-| `Revenue` | B4 | `=B2+B3` (Total) |
-| `Revenue` | B5 | `=B4*Inputs!B2` (Commission) |
+| File | Format | Agent workload |
+|------|--------|----------------|
+| [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header |
+| [`deck.pptx`](deck.pptx) | PPTX | Title + body + metrics table; second slide next-steps |
+| [`memo.docx`](memo.docx) | DOCX | Heading memo + status table (document-order paragraphs) |
+| [`form.pdf`](form.pdf) | PDF | Intake form: Name, Email, Agree checkbox |
 
-Dependency story: changing **Rate** (`Inputs!B2`) affects **Commission** (`Revenue!B5`) via **Total** (`Revenue!B4`).
+Skills: [`xlsx`](../skills/xlsx/SKILL.md) · [`pptx`](../skills/pptx/SKILL.md) · [`docx`](../skills/docx/SKILL.md) · [`pdf`](../skills/pdf/SKILL.md)
 
 ## Setup
 
-From the repo root:
-
 ```bash
-cargo build --release -p dotall-cli -p dotall-mcp
-
-# Optional: warm .all/ (gitignored)
-./target/release/dotall init demo
-./target/release/dotall inspect demo/financials.xlsx
+cargo build -p dotall-cli -p dotall-mcp
+./target/debug/dotall init demo
 ```
 
-## CLI walkthrough (Story A)
+Use `./target/debug/dotall` below (or a release build). Paths are relative to the repo root unless noted.
+
+---
+
+## XLSX — `financials.xlsx`
+
+| Sheet | Cell | Value / formula |
+|-------|------|-----------------|
+| `Inputs` | A1:B1 | merged header `Assumptions` |
+| `Inputs` | B2 | `0.10` (Rate) — named range `Rate` |
+| `Inputs` | B3 | `100` (Base) |
+| `Revenue` | B2 / B3 | Jan / Feb amounts |
+| `Revenue` | B4 | `=B2+B3` (Total) |
+| `Revenue` | B5 | `=B4*Inputs!B2` (Commission) |
 
 ```bash
-DOTALL=./target/release/dotall
-cd demo   # or use paths relative to repo root
+DOTALL=./target/debug/dotall
 
-$DOTALL inspect financials.xlsx
-$DOTALL read financials.xlsx --range 'Revenue!A1:B5'
-$DOTALL deps financials.xlsx --cell 'Revenue!B5'
+$DOTALL inspect demo/financials.xlsx
+$DOTALL read demo/financials.xlsx --selector-kind named_ranges
+$DOTALL read demo/financials.xlsx --selector-kind merges --selector Inputs
+$DOTALL read demo/financials.xlsx --range 'Revenue!A1:B5'
+$DOTALL deps demo/financials.xlsx --cell 'Revenue!B5'
 
-# Stage only — Excel file unchanged until apply
-$DOTALL edit financials.xlsx \
+# Prior v0 path
+$DOTALL edit demo/financials.xlsx \
   --op set_cell_value --sheet Inputs --address B2 --value 0.15
+$DOTALL apply demo/financials.xlsx --all
 
-$DOTALL staged financials.xlsx
-$DOTALL apply financials.xlsx --all
+# Wave 1 path: set_range (ops-json)
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_range","payload":{"sheet":"Revenue","start_cell":"B2","values":[[110]]}}]'
+$DOTALL apply demo/financials.xlsx --all
 
-$DOTALL history financials.xlsx
-$DOTALL diff financials.xlsx --version 1
-
-# Undo: revert stages a restore; apply commits it
-$DOTALL revert financials.xlsx --version 1
-$DOTALL apply financials.xlsx --all
+$DOTALL history demo/financials.xlsx
 ```
 
-Expected after apply: Rate is `0.15`. After revert+apply: Rate is `0.10` again.
+---
 
-## MCP walkthrough
+## PPTX — `deck.pptx`
 
-1. Build the release binary:
+Slide 1: title `Q3 Product Review`, body blurb, table `Metrics` (NPS=42). Slide 2: `Next Steps`.
 
-   ```bash
-   cargo build --release -p dotall-mcp
-   ```
+```bash
+DOTALL=./target/debug/dotall
 
-2. Copy [`mcp.example.json`](mcp.example.json) into your MCP client config.
-   Replace `REPO_ROOT` with the absolute path to this repository.
-   Set `cwd` to `…/demo` so tools resolve `financials.xlsx`.
+$DOTALL inspect demo/deck.pptx
+$DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 1'
 
-3. Attach [`skills/xlsx/SKILL.md`](../skills/xlsx/SKILL.md) for the agent workflow.
+# Prior v0
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_shape_text","payload":{"slide":"Slide 1","shape":"Title","text":"Q3 Review (Updated)"}}]'
+$DOTALL apply demo/deck.pptx --all
 
-4. Paste this prompt:
+# Wave 1
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_table_cell_text","payload":{"slide":"Slide 1","table":"Metrics","row":1,"col":1,"text":"58"}}]'
+$DOTALL apply demo/deck.pptx --all
+```
 
-   > Read `skills/xlsx/SKILL.md`. In this workspace, inspect `financials.xlsx`,
-   > show formula dependents of `Revenue!B5`, change `Inputs!B2` from 0.1 to 0.15,
-   > stage the edit, apply it, show history, then revert and apply again.
+---
 
-5. Optional flush-on-close demo: stage an edit **without** apply, end the MCP
-   session gracefully — default flush should commit staged txs. Contrast with
-   `--no-flush-on-close` (or `DOTALL_MCP_FLUSH_ON_CLOSE=0`).
+## DOCX — `memo.docx`
+
+Document-order indices: `0` heading, `1`–`2` body, `3`–`6` table cells (`Owner`/`Status` header row, then `Platform` / `In progress`).
+
+```bash
+DOTALL=./target/debug/dotall
+
+$DOTALL inspect demo/memo.docx
+$DOTALL read demo/memo.docx --selector-kind paragraphs --selector '0:7'
+
+# Prior v0 (body paragraph)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_text","payload":{"index":1,"text":"Pilot complete; expanding to PPTX and PDF."}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 1 (table cell)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_text","payload":{"index":6,"text":"Done"}}]'
+$DOTALL apply demo/memo.docx --all
+```
+
+---
+
+## PDF — `form.pdf`
+
+Fields: `Name` (tx), `Email` (tx), `Agree` (btn checkbox, export `Yes`/`Off`).
+
+```bash
+DOTALL=./target/debug/dotall
+
+$DOTALL inspect demo/form.pdf
+$DOTALL read demo/form.pdf --selector-kind field --selector Name
+
+# Prior v0
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field","payload":{"name":"Name","value":"Grace Hopper"}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 1
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field","payload":{"name":"Agree","value":"Yes"}}]'
+$DOTALL apply demo/form.pdf --all
+```
+
+---
+
+## MCP
+
+1. Build: `cargo build --release -p dotall-mcp`
+2. Copy [`mcp.example.json`](mcp.example.json); replace `REPO_ROOT`; keep `cwd` as `…/demo`.
+3. Attach the skill for the format you are editing.
+4. Example prompt:
+
+   > Read `skills/xlsx/SKILL.md` and `skills/pptx/SKILL.md`. In this demo workspace,
+   > inspect `financials.xlsx` and `deck.pptx`, bump Rate to 0.15, set the Metrics NPS
+   > cell to 58, apply both, then show history.
 
 ## Tips
 
-- Close or refresh Excel after apply so you see the new values.
+- Close or refresh Office apps after apply so you see new values.
 - `.all/` under `demo/` is gitignored runtime state — safe to delete and regenerate.
-- Prefer the **release** binary in MCP config; `cargo run` is slow for live demos.
+- Prefer a **release** MCP binary for live demos; `cargo run` is slow.
+- After regenerating demos, discard any leftover `.all/` history or re-init if hashes confuse you.
