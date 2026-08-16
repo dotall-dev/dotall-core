@@ -17,6 +17,7 @@ brainstorming notes live elsewhere.
 - `skills/xlsx/SKILL.md` — agent workflow for `.xlsx` via Dotall MCP.
 - `skills/pptx/SKILL.md` — agent workflow for `.pptx` via Dotall MCP.
 - `skills/docx/SKILL.md` — agent workflow for `.docx` via Dotall MCP.
+- `skills/pdf/SKILL.md` — agent workflow for `.pdf` form fill via Dotall MCP.
 - `demo/README.md` — sample workbook + CLI/MCP walkthrough.
 
 Specs are the source of truth. If code and spec disagree, fix one deliberately —
@@ -47,6 +48,7 @@ dotall/
 │   ├── dotall-xlsx/         # typed model, processors, views, edits, OOXML writer
 │   ├── dotall-pptx/         # presentation model, slide reads, surgical shape text
 │   ├── dotall-docx/         # document model, paragraph reads, surgical paragraph text
+│   ├── dotall-pdf/          # pages, AcroForm fields, form fill (no body edit)
 │   ├── dotall-cli/          # bin: `dotall`
 │   └── dotall-mcp/          # bin: stdio MCP server (`dotall-mcp`)
 ```
@@ -130,10 +132,10 @@ Stdio MCP server over the same `Engine` as the CLI. Run from the workspace root:
 cargo run -p dotall-mcp
 ```
 
-Register the built binary in your MCP client. Before editing Office files, read
-`skills/xlsx/SKILL.md`, `skills/pptx/SKILL.md`, or `skills/docx/SKILL.md` —
-discover capabilities at runtime, stage edits, apply explicitly or via
-flush-on-close (default).
+Register the built binary in your MCP client. Before editing Office or PDF files,
+read `skills/xlsx/SKILL.md`, `skills/pptx/SKILL.md`, `skills/docx/SKILL.md`, or
+`skills/pdf/SKILL.md` — discover capabilities at runtime, stage edits, apply
+explicitly or via flush-on-close (default).
 
 ## Build & test
 
