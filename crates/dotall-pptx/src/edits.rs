@@ -39,8 +39,9 @@ pub fn validate(
         "add_slide" => validate_add_slide(model, operation),
         "delete_slide" => validate_delete_slide(model, operation),
         "move_slide" => validate_move_slide(model, operation),
+        "add_textbox" => validate_add_textbox(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, add_slide, delete_slide, or move_slide"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, add_slide, delete_slide, move_slide, or add_textbox"
         ))),
     }
 }
@@ -313,6 +314,66 @@ fn validate_move_slide(
     })
 }
 
+fn validate_add_textbox(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let text = required_str(&operation.payload, "text")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let name = match optional_str(&operation.payload, "name")? {
+        Some(name) => {
+            if slide
+                .shapes
+                .iter()
+                .any(|shape| shape.name == name || shape.element_id == name)
+            {
+                return Err(format_error(format!(
+                    "shape `{name}` already exists on `{}`",
+                    slide.name
+                )));
+            }
+            name.to_owned()
+        }
+        None => {
+            let mut n = 1u32;
+            loop {
+                let candidate = format!("TextBox {n}");
+                if !slide.shapes.iter().any(|shape| shape.name == candidate) {
+                    break candidate;
+                }
+                n = n.saturating_add(1);
+            }
+        }
+    };
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "add_textbox".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "name": name,
+                "text": text,
+                "part_name": slide.part_name,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, name),
+            element_id: String::new(),
+            change: "add_textbox".into(),
+            before: None,
+            after: Some(text.to_owned()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn resolve_table<'a>(
     slide: &'a crate::model::SlideModel,
     table_ref: &str,
@@ -391,6 +452,20 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let from_index = required_usize(&operation.payload, "from_index")?;
             let to_index = required_usize(&operation.payload, "to_index")?;
             move_slide_patch(package, from_index, to_index)?
+        }
+        "add_textbox" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let name = required_str(&operation.payload, "name")?;
+            let text = required_str(&operation.payload, "text")?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_add_textbox(&original, name, text)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
         }
         other => {
             return Err(format_error(format!(
@@ -548,6 +623,63 @@ fn delete_slide_patch(package: &[u8], part_name: &str) -> Result<PackagePatch> {
         additions: BTreeMap::new(),
         removals,
     })
+}
+
+pub fn patch_add_textbox(xml: &[u8], name: &str, text: &str) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let close = "</p:spTree>";
+    let position = source
+        .rfind(close)
+        .ok_or_else(|| format_error("slide is missing closing p:spTree"))?;
+    let shape_id = next_c_nv_pr_id(source);
+    let shape = format!(
+        concat!(
+            r#"<p:sp>"#,
+            r#"<p:nvSpPr>"#,
+            r#"<p:cNvPr id="{id}" name="{name}"/>"#,
+            r#"<p:cNvSpPr txBox="1"/>"#,
+            r#"<p:nvPr/>"#,
+            r#"</p:nvSpPr>"#,
+            r#"<p:spPr>"#,
+            r#"<a:xfrm>"#,
+            r#"<a:off x="457200" y="4572000"/>"#,
+            r#"<a:ext cx="8229600" cy="914400"/>"#,
+            r#"</a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#,
+            r#"<a:noFill/>"#,
+            r#"<a:ln><a:noFill/></a:ln>"#,
+            r#"</p:spPr>"#,
+            r#"<p:txBody>"#,
+            r#"<a:bodyPr wrap="square"/>"#,
+            r#"<a:lstStyle/>"#,
+            r#"<a:p><a:r><a:t>{text}</a:t></a:r></a:p>"#,
+            r#"</p:txBody>"#,
+            r#"</p:sp>"#
+        ),
+        id = shape_id,
+        name = xml_escape(name),
+        text = xml_escape(text)
+    );
+    Ok(format!("{}{}{}", &source[..position], shape, &source[position..]).into_bytes())
+}
+
+fn next_c_nv_pr_id(source: &str) -> u32 {
+    let mut max_id = 1u32;
+    let mut cursor = 0;
+    while let Some(rel) = source[cursor..].find("id=\"") {
+        let start = cursor + rel + 4;
+        if let Some(end_rel) = source[start..].find('"') {
+            let value = &source[start..start + end_rel];
+            if let Ok(id) = value.parse::<u32>() {
+                max_id = max_id.max(id);
+            }
+            cursor = start + end_rel + 1;
+        } else {
+            break;
+        }
+    }
+    max_id.saturating_add(1)
 }
 
 pub fn patch_shape_text(xml: &[u8], shape: &str, text: &str) -> Result<Vec<u8>> {

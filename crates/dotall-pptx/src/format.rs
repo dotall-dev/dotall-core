@@ -287,5 +287,15 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Patches only ppt/presentation.xml (p:sldId order). Slide parts, notes, rels, and Content_Types stay byte-identical. Rejects no-op and single-slide decks.".into(),
         },
+        EditCapability {
+            operation: "add_textbox".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert a simple text-box shape (p:sp with txBox) onto a slide.".into(),
+            example: json!({
+                "kind": "add_textbox",
+                "payload": { "slide": "Slide 1", "name": "Callout", "text": "Agent note" }
+            }),
+            safety: "Patches only the target slide part. Optional `name` defaults to TextBox N; rejects duplicate names. Other slides and media stay byte-identical.".into(),
+        },
     ]
 }

@@ -125,9 +125,15 @@ $DOTALL edit demo/deck.pptx --ops-json \
 $DOTALL apply demo/deck.pptx --all
 $DOTALL inspect demo/deck.pptx   # expect blank first, then title slide
 $DOTALL read demo/deck.pptx --selector-kind notes --selector 'Slide 2'
+
+# Wave 5 — add a text box on the title slide (now Slide 2 after reorder)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"add_textbox","payload":{"slide":"Slide 2","name":"Callout","text":"Agent follow-up"}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 2'
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` patches only the target slide part.
 
 ---
 

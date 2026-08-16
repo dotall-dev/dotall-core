@@ -405,6 +405,74 @@ fn move_slide_rejects_noop_and_sole_slide() {
     );
 }
 
+#[test]
+fn add_textbox_inserts_shape_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_with_table();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let before_model = parse_presentation_bytes(&before).expect("parse bytes");
+    let before_count = before_model.slides[0].shapes.len();
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "add_textbox".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "name": "Callout",
+                    "text": "Agent note",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.slides[0].shapes.len(), before_count + 1);
+    let callout = after.slides[0]
+        .shapes
+        .iter()
+        .find(|shape| shape.name == "Callout")
+        .expect("textbox shape");
+    assert_eq!(callout.text, "Agent note");
+    assert_eq!(after.slides[0].shapes[0].text, "Hello");
+    assert_eq!(after.slides[1].shapes[0].text, "Other");
+    assert_eq!(edit.semantic_diff[0].change, "add_textbox");
+    assert_eq!(edit.semantic_diff[0].target, "Slide 1!Callout");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn add_textbox_rejects_missing_slide() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "add_textbox".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 99",
+                    "text": "Nope",
+                }),
+            }],
+        )
+        .expect_err("missing slide");
+    let message = error.to_string();
+    assert!(
+        message.contains("not found") || message.contains("Slide 99"),
+        "unexpected error: {message}"
+    );
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);
