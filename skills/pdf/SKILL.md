@@ -2,8 +2,8 @@
 name: pdf
 description: >-
   Work with .pdf files through Dotall MCP. Use when inspecting pages, listing
-  AcroForm fields, filling a text field, or reverting a PDF in a Dotall workspace.
-  Do not rewrite page content streams.
+  AcroForm fields, filling a text or checkbox field, or reverting a PDF in a
+  Dotall workspace. Do not rewrite page content streams.
 ---
 
 # PDF via Dotall MCP
@@ -27,8 +27,11 @@ dotall_capabilities or dotall_inspect
 - `selector_kind=full` — pages plus field list
 
 Text extraction is best-effort. Inspect `encrypted` and `has_signature` before editing.
+Checkbox fields (`btn`) may include `export_values` (e.g. `Yes`, `Off`) from `/AP /N`.
 
 ### Edit
+
+Text / choice:
 
 ```json
 {
@@ -37,6 +40,17 @@ Text extraction is best-effort. Inspect `encrypted` and `has_signature` before e
 }
 ```
 
-Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, checkboxes/radios in v0.
+Checkbox (`Btn`): use `On` / `Off`, or an explicit export value from `export_values`:
+
+```json
+{
+  "kind": "set_form_field",
+  "payload": { "name": "Agree", "value": "On" }
+}
+```
+
+`On` maps to the sole non-`Off` export value when unambiguous; radios with multiple on-states require an explicit export value.
+
+Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios without an export value.
 
 Snapshots are opaque whole-file blobs (not OOXML part manifests).

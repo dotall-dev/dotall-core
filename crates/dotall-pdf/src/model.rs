@@ -26,6 +26,9 @@ pub struct PdfFieldModel {
     pub name: String,
     pub field_type: String,
     pub value: String,
+    /// Appearance-state names from `/AP /N` (e.g. `Yes`, `Off`) when discoverable.
+    #[serde(default)]
+    pub export_values: Vec<String>,
     pub page: Option<u32>,
     pub read_only: bool,
 }

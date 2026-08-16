@@ -172,12 +172,14 @@ fn walk_field(
         .and_then(|object| object.as_i64().ok())
         .unwrap_or(0);
     let read_only = flags & 1 == 1;
+    let export_values = collect_export_values(document, dict);
     if let Some(field_type) = field_type.clone() {
         fields.push(PdfFieldModel {
             element_id: ids::field_id(&name, SCHEMA_VERSION),
             name: name.clone(),
             field_type,
             value,
+            export_values,
             page: None,
             read_only,
         });
@@ -187,6 +189,49 @@ fn walk_field(
     }
     let _ = field_type;
     Ok(())
+}
+
+fn collect_export_values(document: &Document, dict: &lopdf::Dictionary) -> Vec<String> {
+    let mut values = Vec::new();
+    append_ap_n_keys(document, dict, &mut values);
+    if let Ok(kids) = dict.get(b"Kids") {
+        let Ok(Object::Array(items)) = dereference(document, kids) else {
+            return finalize_export_values(values);
+        };
+        for item in items {
+            if let Ok(Some(kid)) = resolve_dict(document, item) {
+                append_ap_n_keys(document, kid, &mut values);
+            }
+        }
+    }
+    finalize_export_values(values)
+}
+
+fn append_ap_n_keys(document: &Document, dict: &lopdf::Dictionary, values: &mut Vec<String>) {
+    let Ok(ap) = dict.get(b"AP") else {
+        return;
+    };
+    let Some(ap_dict) = resolve_dict(document, ap).ok().flatten() else {
+        return;
+    };
+    let Ok(normal) = ap_dict.get(b"N") else {
+        return;
+    };
+    let Some(normal_dict) = resolve_dict(document, normal).ok().flatten() else {
+        return;
+    };
+    for (key, _) in normal_dict.iter() {
+        let name = String::from_utf8_lossy(key).into_owned();
+        if !values.iter().any(|existing| existing == &name) {
+            values.push(name);
+        }
+    }
+}
+
+fn finalize_export_values(mut values: Vec<String>) -> Vec<String> {
+    values.sort();
+    values.dedup();
+    values
 }
 
 fn collect_outline(document: &Document) -> Vec<String> {
