@@ -353,8 +353,8 @@ impl Engine {
     /// Stages restoration of the pre-apply snapshot from `version`.
     pub fn revert(&mut self, relative: &str, version: u64, tx_id: Uuid) -> Result<StagedEdit> {
         let record = self.store.get_history(relative, version)?;
-        self.store.read_snapshot(relative, &record.snapshot_ref)?;
         let loaded = self.model(relative)?;
+        self.decode_snapshot(relative, &loaded.handler, &record.snapshot_ref)?;
         let staged = StagedEdit {
             tx_id,
             operations: vec![SemanticOperation {
@@ -449,10 +449,19 @@ impl Engine {
 
         let before_bytes =
             fs::read(&source).map_err(|source_error| DotallError::io(&source, source_error))?;
-        let snapshot_ref = self.store.write_snapshot(relative, &before_bytes)?;
         let loaded = self.model(relative)?;
+        let encoded = loaded.handler.encode_snapshot(&before_bytes)?;
+        let decoded = loaded.handler.decode_snapshot(&encoded)?;
+        if decoded != before_bytes || encoded.package_hash != before_fingerprint.blake3 {
+            return Err(DotallError::Format {
+                format_id: loaded.handler.descriptor().id,
+                path: source.clone(),
+                message: "snapshot encoding did not preserve the exact source bytes".into(),
+            });
+        }
+        let snapshot_ref = self.store.write_encoded_snapshot(relative, &encoded)?;
         let patched = if let Some(snapshot_ref) = restore_snapshot_ref(&staged.preview) {
-            let bytes = self.store.read_snapshot(relative, snapshot_ref)?;
+            let bytes = self.decode_snapshot(relative, &loaded.handler, snapshot_ref)?;
             crate::registry::PatchedOutput {
                 after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
                 bytes,
@@ -567,6 +576,35 @@ impl Engine {
             }
         }
         Ok(None)
+    }
+
+    fn decode_snapshot(
+        &self,
+        relative: &str,
+        handler: &Arc<dyn FormatHandler>,
+        snapshot_ref: &str,
+    ) -> Result<Vec<u8>> {
+        let encoded = self.store.read_encoded_snapshot(relative, snapshot_ref)?;
+        if encoded.format_id != handler.descriptor().id {
+            return Err(DotallError::Format {
+                format_id: handler.descriptor().id,
+                path: Path::new(relative).to_path_buf(),
+                message: format!(
+                    "snapshot format {} does not match tracked source format",
+                    encoded.format_id
+                ),
+            });
+        }
+        let bytes = handler.decode_snapshot(&encoded)?;
+        let actual_hash = blake3::hash(&bytes).to_hex().to_string();
+        if actual_hash != snapshot_ref || actual_hash != encoded.package_hash {
+            return Err(DotallError::Format {
+                format_id: encoded.format_id,
+                path: Path::new(relative).to_path_buf(),
+                message: "decoded snapshot hash does not match snapshot_ref".into(),
+            });
+        }
+        Ok(bytes)
     }
 
     fn render(

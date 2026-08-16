@@ -16,11 +16,19 @@ use crate::history::{
 use crate::manifest::{MANIFEST_SCHEMA_VERSION, Manifest, ObjectMeta, OriginalRef, TrackedObject};
 use crate::pipeline::{CachedArtifact, CachedDerived, CachedView, DerivationRecipe};
 use crate::read::AccessRecord;
-use crate::registry::{ArtifactEnvelope, ArtifactSchema};
+use crate::registry::{ArtifactEnvelope, ArtifactSchema, EncodedSnapshot, SnapshotPart};
 use crate::status::{ObjectState, ObjectStatus};
 use crate::workspace::Workspace;
 
 use atomic::{write_bytes, write_json, write_json_new};
+
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
+struct StoredSnapshotManifest {
+    package_hash: String,
+    format_id: String,
+    manifest: serde_json::Value,
+    part_hashes: Vec<String>,
+}
 
 #[derive(Debug)]
 pub struct DotallStore {
@@ -99,7 +107,8 @@ impl DotallStore {
             object_dir.join("state/access"),
             object_dir.join("state/transactions"),
             object_dir.join("state/edits/staging"),
-            object_dir.join("state/edits/history/snapshots"),
+            object_dir.join("state/edits/history/snapshots/manifests"),
+            object_dir.join("state/edits/history/snapshots/parts"),
         ] {
             fs::create_dir_all(&directory).map_err(|source| DotallError::io(&directory, source))?;
         }
@@ -409,39 +418,56 @@ impl DotallStore {
         ApplyLock::acquire(&self.apply_lock_path(&key))
     }
 
-    /// Stores content-addressed snapshot bytes under `state/edits/history/snapshots/<hash>.bin`.
-    ///
-    /// Journals for apply recovery live under `state/transactions/` (created at register time).
-    pub fn write_snapshot(&self, relative_path: &str, bytes: &[u8]) -> Result<String> {
+    /// Persists a format-owned snapshot manifest and its content-addressed parts.
+    pub fn write_encoded_snapshot(
+        &self,
+        relative_path: &str,
+        encoded: &EncodedSnapshot,
+    ) -> Result<String> {
         let (key, _) = self.tracked_source(relative_path)?;
-        let hash = blake3::hash(bytes).to_hex().to_string();
-        let path = self.snapshot_path(&key, &hash);
-        if path.is_file() {
-            let existing = fs::read(&path).map_err(|source| DotallError::io(&path, source))?;
-            if existing == bytes {
-                return Ok(hash);
+        for part in &encoded.parts {
+            let actual_hash = blake3::hash(&part.bytes).to_hex().to_string();
+            if actual_hash != part.hash {
+                return Err(DotallError::InvalidSourcePath {
+                    path: self.snapshot_part_path(&key, &part.hash),
+                    reason: "snapshot part hash does not match its bytes".to_owned(),
+                });
             }
-            return Err(DotallError::InvalidSourcePath {
-                path: path.clone(),
-                reason: "snapshot path exists with different content".to_owned(),
-            });
+            self.put_snapshot_part(&key, part)?;
         }
-        write_bytes(&path, bytes)?;
-        Ok(hash)
+        let stored = StoredSnapshotManifest {
+            package_hash: encoded.package_hash.clone(),
+            format_id: encoded.format_id.clone(),
+            manifest: encoded.manifest.clone(),
+            part_hashes: encoded.parts.iter().map(|part| part.hash.clone()).collect(),
+        };
+        self.put_snapshot_manifest(&key, &stored)?;
+        Ok(encoded.package_hash.clone())
     }
 
-    pub fn read_snapshot(&self, relative_path: &str, hash: &str) -> Result<Vec<u8>> {
+    pub fn read_encoded_snapshot(
+        &self,
+        relative_path: &str,
+        package_hash: &str,
+    ) -> Result<EncodedSnapshot> {
         let (key, _) = self.tracked_source(relative_path)?;
-        let path = self.snapshot_path(&key, hash);
-        fs::read(&path).map_err(|source| {
-            if source.kind() == std::io::ErrorKind::NotFound {
-                DotallError::SnapshotMissing {
-                    path: Path::new(relative_path).to_path_buf(),
-                    hash: hash.to_owned(),
-                }
-            } else {
-                DotallError::io(&path, source)
-            }
+        let stored = self.get_snapshot_manifest(&key, relative_path, package_hash)?;
+        let parts = stored
+            .part_hashes
+            .iter()
+            .map(|hash| {
+                self.get_snapshot_part(&key, relative_path, hash)
+                    .map(|bytes| SnapshotPart {
+                        hash: hash.clone(),
+                        bytes,
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(EncodedSnapshot {
+            package_hash: stored.package_hash,
+            format_id: stored.format_id,
+            manifest: stored.manifest,
+            parts,
         })
     }
 
@@ -641,10 +667,73 @@ impl DotallStore {
             .join(format!("{tx_id}.cancel.json"))
     }
 
-    fn snapshot_path(&self, key: &str, hash: &str) -> PathBuf {
+    fn snapshot_manifest_path(&self, key: &str, hash: &str) -> PathBuf {
         self.object_dir(key)
-            .join("state/edits/history/snapshots")
-            .join(format!("{hash}.bin"))
+            .join("state/edits/history/snapshots/manifests")
+            .join(format!("{hash}.json"))
+    }
+
+    fn snapshot_part_path(&self, key: &str, hash: &str) -> PathBuf {
+        self.object_dir(key)
+            .join("state/edits/history/snapshots/parts")
+            .join(hash)
+    }
+
+    fn put_snapshot_part(&self, key: &str, part: &SnapshotPart) -> Result<()> {
+        let path = self.snapshot_part_path(key, &part.hash);
+        if path.is_file() {
+            let existing = fs::read(&path).map_err(|source| DotallError::io(&path, source))?;
+            if existing == part.bytes {
+                return Ok(());
+            }
+            return Err(DotallError::InvalidSourcePath {
+                path,
+                reason: "snapshot part path exists with different content".to_owned(),
+            });
+        }
+        write_bytes(&path, &part.bytes)
+    }
+
+    fn get_snapshot_part(&self, key: &str, relative_path: &str, hash: &str) -> Result<Vec<u8>> {
+        let path = self.snapshot_part_path(key, hash);
+        fs::read(&path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                DotallError::SnapshotMissing {
+                    path: Path::new(relative_path).to_path_buf(),
+                    hash: hash.to_owned(),
+                }
+            } else {
+                DotallError::io(&path, source)
+            }
+        })
+    }
+
+    fn put_snapshot_manifest(&self, key: &str, manifest: &StoredSnapshotManifest) -> Result<()> {
+        let path = self.snapshot_manifest_path(key, &manifest.package_hash);
+        if path.is_file() {
+            let existing: StoredSnapshotManifest = read_required_json(&path, "snapshot manifest")?;
+            if existing == *manifest {
+                return Ok(());
+            }
+            return Err(DotallError::InvalidSourcePath {
+                path,
+                reason: "snapshot manifest path exists with different content".to_owned(),
+            });
+        }
+        write_json(&path, manifest)
+    }
+
+    fn get_snapshot_manifest(
+        &self,
+        key: &str,
+        relative_path: &str,
+        hash: &str,
+    ) -> Result<StoredSnapshotManifest> {
+        let path = self.snapshot_manifest_path(key, hash);
+        read_cached_json(&path)?.ok_or_else(|| DotallError::SnapshotMissing {
+            path: Path::new(relative_path).to_path_buf(),
+            hash: hash.to_owned(),
+        })
     }
 
     fn history_dir(&self, key: &str) -> PathBuf {

@@ -86,11 +86,16 @@ trait FormatHandler {
         ├── transactions/
         └── edits/
             ├── staging/
-            └── history/ + snapshots/
+            └── history/
+                └── snapshots/
+                    ├── manifests/<package_hash>.json
+                    └── parts/<part_hash>
 ```
 
 `.all/` is gitignored runtime state. `cache/` is regenerable; `state/` contains
 durable local history and recovery data and must not be removed by cache cleanup.
+XLSX snapshots deduplicate exact ZIP header, payload, and trailer slices by hash;
+their manifests reconstruct the original package byte-for-byte.
 
 ## Conventions
 

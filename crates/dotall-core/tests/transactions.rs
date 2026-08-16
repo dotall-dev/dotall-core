@@ -9,7 +9,8 @@ use dotall_core::registry::{
 };
 use dotall_core::{
     Actor, ActorKind, ArtifactEnvelope, DependencyImpact, DotallError, DotallStore, EditRequest,
-    Engine, ReadResponse, Result, SemanticChange, SemanticOperation, ValidatedEdit,
+    EncodedSnapshot, Engine, ReadResponse, Result, SemanticChange, SemanticOperation, SnapshotPart,
+    ValidatedEdit,
 };
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -369,6 +370,33 @@ fn revert_stages_snapshot_restore_and_commits_a_new_version() {
 }
 
 #[test]
+fn apply_and_revert_use_format_snapshot_hooks() {
+    let mut fixture = Fixture::new();
+    let initial_hash = fixture.source_hash();
+    fixture
+        .engine
+        .edit("sample.stub", &request(initial_hash, "updated", tx(1)))
+        .expect("stage original");
+    fixture
+        .engine
+        .apply("sample.stub", tx(1))
+        .expect("apply original");
+    assert_eq!(fixture.snapshot_encode_count(), 1);
+
+    fixture
+        .engine
+        .revert("sample.stub", 1, tx(2))
+        .expect("stage revert");
+    fixture
+        .engine
+        .apply("sample.stub", tx(2))
+        .expect("apply revert");
+
+    assert_eq!(fs::read(fixture.source()).expect("restored"), b"initial");
+    assert!(fixture.snapshot_decode_count() >= 2);
+}
+
+#[test]
 fn recover_completes_a_committed_journal_after_interruption() {
     let mut fixture = Fixture::new();
     let hash = fixture.source_hash();
@@ -446,6 +474,8 @@ struct Fixture {
     root: std::path::PathBuf,
     engine: Engine,
     parse_count: Arc<AtomicUsize>,
+    snapshot_encode_count: Arc<AtomicUsize>,
+    snapshot_decode_count: Arc<AtomicUsize>,
 }
 
 impl Fixture {
@@ -455,15 +485,21 @@ impl Fixture {
         fs::write(root.join("sample.stub"), b"initial").expect("source");
         let store = DotallStore::init(&root).expect("store");
         let parse_count = Arc::new(AtomicUsize::new(0));
+        let snapshot_encode_count = Arc::new(AtomicUsize::new(0));
+        let snapshot_decode_count = Arc::new(AtomicUsize::new(0));
         let mut registry = FormatRegistry::default();
         registry.register(Arc::new(StubFormat {
             parse_count: Arc::clone(&parse_count),
+            snapshot_encode_count: Arc::clone(&snapshot_encode_count),
+            snapshot_decode_count: Arc::clone(&snapshot_decode_count),
         }));
         Self {
             _workspace: workspace,
             root,
             engine: Engine::new(store, registry),
             parse_count,
+            snapshot_encode_count,
+            snapshot_decode_count,
         }
     }
 
@@ -476,6 +512,14 @@ impl Fixture {
             .load_model("sample.stub")
             .expect("load model")
             .source_hash
+    }
+
+    fn snapshot_encode_count(&self) -> usize {
+        self.snapshot_encode_count.load(Ordering::SeqCst)
+    }
+
+    fn snapshot_decode_count(&self) -> usize {
+        self.snapshot_decode_count.load(Ordering::SeqCst)
     }
 }
 
@@ -538,6 +582,8 @@ fn replace_if_request(
 
 struct StubFormat {
     parse_count: Arc<AtomicUsize>,
+    snapshot_encode_count: Arc<AtomicUsize>,
+    snapshot_decode_count: Arc<AtomicUsize>,
 }
 
 impl FormatHandler for StubFormat {
@@ -655,5 +701,34 @@ impl FormatHandler for StubFormat {
             after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
             bytes,
         })
+    }
+
+    fn encode_snapshot(&self, source_bytes: &[u8]) -> Result<EncodedSnapshot> {
+        self.snapshot_encode_count.fetch_add(1, Ordering::SeqCst);
+        let hash = blake3::hash(source_bytes).to_hex().to_string();
+        Ok(EncodedSnapshot {
+            package_hash: hash.clone(),
+            format_id: "stub".into(),
+            manifest: serde_json::json!({
+                "kind": "stub-test",
+                "part_hash": hash,
+            }),
+            parts: vec![SnapshotPart {
+                hash,
+                bytes: source_bytes.to_vec(),
+            }],
+        })
+    }
+
+    fn decode_snapshot(&self, encoded: &EncodedSnapshot) -> Result<Vec<u8>> {
+        self.snapshot_decode_count.fetch_add(1, Ordering::SeqCst);
+        encoded
+            .parts
+            .first()
+            .map(|part| part.bytes.clone())
+            .ok_or_else(|| DotallError::SnapshotMissing {
+                path: Path::new("sample.stub").to_path_buf(),
+                hash: encoded.package_hash.clone(),
+            })
     }
 }

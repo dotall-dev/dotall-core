@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use dotall_core::registry::{
     ArtifactEnvelope, ArtifactSchema, Capability, DetectionProbe, DetectionScore, EditCapability,
-    FormatDescriptor, FormatHandler, Inspection, PatchedOutput, ReadRequest, ReadResponse,
-    ReadSelector, ReadSuggestion, SemanticOperation, ValidatedEdit,
+    EncodedSnapshot, FormatDescriptor, FormatHandler, Inspection, PatchedOutput, ReadRequest,
+    ReadResponse, ReadSelector, ReadSuggestion, SemanticOperation, ValidatedEdit,
 };
 use dotall_core::{DotallError, DotallStore, Result};
 use serde_json::json;
@@ -242,6 +242,14 @@ impl FormatHandler for XlsxFormat {
 
     fn apply_edit(&self, source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
         edits::writer::apply(source, edit)
+    }
+
+    fn encode_snapshot(&self, source_bytes: &[u8]) -> Result<EncodedSnapshot> {
+        crate::snapshot::encode(source_bytes)
+    }
+
+    fn decode_snapshot(&self, encoded: &EncodedSnapshot) -> Result<Vec<u8>> {
+        crate::snapshot::decode(encoded)
     }
 }
 

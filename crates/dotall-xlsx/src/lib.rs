@@ -7,6 +7,7 @@ pub mod model;
 pub mod parser;
 pub mod projection;
 pub mod selector;
+mod snapshot;
 pub mod structure;
 
 pub const FORMAT_ID: &str = "xlsx";

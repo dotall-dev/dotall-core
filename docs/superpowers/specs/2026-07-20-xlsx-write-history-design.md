@@ -81,8 +81,16 @@ history/
   v001.json
   …
   snapshots/
-    <blake3>.bin
+    manifests/
+      <package_blake3>.json
+    parts/
+      <part_blake3>
 ```
+
+Snapshot storage is defined by the superseding
+`2026-08-12-snapshot-delta-storage-design.md`: XLSX packages are reconstructed
+byte-for-byte from content-addressed ZIP slices, while unchanged parts are shared
+across history versions.
 
 ### Committed version record (forensic)
 

@@ -144,3 +144,19 @@ pub struct PatchedOutput {
     pub bytes: Vec<u8>,
     pub after_source_hash: String,
 }
+
+/// Format-owned snapshot encoding persisted by the core object store.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EncodedSnapshot {
+    pub package_hash: String,
+    pub format_id: String,
+    pub manifest: serde_json::Value,
+    pub parts: Vec<SnapshotPart>,
+}
+
+/// One content-addressed blob referenced by an encoded snapshot manifest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotPart {
+    pub hash: String,
+    pub bytes: Vec<u8>,
+}
