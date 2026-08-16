@@ -8,43 +8,60 @@ pub fn minimal_docx() -> Vec<u8> {
 }
 
 pub fn minimal_docx_with_media(include_media: bool) -> Vec<u8> {
-    package(DOCUMENT, include_media, false)
+    package(DOCUMENT, include_media, None, None)
 }
 
 pub fn tracked_change_docx() -> Vec<u8> {
-    package(DOCUMENT_WITH_INS, false, false)
+    package(DOCUMENT_WITH_INS, false, None, None)
 }
 
 /// Body paragraph plus a 1×2 table; includes header + media for surgical identity checks.
 pub fn table_docx() -> Vec<u8> {
-    package(DOCUMENT_WITH_TABLE, true, true)
+    package(DOCUMENT_WITH_TABLE, true, Some(HEADER), None)
 }
 
-/// Multi-paragraph memo with heading + status table. No media blob (demo-sized).
+/// Header + footer parts with a short body paragraph (footer edit smoke).
+pub fn header_footer_docx() -> Vec<u8> {
+    package(DOCUMENT_WITH_TABLE, false, Some(HEADER), Some(FOOTER))
+}
+
+/// Multi-paragraph memo with heading + status table + confidential header. No media blob.
 pub fn demo_memo_docx() -> Vec<u8> {
-    package(DEMO_MEMO, false, true)
+    package(DEMO_MEMO, false, Some(DEMO_HEADER), None)
 }
 
-fn package(document: &[u8], include_media: bool, include_header: bool) -> Vec<u8> {
+fn package(
+    document: &[u8],
+    include_media: bool,
+    header: Option<&[u8]>,
+    footer: Option<&[u8]>,
+) -> Vec<u8> {
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default();
-    let content_types = if include_header {
-        CONTENT_TYPES_WITH_HEADER
-    } else {
-        CONTENT_TYPES
+    let content_types = match (header.is_some(), footer.is_some()) {
+        (true, true) => CONTENT_TYPES_WITH_HEADER_FOOTER,
+        (true, false) => CONTENT_TYPES_WITH_HEADER,
+        (false, true) => CONTENT_TYPES_WITH_FOOTER,
+        (false, false) => CONTENT_TYPES,
     };
     add(&mut writer, "[Content_Types].xml", content_types, options);
     add(&mut writer, "_rels/.rels", ROOT_RELS, options);
     add(&mut writer, "word/document.xml", document, options);
     add(&mut writer, "word/styles.xml", STYLES, options);
-    if include_header {
-        add(
-            &mut writer,
-            "word/_rels/document.xml.rels",
-            DOCUMENT_RELS,
-            options,
-        );
-        add(&mut writer, "word/header1.xml", HEADER, options);
+    if header.is_some() || footer.is_some() {
+        let rels = match (header.is_some(), footer.is_some()) {
+            (true, true) => DOCUMENT_RELS_HEADER_FOOTER,
+            (true, false) => DOCUMENT_RELS,
+            (false, true) => DOCUMENT_RELS_FOOTER,
+            (false, false) => unreachable!(),
+        };
+        add(&mut writer, "word/_rels/document.xml.rels", rels, options);
+    }
+    if let Some(header) = header {
+        add(&mut writer, "word/header1.xml", header, options);
+    }
+    if let Some(footer) = footer {
+        add(&mut writer, "word/footer1.xml", footer, options);
     }
     if include_media {
         let stored =
@@ -69,13 +86,25 @@ const CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone
 
 const CONTENT_TYPES_WITH_HEADER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#;
 
+const CONTENT_TYPES_WITH_FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>"#;
+
+const CONTENT_TYPES_WITH_HEADER_FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>"#;
+
 const ROOT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
 
 const DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#;
 
+const DOCUMENT_RELS_FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>"#;
+
+const DOCUMENT_RELS_HEADER_FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>"#;
+
 const STYLES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style></w:styles>"#;
 
 const HEADER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>HeaderOnly</w:t></w:r></w:p></w:hdr>"#;
+
+const DEMO_HEADER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>CONFIDENTIAL - Agent Pilot Memo</w:t></w:r></w:p></w:hdr>"#;
+
+const FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>FooterOnly</w:t></w:r></w:p></w:ftr>"#;
 
 const DOCUMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p><w:p><w:r><w:t>Beta</w:t></w:r></w:p></w:body></w:document>"#;
 

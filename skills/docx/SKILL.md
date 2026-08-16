@@ -20,8 +20,8 @@ For `.docx` files in an initialized Dotall workspace:
 - **Do not** unzip the package or rewrite `word/document.xml` by hand.
 - **Do not** hardcode operations — discover them per file.
 
-Dotall patches only `word/document.xml` for paragraph edits. Untouched ZIP
-parts stay byte-identical.
+Dotall patches only the target story part for paragraph edits (`word/document.xml`,
+`word/header*.xml`, or `word/footer*.xml`). Untouched ZIP parts stay byte-identical.
 
 ## Prerequisites
 
@@ -43,16 +43,20 @@ dotall_capabilities or dotall_inspect
 
 ### Read
 
-- `selector_kind=full` — numbered paragraphs (`0. text`).
+- `selector_kind=full` — body paragraphs, plus Headers/Footers sections when present.
 - `selector_kind=paragraphs` — `0:2` (start inclusive, end exclusive) or a single index `0`.
+- `selector_kind=headers` — flat list `0:1`, or part-qualified `header1:0`.
+- `selector_kind=footers` — flat list `0:1`, or part-qualified `footer1:0`.
 
-**Indexing:** paragraphs are numbered in **document order** across the body of
+**Body indexing:** paragraphs are numbered in **document order** across the body of
 `word/document.xml`, including table cell paragraphs. A body paragraph followed
 by a 1×2 table yields indices `0` (body), `1` (first cell), `2` (second cell).
 Inspect reports `table_count` and `skipped_tables: false` when tables are modeled.
 
-Header/footer paragraphs are not included yet (`skipped_tables` stays false;
-headers are simply absent from the model).
+**Header/footer indexing:** separate from body. Inspect lists `headers` /
+`footers` as `{ part, index, text }` where `part` is the stem (`header1`,
+`footer1`) and `index` is **within that part**. Flat read selectors use sorted
+part order, then within-part index.
 
 v0 does not expose `dotall_deps`.
 
@@ -70,7 +74,25 @@ Single operation per transaction:
 `element_id` is also accepted instead of `index`. Same op targets body or
 table-cell paragraphs by document-order index.
 
+Header / footer:
+
+```json
+{
+  "kind": "set_header_paragraph_text",
+  "payload": { "part": "header1", "index": 0, "text": "CONFIDENTIAL" }
+}
+```
+
+```json
+{
+  "kind": "set_footer_paragraph_text",
+  "payload": { "part": "footer1", "index": 0, "text": "Page 1" }
+}
+```
+
+Bare `index` (without `part`) selects from the flat header/footer list in sorted
+part order. Prefer `part` + `index` for clarity.
+
 Rejected: tracked changes (`w:ins`/`w:del`), content controls (`w:sdt`), fields.
-No header/footer/comment/style edits yet.
 
 Keeps `w:pPr` and clones the first run’s `w:rPr` when present.

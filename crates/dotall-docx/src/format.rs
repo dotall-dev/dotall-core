@@ -13,7 +13,12 @@ use crate::edits;
 use crate::model::{DocumentModel, SCHEMA_ID, SCHEMA_VERSION};
 use crate::{FORMAT_ID, parser, projection, selector};
 
-const AVAILABLE_READS: [&str; 2] = ["read.full", "read.paragraphs"];
+const AVAILABLE_READS: [&str; 4] = [
+    "read.full",
+    "read.paragraphs",
+    "read.headers",
+    "read.footers",
+];
 const MANIFEST_SCHEMA_ID: &str = "docx.snapshot-manifest";
 
 pub struct DocxFormat;
@@ -75,11 +80,37 @@ impl FormatHandler for DocxFormat {
                 })
             })
             .collect::<Vec<_>>();
+        let headers = document
+            .header_paragraphs
+            .iter()
+            .map(|paragraph| {
+                json!({
+                    "part": paragraph.part,
+                    "index": paragraph.index,
+                    "text": paragraph.text,
+                })
+            })
+            .collect::<Vec<_>>();
+        let footers = document
+            .footer_paragraphs
+            .iter()
+            .map(|paragraph| {
+                json!({
+                    "part": paragraph.part,
+                    "index": paragraph.index,
+                    "text": paragraph.text,
+                })
+            })
+            .collect::<Vec<_>>();
         Ok(Inspection {
             format_id: FORMAT_ID.into(),
             summary: json!({
                 "paragraph_count": document.paragraphs.len(),
+                "header_paragraph_count": document.header_paragraphs.len(),
+                "footer_paragraph_count": document.footer_paragraphs.len(),
                 "headings": headings,
+                "headers": headers,
+                "footers": footers,
                 "table_count": document.table_count,
                 "skipped_tables": document.skipped_tables,
             }),
@@ -122,6 +153,34 @@ impl FormatHandler for DocxFormat {
                 let paragraphs =
                     selector::resolve_range(&document, value).map_err(selector_error)?;
                 Ok(projection::render_paragraphs_read(
+                    &paragraphs,
+                    request.max_tokens,
+                    offset,
+                ))
+            }
+            "headers" => {
+                let value = request
+                    .selector
+                    .as_ref()
+                    .map(|selector| selector.value.as_str())
+                    .unwrap_or("");
+                let paragraphs =
+                    selector::resolve_header_range(&document, value).map_err(selector_error)?;
+                Ok(projection::render_headers_read(
+                    &paragraphs,
+                    request.max_tokens,
+                    offset,
+                ))
+            }
+            "footers" => {
+                let value = request
+                    .selector
+                    .as_ref()
+                    .map(|selector| selector.value.as_str())
+                    .unwrap_or("");
+                let paragraphs =
+                    selector::resolve_footer_range(&document, value).map_err(selector_error)?;
+                Ok(projection::render_footers_read(
                     &paragraphs,
                     request.max_tokens,
                     offset,
@@ -212,22 +271,58 @@ fn capabilities() -> Vec<Capability> {
         Capability::ReadSelector {
             kind: "paragraphs".into(),
         },
+        Capability::ReadSelector {
+            kind: "headers".into(),
+        },
+        Capability::ReadSelector {
+            kind: "footers".into(),
+        },
     ]
 }
 
 fn edit_capabilities() -> Vec<EditCapability> {
-    vec![EditCapability {
-        operation: "set_paragraph_text".into(),
-        schema_version: SCHEMA_VERSION,
-        description:
-            "Replace the text of one body or table-cell paragraph (document-order index)."
-                .into(),
-        example: json!({
-            "kind": "set_paragraph_text",
-            "payload": { "index": 1, "text": "Gamma" }
-        }),
-        safety:
-            "Rejects tracked changes, content controls, and fields. Patches only word/document.xml. Header/footer parts are not modeled yet."
-                .into(),
-    }]
+    vec![
+        EditCapability {
+            operation: "set_paragraph_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Replace the text of one body or table-cell paragraph (document-order index)."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_text",
+                "payload": { "index": 1, "text": "Gamma" }
+            }),
+            safety:
+                "Rejects tracked changes, content controls, and fields. Patches only word/document.xml."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_header_paragraph_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Replace the text of one header paragraph (`part` + within-part `index`)."
+                    .into(),
+            example: json!({
+                "kind": "set_header_paragraph_text",
+                "payload": { "part": "header1", "index": 0, "text": "CONFIDENTIAL" }
+            }),
+            safety:
+                "Rejects tracked changes, content controls, and fields. Patches only the target word/header*.xml part."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_footer_paragraph_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Replace the text of one footer paragraph (`part` + within-part `index`)."
+                    .into(),
+            example: json!({
+                "kind": "set_footer_paragraph_text",
+                "payload": { "part": "footer1", "index": 0, "text": "Page 1" }
+            }),
+            safety:
+                "Rejects tracked changes, content controls, and fields. Patches only the target word/footer*.xml part."
+                    .into(),
+        },
+    ]
 }

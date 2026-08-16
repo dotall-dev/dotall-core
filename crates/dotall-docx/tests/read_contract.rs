@@ -4,6 +4,13 @@ use dotall_core::registry::{FormatHandler, ReadRequest, ReadSelector};
 use dotall_docx::{DocxFormat, minimal_docx, table_docx};
 use tempfile::tempdir;
 
+fn write_fixture(name: &str, bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join(name);
+    fs::write(&path, bytes).expect("write fixture");
+    (directory, path)
+}
+
 #[test]
 fn inspect_lists_headings_and_suggests_paragraph_reads() {
     let directory = tempdir().expect("temporary directory");
@@ -79,4 +86,37 @@ fn inspect_and_read_include_table_cell_paragraphs_in_document_order() {
     assert!(response.content.contains("0. Intro"));
     assert!(response.content.contains("1. CellA"));
     assert!(response.content.contains("2. CellB"));
+}
+
+#[test]
+fn inspect_and_read_include_header_paragraphs() {
+    let (_directory, path) = write_fixture("table.docx", &table_docx());
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+
+    assert_eq!(inspection.summary["header_paragraph_count"], 1);
+    assert_eq!(inspection.summary["headers"][0]["text"], "HeaderOnly");
+    assert_eq!(inspection.summary["headers"][0]["part"], "header1");
+    assert_eq!(inspection.summary["headers"][0]["index"], 0);
+    // Body indices stay document-order only (no header bleed).
+    assert_eq!(inspection.summary["paragraph_count"], 3);
+
+    let response = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "headers".into(),
+                    value: "0:1".into(),
+                }),
+                max_tokens: 2_000,
+                continuation: None,
+            },
+        )
+        .expect("read headers");
+
+    assert!(response.content.contains("header1"));
+    assert!(response.content.contains("HeaderOnly"));
 }

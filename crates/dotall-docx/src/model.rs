@@ -7,6 +7,12 @@ pub const SCHEMA_VERSION: u32 = 1;
 pub struct DocumentModel {
     pub document_id: String,
     pub paragraphs: Vec<ParagraphModel>,
+    /// Paragraphs from `word/header*.xml`, sorted by part then document order within the part.
+    #[serde(default)]
+    pub header_paragraphs: Vec<HeaderFooterParagraphModel>,
+    /// Paragraphs from `word/footer*.xml`, sorted by part then document order within the part.
+    #[serde(default)]
+    pub footer_paragraphs: Vec<HeaderFooterParagraphModel>,
     /// Always false when table cell paragraphs are included in `paragraphs`.
     #[serde(default)]
     pub skipped_tables: bool,
@@ -18,6 +24,21 @@ pub struct DocumentModel {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ParagraphModel {
     pub element_id: String,
+    pub index: u32,
+    pub outline_level: Option<u32>,
+    pub style_id: Option<String>,
+    pub text: String,
+    #[serde(default = "editable_default")]
+    pub editable: bool,
+}
+
+/// Paragraph living in a header or footer story part (not the body).
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct HeaderFooterParagraphModel {
+    pub element_id: String,
+    /// Part stem, e.g. `header1` or `footer1`.
+    pub part: String,
+    /// Index within that part (0-based).
     pub index: u32,
     pub outline_level: Option<u32>,
     pub style_id: Option<String>,

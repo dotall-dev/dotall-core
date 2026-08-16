@@ -87,6 +87,84 @@ fn set_paragraph_text_edits_table_cell_and_leaves_header_media_identical() {
     assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
 }
 
+#[test]
+fn set_header_paragraph_text_patches_only_header_part() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    let before = fixture::table_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(
+        model.payload["header_paragraphs"]
+            .as_array()
+            .expect("headers")
+            .len(),
+        1
+    );
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_header_paragraph_text".into(),
+                payload: serde_json::json!({
+                    "part": "header1",
+                    "index": 0,
+                    "text": "CONFIDENTIAL"
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.header_paragraphs[0].text, "CONFIDENTIAL");
+    assert_eq!(after.paragraphs[0].text, "Intro");
+    assert_eq!(after.paragraphs[1].text, "CellA");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/header1.xml"]);
+}
+
+#[test]
+fn set_footer_paragraph_text_patches_only_footer_part() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("footer.docx");
+    let before = fixture::header_footer_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(after_footer_count(&model), 1);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_footer_paragraph_text".into(),
+                payload: serde_json::json!({
+                    "part": "footer1",
+                    "index": 0,
+                    "text": "Page footer updated"
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.footer_paragraphs[0].text, "Page footer updated");
+    assert_eq!(after.header_paragraphs[0].text, "HeaderOnly");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/footer1.xml"]);
+}
+
+fn after_footer_count(model: &dotall_core::registry::ArtifactEnvelope) -> usize {
+    model.payload["footer_paragraphs"]
+        .as_array()
+        .expect("footers")
+        .len()
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);

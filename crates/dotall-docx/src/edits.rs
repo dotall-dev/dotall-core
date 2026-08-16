@@ -10,18 +10,36 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use crate::FORMAT_ID;
-use crate::model::{DocumentModel, SCHEMA_ID, SCHEMA_VERSION};
+use crate::model::{DocumentModel, HeaderFooterParagraphModel, SCHEMA_ID, SCHEMA_VERSION};
 
 const UNSAFE_MARKERS: [&str; 5] = ["<w:del", "<w:ins", "<w:sdt", "<w:fldChar", "<w:instrText"];
 
 pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Result<ValidatedEdit> {
-    if operations.len() != 1 || operations[0].kind != "set_paragraph_text" {
+    if operations.len() != 1 {
         return Err(format_error(
-            "docx v0 supports a single set_paragraph_text operation per transaction",
+            "docx supports a single paragraph edit operation per transaction",
         ));
     }
     let operation = &operations[0];
-    let paragraph = resolve_paragraph(model, &operation.payload)?;
+    match operation.kind.as_str() {
+        "set_paragraph_text" => validate_set_paragraph_text(model, operation),
+        "set_header_paragraph_text" => {
+            validate_set_header_footer_text(model, operation, StoryKind::Header)
+        }
+        "set_footer_paragraph_text" => {
+            validate_set_header_footer_text(model, operation, StoryKind::Footer)
+        }
+        other => Err(format_error(format!(
+            "unsupported docx edit `{other}`; use set_paragraph_text, set_header_paragraph_text, or set_footer_paragraph_text"
+        ))),
+    }
+}
+
+fn validate_set_paragraph_text(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
     let text = required_str(&operation.payload, "text")?;
     if !paragraph.editable {
         return Err(format_error(
@@ -54,6 +72,46 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
     })
 }
 
+fn validate_set_header_footer_text(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+    kind: StoryKind,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_header_footer_paragraph(model, &operation.payload, kind)?;
+    let text = required_str(&operation.payload, "text")?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let op_kind = kind.edit_kind();
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: op_kind.into(),
+            payload: serde_json::json!({
+                "part": paragraph.part,
+                "index": paragraph.index,
+                "text": text,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}:{}:{}", kind.prefix(), paragraph.part, paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: op_kind.into(),
+            before: Some(paragraph.text.clone()),
+            after: Some(text.to_owned()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 pub fn apply(source: &std::path::Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
         path: source.to_path_buf(),
@@ -67,22 +125,46 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
         .operations
         .first()
         .ok_or_else(|| format_error("validated edit is missing operations"))?;
-    let index = operation
-        .payload
-        .get("index")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| format_error("`index` is required"))? as u32;
-    let text = required_str(&operation.payload, "text")?;
-    let original = entry_bytes(package, "word/document.xml")?;
-    let patched_xml = patch_paragraph_text(&original, index, text)?;
-    let bytes = rebuild_package(
-        package,
-        &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
-    )?;
-    Ok(PatchedOutput {
-        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
-        bytes,
-    })
+    match operation.kind.as_str() {
+        "set_paragraph_text" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let text = required_str(&operation.payload, "text")?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_text(&original, index, text)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
+        "set_header_paragraph_text" | "set_footer_paragraph_text" => {
+            let part = required_str(&operation.payload, "part")?;
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let text = required_str(&operation.payload, "text")?;
+            let entry_name = format!("word/{part}.xml");
+            let original = entry_bytes(package, &entry_name)?;
+            let patched_xml = patch_paragraph_text(&original, index, text)?;
+            let bytes = rebuild_package(package, &BTreeMap::from([(entry_name, patched_xml)]))?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
+        other => Err(format_error(format!(
+            "unsupported validated edit `{other}`"
+        ))),
+    }
 }
 
 pub fn patch_paragraph_text(xml: &[u8], index: u32, text: &str) -> Result<Vec<u8>> {
@@ -126,7 +208,36 @@ pub fn patch_paragraph_text(xml: &[u8], index: u32, text: &str) -> Result<Vec<u8
     Ok(output.into_bytes())
 }
 
-fn resolve_paragraph<'a>(
+#[derive(Clone, Copy)]
+enum StoryKind {
+    Header,
+    Footer,
+}
+
+impl StoryKind {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Header => "header",
+            Self::Footer => "footer",
+        }
+    }
+
+    fn edit_kind(self) -> &'static str {
+        match self {
+            Self::Header => "set_header_paragraph_text",
+            Self::Footer => "set_footer_paragraph_text",
+        }
+    }
+
+    fn paragraphs(self, model: &DocumentModel) -> &[HeaderFooterParagraphModel] {
+        match self {
+            Self::Header => &model.header_paragraphs,
+            Self::Footer => &model.footer_paragraphs,
+        }
+    }
+}
+
+fn resolve_body_paragraph<'a>(
     model: &'a DocumentModel,
     payload: &serde_json::Value,
 ) -> Result<&'a crate::model::ParagraphModel> {
@@ -149,6 +260,50 @@ fn resolve_paragraph<'a>(
         .iter()
         .find(|paragraph| paragraph.index == index)
         .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))
+}
+
+fn resolve_header_footer_paragraph<'a>(
+    model: &'a DocumentModel,
+    payload: &serde_json::Value,
+    kind: StoryKind,
+) -> Result<&'a HeaderFooterParagraphModel> {
+    let paragraphs = kind.paragraphs(model);
+    if let Some(element_id) = payload
+        .get("element_id")
+        .and_then(serde_json::Value::as_str)
+    {
+        return paragraphs
+            .iter()
+            .find(|paragraph| paragraph.element_id == element_id)
+            .ok_or_else(|| {
+                format_error(format!(
+                    "{} paragraph `{element_id}` was not found",
+                    kind.prefix()
+                ))
+            });
+    }
+    let index = payload
+        .get("index")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| format_error("`index` or `element_id` is required"))? as u32;
+    if let Some(part) = payload.get("part").and_then(serde_json::Value::as_str) {
+        return paragraphs
+            .iter()
+            .find(|paragraph| paragraph.part == part && paragraph.index == index)
+            .ok_or_else(|| {
+                format_error(format!(
+                    "{} paragraph `{part}:{index}` was not found",
+                    kind.prefix()
+                ))
+            });
+    }
+    // Bare index: first match in sorted part order (model already sorted).
+    paragraphs.get(index as usize).ok_or_else(|| {
+        format_error(format!(
+            "{} paragraph `{index}` was not found",
+            kind.prefix()
+        ))
+    })
 }
 
 fn paragraph_spans(xml: &str) -> Result<Vec<(usize, usize)>> {

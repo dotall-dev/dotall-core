@@ -98,13 +98,17 @@ Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; 
 
 ## DOCX — `memo.docx`
 
-Document-order indices: `0` heading, `1`–`2` body, `3`–`6` table cells (`Owner`/`Status` header row, then `Platform` / `In progress`).
+Body document-order indices: `0` heading, `1`–`2` body, `3`–`6` table cells
+(`Owner`/`Status` header row, then `Platform` / `In progress`).
+
+Header part `header1` index `0`: `CONFIDENTIAL - Agent Pilot Memo` (separate from body).
 
 ```bash
 DOTALL=./target/debug/dotall
 
 $DOTALL inspect demo/memo.docx
 $DOTALL read demo/memo.docx --selector-kind paragraphs --selector '0:7'
+$DOTALL read demo/memo.docx --selector-kind headers --selector '0:1'
 
 # Prior v0 (body paragraph)
 $DOTALL edit demo/memo.docx --ops-json \
@@ -114,6 +118,11 @@ $DOTALL apply demo/memo.docx --all
 # Wave 1 (table cell)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_text","payload":{"index":6,"text":"Done"}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 2 (header)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_header_paragraph_text","payload":{"part":"header1","index":0,"text":"CONFIDENTIAL - Updated"}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
