@@ -294,6 +294,17 @@ Execute in priority order when Wave 1 demo bar is met for all four formats:
 6. XLSX `merges`/`named_ranges` dedicated selectors if only inspect was done in X1
 7. Keep expanding demos as Wave 2+ ops land (standing demo gate above)
 
+## Wave 3 — next demo-visible slices (parallel)
+
+Execute after Wave 2 integrates (merge/unmerge, add/delete slide, headers/footers, PDF metadata/choice):
+
+1. **PPTX P3:** `set_notes_text` — surgical notes slide part patch; update `demo/deck.pptx` with notes
+2. **DOCX:** richer multi-run paragraph edit (preserve run breaks / clone rPr per run when safe) OR `insert_paragraph` after index — prefer multi-run fidelity on `set_paragraph_text`
+3. **XLSX:** style-aware inspect/read — surface cell `number_format` / `style_id` in inspect or `ast_range` projection (no full style writer)
+4. **PDF:** better page text extraction for `read.page` / full (still no designed-page body edit)
+
+Each task ends with the standing demo gate (README + regenerate + CLI smoke new + prior paths).
+
 ---
 
 ## Standing requirement — end every format wave with demos
