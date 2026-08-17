@@ -492,6 +492,19 @@ After Wave 17 integrates (set_center_on_page, set_shape_vert_align, set_paragrap
 
 Each task ends with the standing demo gate.
 
+## Wave 19 — hyperlinks (content-first) + companion slices (parallel)
+
+After Wave 18 integrates (set_paper_size, set_shape_caps, set_paragraph_caps, set_form_field_rich_text):
+
+1. **XLSX:** `set_header_footer` — set/clear worksheet print header/footer via surgical `headerFooter`/`oddHeader`/`oddFooter` (`header` and `footer` optional strings; both null clears the element); inspect surfaces `header_footer` when present. Excel codes (`&C`, `&P`) are passed through verbatim.
+2. **PPTX:** `set_shape_hyperlink` — set/clear an external hyperlink on a slide shape (`a:hlinkClick` on `p:cNvPr` plus a hyperlink relationship in the slide `.rels`); payload `slide`, `shape`, `url` (`http`/`https`/`mailto` or null to clear); content-on-slide. Reuse existing Relationship insert/remove helpers from add/delete slide. Other slides stay byte-identical.
+3. **DOCX:** `set_paragraph_hyperlink` — set/clear `w:hyperlink` wrapping the target body/table paragraph’s runs (`r:id` + `word/_rels/document.xml.rels` external hyperlink); payload paragraph index/element_id + `url` or null; content-in-document companion. Reject empty url (use null to clear).
+4. **PDF:** `set_form_field_no_export` — set/clear AcroForm field NoExport (`/Ff` bit 3); applies to any field type (like readonly/required, not tx-only); inspect surfaces `no_export`.
+
+**Deferred:** richer table cell content, list/bullet text, document-/slide-wide replace-across; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
