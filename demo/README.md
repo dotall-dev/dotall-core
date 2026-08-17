@@ -178,6 +178,16 @@ $DOTALL apply demo/financials.xlsx --all
 $DOTALL inspect demo/financials.xlsx
 # expect sheets[].print_scale 75 for Revenue
 
+# Wave 16: set_fit_to_page (fitToWidth/Height + pageSetUpPr)
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_fit_to_page","payload":{"sheet":"Revenue","width":1,"height":1}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect sheets[].fit_to_page width=1 height=1 for Revenue
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_fit_to_page","payload":{"sheet":"Revenue","width":null,"height":null}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -292,9 +302,14 @@ $DOTALL edit demo/deck.pptx --ops-json \
 $DOTALL apply demo/deck.pptx --all
 $DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 1'
 # expect Title contains Q4
+
+# Wave 16 — strikethrough on Title (content-on-slide)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_shape_strikethrough","payload":{"slide":"Slide 2","shape":"Title","strikethrough":true}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `replace_shape_text` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `set_shape_strikethrough` / `replace_shape_text` patch only the target slide part.
 
 ---
 
@@ -401,6 +416,11 @@ $DOTALL edit demo/memo.docx --ops-json \
 $DOTALL apply demo/memo.docx --all
 $DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:3'
 # expect paragraph 2 mentions Monday
+
+# Wave 16 — paragraph strikethrough (w:strike)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_strikethrough","payload":{"index":2,"strikethrough":true}}]'
+$DOTALL apply demo/memo.docx --all
 ```
 
 ---
@@ -553,6 +573,16 @@ $DOTALL inspect demo/form.pdf
 # expect fields[].comb true for Name
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field_comb","payload":{"name":"Name","comb":false}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 16 — mark Name do-not-scroll (Ff DoNotScroll), then clear
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_do_not_scroll","payload":{"name":"Name","do_not_scroll":true}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect fields[].do_not_scroll true for Name
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_do_not_scroll","payload":{"name":"Name","do_not_scroll":false}}]'
 $DOTALL apply demo/form.pdf --all
 ```
 
