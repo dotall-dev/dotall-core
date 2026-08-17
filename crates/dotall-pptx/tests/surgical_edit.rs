@@ -2042,3 +2042,169 @@ fn capabilities_advertise_replace_across_shapes() {
         "capabilities must advertise replace_across_shapes"
     );
 }
+
+#[test]
+fn set_shape_bullet_sets_bu_char_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = minimal_pptx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_bullet".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "bullet": true,
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let slide_xml = String::from_utf8(zip_entries(&patched.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        slide_xml.contains(r#"<a:buChar char="•"/>"#) || slide_xml.contains(r#"char="•""#),
+        "expected a:buChar char=•, got: {slide_xml}"
+    );
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.slides[0].shapes[0].text, "Hello");
+    assert_eq!(edit.semantic_diff[0].change, "set_shape_bullet");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("true"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn set_shape_bullet_false_writes_bu_none() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_bullet".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "bullet": true,
+                }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_bullet".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "bullet": false,
+                }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let slide_xml = String::from_utf8(zip_entries(&cleared.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        slide_xml.contains("<a:buNone") || !slide_xml.contains("buChar"),
+        "expected a:buNone (or no bullet children), got: {slide_xml}"
+    );
+    assert!(
+        !slide_xml.contains(r#"char="•""#),
+        "expected bullet cleared, got: {slide_xml}"
+    );
+    assert_eq!(clear.semantic_diff[0].after.as_deref(), Some("false"));
+}
+
+#[test]
+fn set_shape_bullet_rejects_missing_shape() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_bullet".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Missing",
+                    "bullet": true,
+                }),
+            }],
+        )
+        .expect_err("missing shape");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("not found") || message.contains("missing"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn set_shape_bullet_rejects_table_shape() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_table()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_bullet".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Table 1",
+                    "bullet": true,
+                }),
+            }],
+        )
+        .expect_err("table is not a text shape");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        !message.contains("unsupported pptx edit"),
+        "expected shape rejection, not unsupported op: {error}"
+    );
+    assert!(
+        (message.contains("not found") && message.contains("table 1"))
+            || message.contains("non-text"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_shape_bullet() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_shape_bullet"),
+        "capabilities must advertise set_shape_bullet"
+    );
+}

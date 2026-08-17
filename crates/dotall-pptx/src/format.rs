@@ -479,5 +479,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Rejects empty find and no-match on the slide. Applies replace_shape_text's first-run rewrite to every matching text-frame shape in one surgical patch of the target slide part. Skips graphicFrame/tables/SmartArt/charts.".into(),
         },
+        EditCapability {
+            operation: "set_shape_bullet".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear a bullet on all paragraphs inside a slide shape text frame (a:buChar / a:buNone)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_bullet",
+                "payload": { "slide": "Slide 1", "shape": "Title", "bullet": true }
+            }),
+            safety: "Upserts a:pPr a:buChar char=\"•\" (true) or a:buNone (false) on each a:p in the shape txBody, replacing existing buNone/buFont/buChar/buAutoNum. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
     ]
 }

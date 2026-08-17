@@ -57,11 +57,12 @@ pub fn validate(
         "set_shape_strikethrough" => validate_set_shape_strikethrough(model, operation),
         "set_shape_vert_align" => validate_set_shape_vert_align(model, operation),
         "set_shape_caps" => validate_set_shape_caps(model, operation),
+        "set_shape_bullet" => validate_set_shape_bullet(model, operation),
         "set_shape_hyperlink" => validate_set_shape_hyperlink(model, operation),
         "replace_shape_text" => validate_replace_shape_text(model, operation),
         "replace_across_shapes" => validate_replace_across_shapes(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, replace_across_shapes, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_hyperlink, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, replace_across_shapes, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_bullet, set_shape_hyperlink, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -393,6 +394,13 @@ fn validate_set_shape_strikethrough(
     operation: &SemanticOperation,
 ) -> Result<ValidatedEdit> {
     validate_set_shape_run_bool(model, operation, "set_shape_strikethrough", "strikethrough")
+}
+
+fn validate_set_shape_bullet(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    validate_set_shape_run_bool(model, operation, "set_shape_bullet", "bullet")
 }
 
 fn validate_set_shape_vert_align(
@@ -1311,6 +1319,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 removals: BTreeSet::new(),
             }
         }
+        "set_shape_bullet" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let bullet = operation
+                .payload
+                .get("bullet")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`bullet` boolean is required"))?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_shape_bullet(&original, shape, bullet)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
         "set_shape_hyperlink" => {
             let part_name = required_str(&operation.payload, "part_name")?;
             let shape = required_str(&operation.payload, "shape")?;
@@ -1667,6 +1693,110 @@ pub fn patch_shape_caps(xml: &[u8], shape: &str, caps: Option<&str>) -> Result<V
         ))),
         None => patch_shape_clear_run_attr(xml, shape, "cap"),
     }
+}
+
+pub fn patch_shape_bullet(xml: &[u8], shape: &str, bullet: bool) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let (sp_start, sp_end) = shape_sp_span(source, shape)?;
+    let sp = &source[sp_start..sp_end];
+    let Some(tx_start) = find_tag(sp, 0, "p:txBody") else {
+        return Err(format_error("cannot edit non-text shape"));
+    };
+    let tx_end = element_end_drawing(sp, tx_start, "p:txBody")?;
+    let patched_tx = set_tx_body_bullets(&sp[tx_start..tx_end], bullet)?;
+    let patched_sp = format!("{}{}{}", &sp[..tx_start], patched_tx, &sp[tx_end..]);
+    Ok(format!("{}{}{}", &source[..sp_start], patched_sp, &source[sp_end..]).into_bytes())
+}
+
+fn set_tx_body_bullets(tx: &str, bullet: bool) -> Result<String> {
+    let mut output = String::with_capacity(tx.len() + 64);
+    let mut cursor = 0;
+    let mut patched_any = false;
+    while let Some(start) = find_tag(tx, cursor, "a:p") {
+        let end = element_end_drawing(tx, start, "a:p")?;
+        output.push_str(&tx[cursor..start]);
+        output.push_str(&upsert_paragraph_bullet(&tx[start..end], bullet)?);
+        cursor = end;
+        patched_any = true;
+    }
+    output.push_str(&tx[cursor..]);
+    if !patched_any {
+        return Err(format_error("shape has no paragraph to set bullet"));
+    }
+    Ok(output)
+}
+
+fn upsert_paragraph_bullet(paragraph: &str, bullet: bool) -> Result<String> {
+    let bullet_tag = if bullet {
+        r#"<a:buChar char="•"/>"#
+    } else {
+        "<a:buNone/>"
+    };
+    let open_end = paragraph
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated a:p"))?;
+    if paragraph[..open_end].ends_with("/>") {
+        let open = paragraph[..open_end - 2].trim_end();
+        return Ok(format!("{open}><a:pPr>{bullet_tag}</a:pPr></a:p>"));
+    }
+    let rest = &paragraph[open_end..];
+    if let Some(ppr_start) = find_tag(rest, 0, "a:pPr") {
+        let ppr_end = element_end_drawing(rest, ppr_start, "a:pPr")?;
+        let patched_ppr = upsert_ppr_bullet(&rest[ppr_start..ppr_end], bullet_tag)?;
+        return Ok(format!(
+            "{}{}{}{}",
+            &paragraph[..open_end],
+            &rest[..ppr_start],
+            patched_ppr,
+            &rest[ppr_end..]
+        ));
+    }
+    Ok(format!(
+        "{}<a:pPr>{bullet_tag}</a:pPr>{}",
+        &paragraph[..open_end],
+        rest
+    ))
+}
+
+fn upsert_ppr_bullet(ppr: &str, bullet_tag: &str) -> Result<String> {
+    let open_end = ppr
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated a:pPr"))?;
+    if ppr[..open_end].ends_with("/>") {
+        let open = ppr[..open_end - 2].trim_end();
+        return Ok(format!("{open}>{bullet_tag}</a:pPr>"));
+    }
+    let close = "</a:pPr>";
+    let inner_end = ppr
+        .len()
+        .checked_sub(close.len())
+        .filter(|_| ppr.ends_with(close))
+        .ok_or_else(|| format_error("a:pPr is missing a closing tag"))?;
+    let stripped = strip_ppr_bullet_children(&ppr[open_end..inner_end])?;
+    Ok(format!("{}{bullet_tag}{stripped}{close}", &ppr[..open_end]))
+}
+
+fn strip_ppr_bullet_children(inner: &str) -> Result<String> {
+    let mut output = inner.to_owned();
+    for tag in ["a:buNone", "a:buFont", "a:buChar", "a:buAutoNum"] {
+        output = strip_all_drawing_children(&output, tag)?;
+    }
+    Ok(output)
+}
+
+fn strip_all_drawing_children(parent: &str, tag: &str) -> Result<String> {
+    let mut output = String::new();
+    let mut cursor = 0;
+    while let Some(start) = find_tag(parent, cursor, tag) {
+        let end = element_end_drawing(parent, start, tag)?;
+        output.push_str(&parent[cursor..start]);
+        cursor = end;
+    }
+    output.push_str(&parent[cursor..]);
+    Ok(output)
 }
 
 fn set_shape_hyperlink_patch(

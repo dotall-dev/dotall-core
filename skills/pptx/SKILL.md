@@ -226,6 +226,12 @@ Find/replace a substring across all text-frame shapes on one slide (rejects empt
 }
 ```
 
+Set or clear a bullet on shape text-frame paragraphs (`a:buChar char="•"` / `a:buNone`):
+
+```json
+{ "kind": "set_shape_bullet", "payload": { "slide": "Slide 1", "shape": "Title", "bullet": true } }
+```
+
 Speaker notes (existing notes slide part only):
 
 ```json
@@ -253,6 +259,7 @@ Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
 `set_shape_hyperlink` sets `a:hlinkClick` on the shape `p:cNvPr` plus an External hyperlink Relationship (`http`/`https`/`mailto`; null clears both); rejects non-text shapes.
 `replace_shape_text` replaces all occurrences of `find` in the shape text model, then patches the slide part; rejects empty `find` and no-match.
 `replace_across_shapes` does the same first-run rewrite on every matching text-frame shape on the slide; rejects empty `find` and no-match; skips graphicFrame/tables/charts/SmartArt.
+`set_shape_bullet` upserts `a:pPr` `a:buChar char="•"` / `a:buNone` on each paragraph in the shape; rejects non-text shapes.
 
 Safety:
 
@@ -274,6 +281,7 @@ Safety:
 - `set_shape_hyperlink`: writes `a:hlinkClick` on the target shape’s `p:cNvPr` and an External hyperlink Relationship in that slide’s `.rels` (`http`/`https`/`mailto`; null clears both). Other slides stay byte-identical.
 - `replace_shape_text`: find/replace on shape text then first-run rewrite like `set_shape_text`; other parts stay byte-identical.
 - `replace_across_shapes`: find/replace across all matching text-frame shapes on one slide; skips tables/SmartArt/charts; other parts stay byte-identical.
+- `set_shape_bullet`: upserts `a:pPr` `a:buChar`/`a:buNone` on paragraphs in the target shape’s `txBody`; other parts stay byte-identical.
 - `add_textbox`: inserts a `p:sp` text box (`txBox="1"`) into the target slide’s `spTree`; other parts stay byte-identical.
 - `delete_shape`: removes the matching `p:sp` from the target slide part; other parts stay byte-identical.
 - `rename_shape`: rewrites the matching `cNvPr` name attribute on the target slide part; other parts stay byte-identical.
