@@ -15,6 +15,7 @@ use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
 use super::auto_filter;
 use super::center_on_page;
+use super::comments;
 use super::dimensions;
 use super::fit_to_page;
 use super::freeze_panes;
@@ -90,6 +91,28 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     }
     if let [XlsxEditOp::FreezePanes { sheet, cell }] = operations.as_slice() {
         return patch_freeze_panes(&original, sheet, cell.as_deref());
+    }
+    if let [
+        XlsxEditOp::InsertComment {
+            sheet,
+            address,
+            text,
+            author,
+            ..
+        },
+    ] = operations.as_slice()
+    {
+        let patch = comments::insert_comment(&original, sheet, address, text, author)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
     }
     if let [XlsxEditOp::SetTabColor { sheet, color }] = operations.as_slice() {
         return patch_tab_color(&original, sheet, color.as_deref());
@@ -340,6 +363,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetSheetZoom { .. }
                 | XlsxEditOp::SetShowGridlines { .. }
                 | XlsxEditOp::SetRightToLeft { .. }
+                | XlsxEditOp::InsertComment { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -384,7 +408,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetHeaderFooter { .. }
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
-            | XlsxEditOp::SetRightToLeft { .. } => {
+            | XlsxEditOp::SetRightToLeft { .. }
+            | XlsxEditOp::InsertComment { .. } => {
                 unreachable!("structural operations return above")
             }
         };

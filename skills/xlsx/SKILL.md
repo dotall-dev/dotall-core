@@ -74,6 +74,10 @@ From the response, capture:
   used in the workbook (ids only; no full style writer).
 - Inspect `summary.sheets[].freeze_panes` — openpyxl-style freeze cell (e.g. `B2`),
   or absent/null when panes are not frozen.
+- Inspect `summary.comments[]` — legacy Notes `{ element_id, sheet, cell, author, text }`
+  (empty/`[]` when none).
+- Inspect `summary.charts[]` — preserve-only `{ element_id, sheet, title }` (title may be
+  `""`). Never mutate charts.
 
 Never assume an operation exists because another `.xlsx` supported it — always
 re-check after external edits or a failed apply.
@@ -280,6 +284,28 @@ Set or clear worksheet view right-to-left (`sheetView` `rightToLeft`; `true` wri
 
 Inspect surfaces `right_to_left` per sheet when true (omit or false when LTR). Freeze panes, zoom, gridlines, and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
 
+Insert a legacy Excel Note / comment on an existing cell that does **not** already have one
+(`author` optional; defaults to `"Dotall"`). Writes `comments*.xml` + `vmlDrawing` +
+worksheet `legacyDrawing` / rels. Do **not** attempt `set_comment` / `delete_comment` /
+`replace_comment` — those are rejected. Charts are inspect-only (`summary.charts[]`);
+never mutate chart XML or series.
+
+```json
+{
+  "kind": "insert_comment",
+  "payload": {
+    "sheet": "Inputs",
+    "address": "B2",
+    "text": "Review Rate",
+    "author": "Dotall"
+  }
+}
+```
+
+Inspect surfaces `summary.comments[]` (`element_id`, `sheet`, `cell`, `author`, `text`)
+and `summary.charts[]` (`element_id`, `sheet`, `title`). `summary.preserved` still lists
+`charts` — inspect does not mean mutate.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.
@@ -314,7 +340,7 @@ Use **`dotall_discard`** to drop a staged transaction without touching source by
 | **Capability-driven ops** | Unsupported `kind` values return structured errors listing available operations. |
 | **Structural rejects** | Row/column/sheet ops validate impact first (formula rewrites, chart/table/name references). Rejection is intentional — do not bypass with raw file edits. |
 | **No formula evaluation** | Dotall stores and patches formulas; it does not compute results. |
-| **Charts/pivots preserved, not edited** | Do not attempt chart or pivot mutation; preserve them by using Dotall edits only. |
+| **Charts/pivots preserved, not edited** | Inspect `summary.charts[]` only. Do not attempt chart or pivot mutation; preserve them by using Dotall edits only. Comments are **insert-only** (`insert_comment`); never set/delete/replace existing notes. |
 
 When a structural edit is rejected, read the error, inspect dependents with
 `dotall_deps`, adjust the plan, or choose a narrower cell-level edit.

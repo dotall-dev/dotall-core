@@ -271,6 +271,8 @@ fn source_aware_validation_rejects_before_structural_edit_is_staged() {
             sheets: vec![fixture_sheet("Inputs"), fixture_sheet("PivotData")],
             named_ranges: Vec::new(),
             style_table: Vec::new(),
+            comments: Vec::new(),
+            charts: Vec::new(),
             unmodeled: UnmodeledMap {
                 charts: PreservationStatus::Preserved,
                 pivots: PreservationStatus::Preserved,

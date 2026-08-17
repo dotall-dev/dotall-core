@@ -46,7 +46,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetHeaderFooter { .. }
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
-            | XlsxEditOp::SetRightToLeft { .. } => {
+            | XlsxEditOp::SetRightToLeft { .. }
+            | XlsxEditOp::InsertComment { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -168,7 +169,8 @@ pub(super) fn patch(
                 | XlsxEditOp::SetHeaderFooter { .. }
                 | XlsxEditOp::SetSheetZoom { .. }
                 | XlsxEditOp::SetShowGridlines { .. }
-                | XlsxEditOp::SetRightToLeft { .. } => {
+                | XlsxEditOp::SetRightToLeft { .. }
+                | XlsxEditOp::InsertComment { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -213,7 +215,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetHeaderFooter { .. }
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
-            | XlsxEditOp::SetRightToLeft { .. } => {
+            | XlsxEditOp::SetRightToLeft { .. }
+            | XlsxEditOp::InsertComment { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -358,7 +361,8 @@ fn render_new_cell(
         | XlsxEditOp::SetHeaderFooter { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
-        | XlsxEditOp::SetRightToLeft { .. } => {
+        | XlsxEditOp::SetRightToLeft { .. }
+        | XlsxEditOp::InsertComment { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -548,7 +552,8 @@ fn render_cell_parts(
         | XlsxEditOp::SetHeaderFooter { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
-        | XlsxEditOp::SetRightToLeft { .. } => {
+        | XlsxEditOp::SetRightToLeft { .. }
+        | XlsxEditOp::InsertComment { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

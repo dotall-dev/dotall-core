@@ -183,6 +183,14 @@ pub(crate) fn parse_validated_operations(
                 header: optional_nullable_string(operation, "header")?,
                 footer: optional_nullable_string(operation, "footer")?,
             }),
+            "insert_comment" => Ok(XlsxEditOp::InsertComment {
+                sheet: required_string(operation, "sheet")?,
+                address: required_string(operation, "address")?,
+                element_id: required_string(operation, "element_id")?,
+                text: required_string(operation, "text")?,
+                author: optional_string(operation, "author")?
+                    .unwrap_or_else(|| "Dotall".to_owned()),
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),

@@ -10,7 +10,34 @@ pub struct WorkbookModel {
     pub sheets: Vec<SheetModel>,
     pub named_ranges: Vec<NamedRange>,
     pub style_table: Vec<StyleEntry>,
+    /// Legacy Excel Notes (`xl/comments*.xml`). Empty when the workbook has none.
+    #[serde(default)]
+    pub comments: Vec<CommentModel>,
+    /// Chart inspect entries (`xl/charts/chart*.xml`). Empty when none. Preserve-only.
+    #[serde(default)]
+    pub charts: Vec<ChartModel>,
     pub unmodeled: UnmodeledMap,
+}
+
+/// A legacy Excel Note (comment) for inspect / insert-only editing.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct CommentModel {
+    pub element_id: String,
+    pub sheet: String,
+    pub cell: String,
+    pub author: String,
+    pub text: String,
+}
+
+/// Chart inspect metadata (read-only; never mutated by Dotall).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct ChartModel {
+    pub element_id: String,
+    /// Worksheet name when drawing/worksheet relationships resolve; otherwise absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
+    /// Chart title text from `c:title`, or empty when untitled.
+    pub title: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

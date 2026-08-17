@@ -131,6 +131,18 @@ impl FormatHandler for XlsxFormat {
                 "style_table": workbook.style_table.iter().map(|entry| json!({
                     "style_id": entry.style_id,
                 })).collect::<Vec<_>>(),
+                "comments": workbook.comments.iter().map(|comment| json!({
+                    "element_id": comment.element_id,
+                    "sheet": comment.sheet,
+                    "cell": comment.cell,
+                    "author": comment.author,
+                    "text": comment.text,
+                })).collect::<Vec<_>>(),
+                "charts": workbook.charts.iter().map(|chart| json!({
+                    "element_id": chart.element_id,
+                    "sheet": chart.sheet,
+                    "title": chart.title,
+                })).collect::<Vec<_>>(),
                 "preserved": ["charts", "pivots", "vba", "other_ooxml_parts"],
                 "structure": structure,
             }),
@@ -744,6 +756,23 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "rtl": true }
             }),
             safety: "Surgically patches only the target worksheet sheetView rightToLeft attribute. true writes rightToLeft=\"1\"; false removes the attribute (Excel default LTR). Existing freeze-pane children, zoomScale, showGridLines, and other sheetView attributes are preserved. Inspect surfaces right_to_left when true. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "insert_comment".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Insert a legacy Excel Note (comment) on an existing cell that has no comment."
+                .into(),
+            example: json!({
+                "kind": "insert_comment",
+                "payload": {
+                    "sheet": "Inputs",
+                    "address": "B2",
+                    "text": "Review Rate",
+                    "author": "Dotall"
+                }
+            }),
+            safety: "Insert-only. Rejects cells that already have a comment (no set/delete/replace). Writes legacy comments*.xml + vmlDrawing + worksheet legacyDrawing/rels. Charts remain preserve-only — never mutate chart parts."
                 .into(),
         },
     ]

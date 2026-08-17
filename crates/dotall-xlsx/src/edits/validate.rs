@@ -42,6 +42,7 @@ pub fn validate(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
+    reject_unsupported_comment_or_chart_ops(operations)?;
     if operations
         .iter()
         .any(|operation| matches!(operation.kind.as_str(), "merge_cells" | "unmerge_cells"))
@@ -61,6 +62,12 @@ pub fn validate(
         .any(|operation| matches!(operation.kind.as_str(), "freeze_panes"))
     {
         return validate_freeze_panes_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "insert_comment"))
+    {
+        return validate_insert_comment_operations(model, operations);
     }
     if operations
         .iter()
@@ -196,6 +203,7 @@ pub fn validate_with_source(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
+    reject_unsupported_comment_or_chart_ops(operations)?;
     if operations.iter().any(|operation| {
         matches!(
             operation.kind.as_str(),
@@ -223,6 +231,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "freeze_panes"))
     {
         return validate_freeze_panes_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "insert_comment"))
+    {
+        return validate_insert_comment_operations(model, operations);
     }
     if operations
         .iter()
@@ -941,6 +955,139 @@ fn validate_freeze_panes_operations(
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
             notes: vec!["refs parsed; values not evaluated".into()],
+        },
+    })
+}
+
+fn reject_unsupported_comment_or_chart_ops(operations: &[SemanticOperation]) -> Result<()> {
+    for operation in operations {
+        let kind = operation.kind.as_str();
+        if matches!(
+            kind,
+            "set_comment" | "delete_comment" | "replace_comment" | "update_comment"
+        ) {
+            return Err(unsupported_edit_capability(kind));
+        }
+        if kind.contains("chart") && kind != "insert_comment" {
+            return Err(unsupported_edit_capability(kind));
+        }
+    }
+    Ok(())
+}
+
+fn unsupported_edit_capability(kind: &str) -> DotallError {
+    DotallError::UnsupportedCapability {
+        format_id: FORMAT_ID.into(),
+        capability: kind.into(),
+        available: vec![
+            "insert_comment".into(),
+            "set_cell_value".into(),
+            "set_cell_formula".into(),
+            "set_range".into(),
+            "freeze_panes".into(),
+        ],
+    }
+}
+
+fn validate_insert_comment_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "insert_comment edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "insert_comment" {
+        return Err(format_error("unsupported insert_comment edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("insert_comment requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let address_raw = operation
+        .payload
+        .get("address")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .ok_or_else(|| format_error("insert_comment requires a non-empty `address` field"))?;
+    let address = format_address(parse_address(address_raw)?);
+    let text = operation
+        .payload
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format_error("insert_comment requires a non-empty `text` field"))?;
+    let author = match operation.payload.get("author") {
+        None | Some(Value::Null) => "Dotall".to_owned(),
+        Some(Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(format_error(
+                    "insert_comment `author` must be non-empty when present",
+                ));
+            }
+            trimmed.to_owned()
+        }
+        _ => {
+            return Err(format_error(
+                "insert_comment `author` must be a string when present",
+            ));
+        }
+    };
+
+    let cell_exists = sheet
+        .cells
+        .iter()
+        .any(|cell| cell.address.eq_ignore_ascii_case(&address));
+    if !cell_exists {
+        return Err(format_error(format!(
+            "insert_comment requires an existing cell `{canonical_sheet}!{address}`"
+        )));
+    }
+    if workbook.comments.iter().any(|comment| {
+        comment.sheet.eq_ignore_ascii_case(&canonical_sheet)
+            && comment.cell.eq_ignore_ascii_case(&address)
+    }) {
+        return Err(format_error(format!(
+            "insert_comment rejected: cell `{canonical_sheet}!{address}` already has a comment"
+        )));
+    }
+
+    let element_id = ids::comment_id(&canonical_sheet, &address, MODEL_SCHEMA_VERSION);
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_comment".into(),
+            payload: serde_json::json!({
+                "sheet": &canonical_sheet,
+                "address": &address,
+                "element_id": &element_id,
+                "text": &text,
+                "author": &author,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!{address}"),
+            element_id,
+            change: "insert_comment".into(),
+            before: None,
+            after: Some(text),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
         },
     })
 }
@@ -2740,7 +2887,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
         | XlsxEditOp::SetHeaderFooter { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
-        | XlsxEditOp::SetRightToLeft { .. } => {
+        | XlsxEditOp::SetRightToLeft { .. }
+        | XlsxEditOp::InsertComment { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -2867,9 +3015,10 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetHeaderFooter { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
-        | XlsxEditOp::SetRightToLeft { .. } => {
+        | XlsxEditOp::SetRightToLeft { .. }
+        | XlsxEditOp::InsertComment { .. } => {
             unreachable!(
-                "sheet, merge, dimension, freeze, and define_name edits are validated separately"
+                "sheet, merge, dimension, freeze, define_name, and insert_comment edits are validated separately"
             )
         }
     }
@@ -2922,6 +3071,8 @@ mod tests {
                 formula: "=Inputs!$B$1".into(),
             }],
             style_table: Vec::new(),
+            comments: Vec::new(),
+            charts: Vec::new(),
             unmodeled: UnmodeledMap {
                 charts: PreservationStatus::Preserved,
                 pivots: PreservationStatus::Preserved,

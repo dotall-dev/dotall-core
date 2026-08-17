@@ -167,6 +167,14 @@ pub enum XlsxEditOp {
         /// Odd-page footer; `None` with header `None` clears `<headerFooter>`.
         footer: Option<String>,
     },
+    InsertComment {
+        sheet: String,
+        address: String,
+        element_id: String,
+        text: String,
+        /// Defaults to `"Dotall"` when the agent omits `author`.
+        author: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

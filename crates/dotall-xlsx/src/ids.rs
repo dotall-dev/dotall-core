@@ -29,6 +29,16 @@ pub fn style_id(index: u32, schema_version: u32) -> String {
     opaque_id("st", schema_version, &[&index])
 }
 
+/// Returns a deterministic opaque identifier for a legacy Excel comment/note.
+pub fn comment_id(sheet_name: &str, cell: &str, schema_version: u32) -> String {
+    opaque_id("cm", schema_version, &[sheet_name, cell])
+}
+
+/// Returns a deterministic opaque identifier for a chart part.
+pub fn chart_id(part_path: &str, schema_version: u32) -> String {
+    opaque_id("ch", schema_version, &[part_path])
+}
+
 fn opaque_id(prefix: &str, schema_version: u32, components: &[&str]) -> String {
     let mut hasher = Hasher::new();
     hasher.update(b"xlsx.workbook");
