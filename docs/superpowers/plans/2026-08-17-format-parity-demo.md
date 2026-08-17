@@ -388,6 +388,19 @@ After Wave 9 integrates (set_tab_color, set_shape_italic, set_paragraph_italic, 
 
 Each task ends with the standing demo gate.
 
+## Wave 11 — font size run props + companion slices (parallel)
+
+After Wave 10 integrates (set_auto_filter, set_shape_underline, set_paragraph_underline, set_form_field_readonly):
+
+1. **XLSX:** `set_print_area` — set/clear worksheet print area via surgical workbook `_xlnm.Print_Area` defined name (A1-style range or clear); inspect surfaces `print_area` when present
+2. **PPTX:** `set_shape_font_size` — set/clear font size on shape text runs (`a:rPr sz` in hundredths of a point from `size_pt`); content-on-slide companion to bold/italic/underline
+3. **DOCX:** `set_paragraph_font_size` — set/clear `w:sz` / `w:szCs` on runs (half-points from `size_pt`); content-in-document companion to bold/italic/underline
+4. **PDF:** `set_form_field_required` — set/clear AcroForm field Required (`/Ff` bit 2); pairs with `set_form_field_readonly`
+
+**Deferred:** font name, highlight/color, replace-across-shapes/paragraphs; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
