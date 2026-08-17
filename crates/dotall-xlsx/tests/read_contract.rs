@@ -137,6 +137,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_center_on_page",
             "set_page_margins",
             "set_header_footer",
+            "set_sheet_zoom",
         ]
     );
     assert_eq!(
@@ -613,6 +614,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                 },
                 merges: Vec::new(),
                 freeze_panes: None,
+                zoom: None,
                 tab_color: None,
                 auto_filter: None,
                 print_area: None,

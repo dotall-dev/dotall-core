@@ -79,6 +79,7 @@ impl FormatHandler for XlsxFormat {
                     "formula_count": sheet.cells.iter().filter(|cell| cell.formula.is_some()).count(),
                     "merges": sheet.merges,
                     "freeze_panes": sheet.freeze_panes,
+                    "zoom": sheet.zoom,
                     "tab_color": sheet.tab_color,
                     "auto_filter": sheet.auto_filter,
                     "print_area": sheet.print_area,
@@ -705,6 +706,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "header": "&CBoard pack", "footer": "&P" }
             }),
             safety: "Surgically patches only the target worksheet headerFooter/oddHeader/oddFooter. Pass null header and footer to clear. Excel codes (&C, &P) are stored verbatim (XML-escaped). Inspect surfaces header_footer when present. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_sheet_zoom".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet view zoom via sheetView zoomScale (percent 10–400)."
+                .into(),
+            example: json!({
+                "kind": "set_sheet_zoom",
+                "payload": { "sheet": "Revenue", "zoom": 75 }
+            }),
+            safety: "Surgically patches only the target worksheet sheetView zoomScale attribute. Existing freeze-pane children and other sheetView attributes are preserved. Inspect surfaces zoom. Other sheets stay byte-identical."
                 .into(),
         },
     ]

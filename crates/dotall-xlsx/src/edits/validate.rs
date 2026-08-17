@@ -130,6 +130,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_sheet_zoom"))
+    {
+        return validate_set_sheet_zoom_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "define_name"))
     {
         return validate_define_name_operations(model, operations);
@@ -271,6 +277,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_header_footer"))
     {
         return validate_set_header_footer_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_sheet_zoom"))
+    {
+        return validate_set_sheet_zoom_operations(model, operations);
     }
     if operations
         .iter()
@@ -1773,6 +1785,67 @@ fn validate_set_header_footer_operations(
     })
 }
 
+fn validate_set_sheet_zoom_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_sheet_zoom edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_sheet_zoom" {
+        return Err(format_error("unsupported set_sheet_zoom edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_sheet_zoom requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.zoom;
+    let zoom = operation
+        .payload
+        .get("zoom")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_f64().map(|f| f as u64))
+                .and_then(|v| u32::try_from(v).ok())
+        })
+        .filter(|zoom| (10..=400).contains(zoom))
+        .ok_or_else(|| format_error("set_sheet_zoom requires `zoom` integer between 10 and 400"))?;
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_sheet_zoom".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "zoom": zoom,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!zoom"),
+            element_id: format!("zoom:{canonical_sheet}"),
+            change: "set_sheet_zoom".into(),
+            before: before.map(|v| v.to_string()),
+            after: Some(zoom.to_string()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn optional_header_footer_text(payload: &Value, field: &str) -> Result<Option<String>> {
     match payload.get(field) {
         None | Some(Value::Null) => Ok(None),
@@ -2530,7 +2603,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
  | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
-        | XlsxEditOp::SetHeaderFooter { .. } => {
+        | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetSheetZoom { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -2654,7 +2728,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
-        | XlsxEditOp::SetHeaderFooter { .. } => {
+        | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetSheetZoom { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )
@@ -2726,6 +2801,7 @@ mod tests {
             dimensions: SheetDimensions { rows: 10, cols: 4 },
             merges: Vec::new(),
             freeze_panes: None,
+            zoom: None,
             tab_color: None,
             auto_filter: None,
             print_area: None,

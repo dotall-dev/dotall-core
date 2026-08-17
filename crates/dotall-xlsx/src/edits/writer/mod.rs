@@ -11,6 +11,7 @@ mod page_orientation;
 mod paper_size;
 mod print_scale;
 mod shared_strings;
+mod sheet_zoom;
 mod structural;
 mod tab_color;
 mod workbook;

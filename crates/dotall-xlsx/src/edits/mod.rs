@@ -110,6 +110,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 cell: optional_string(operation, "cell")?,
             }),
+            "set_sheet_zoom" => Ok(XlsxEditOp::SetSheetZoom {
+                sheet: required_string(operation, "sheet")?,
+                zoom: required_sheet_zoom(operation)?,
+            }),
             "define_name" => Ok(XlsxEditOp::DefineName {
                 name: required_string(operation, "name")?,
                 formula: required_string(operation, "formula")?,
@@ -198,6 +202,22 @@ fn required_page_margins(
         header,
         footer,
     })
+}
+
+fn required_sheet_zoom(operation: &dotall_core::SemanticOperation) -> dotall_core::Result<u32> {
+    operation
+        .payload
+        .get("zoom")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_f64().map(|f| f as u64))
+                .and_then(|v| u32::try_from(v).ok())
+        })
+        .filter(|zoom| (10..=400).contains(zoom))
+        .ok_or_else(|| {
+            invalid_operation("validated edit operation requires `zoom` integer between 10 and 400")
+        })
 }
 
 fn required_print_scale(operation: &dotall_core::SemanticOperation) -> dotall_core::Result<u32> {

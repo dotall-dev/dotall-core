@@ -27,6 +27,7 @@ struct StyleCatalog {
 struct WorksheetPart {
     merges: Vec<String>,
     freeze_panes: Option<String>,
+    zoom: Option<u32>,
     tab_color: Option<String>,
     auto_filter: Option<String>,
     page_orientation: Option<String>,
@@ -83,6 +84,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                 .unwrap_or_else(|| WorksheetPart {
                     merges: Vec::new(),
                     freeze_panes: None,
+                    zoom: None,
                     tab_color: None,
                     auto_filter: None,
                     page_orientation: None,
@@ -211,6 +213,7 @@ where
         dimensions,
         merges: part.merges,
         freeze_panes: part.freeze_panes,
+        zoom: part.zoom,
         tab_color: part.tab_color,
         auto_filter: part.auto_filter,
         print_area: print.print_area,
@@ -274,6 +277,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
         let worksheet = entry_bytes(package, &path, source)?;
         let merges = parse_merge_refs(&worksheet, source)?;
         let freeze_panes = parse_freeze_panes(&worksheet, source)?;
+        let zoom = parse_sheet_zoom(&worksheet, source)?;
         let tab_color = parse_tab_color(&worksheet, source)?;
         let auto_filter = parse_auto_filter(&worksheet, source)?;
         let page_orientation = parse_page_orientation(&worksheet, source)?;
@@ -289,6 +293,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
             WorksheetPart {
                 merges,
                 freeze_panes,
+                zoom,
                 tab_color,
                 auto_filter,
                 page_orientation,
@@ -1047,6 +1052,38 @@ fn normalize_print_titles_formula(raw: &str) -> Option<crate::model::PrintTitles
         return None;
     }
     Some(crate::model::PrintTitles { rows, cols })
+}
+
+fn parse_sheet_zoom(xml: &[u8], source: &Path) -> Result<Option<u32>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if local_name(element.name().as_ref()) == b"sheetView" =>
+            {
+                for attribute in element.attributes().flatten() {
+                    if local_name(attribute.key.as_ref()) == b"zoomScale" {
+                        let value = String::from_utf8_lossy(attribute.value.as_ref())
+                            .trim()
+                            .parse::<u32>()
+                            .ok()
+                            .filter(|zoom| (10..=400).contains(zoom));
+                        if let Some(zoom) = value {
+                            return Ok(Some(zoom));
+                        }
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(None)
 }
 
 fn parse_freeze_panes(xml: &[u8], source: &Path) -> Result<Option<String>> {

@@ -256,6 +256,14 @@ Set or clear worksheet print header/footer (`headerFooter`/`oddHeader`/`oddFoote
 
 Inspect surfaces `header_footer` per sheet when present. Other worksheets stay byte-identical.
 
+Set worksheet view zoom (`sheetView` `zoomScale` percent 10–400):
+
+```json
+{ "kind": "set_sheet_zoom", "payload": { "sheet": "Revenue", "zoom": 75 } }
+```
+
+Inspect surfaces `zoom` per sheet when present. Freeze panes and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

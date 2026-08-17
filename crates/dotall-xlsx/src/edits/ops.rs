@@ -81,6 +81,11 @@ pub enum XlsxEditOp {
         /// Openpyxl-style freeze cell; `None` clears freeze panes.
         cell: Option<String>,
     },
+    SetSheetZoom {
+        sheet: String,
+        /// Worksheet view zoom percent 10–400 (`sheetView/@zoomScale`).
+        zoom: u32,
+    },
     DefineName {
         name: String,
         /// OOXML defined-name formula body (no leading `=`).

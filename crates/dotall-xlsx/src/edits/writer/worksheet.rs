@@ -43,7 +43,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
-            | XlsxEditOp::SetHeaderFooter { .. } => {
+            | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetSheetZoom { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -162,7 +163,8 @@ pub(super) fn patch(
                 | XlsxEditOp::SetFitToPage { .. }
                 | XlsxEditOp::SetCenterOnPage { .. }
                 | XlsxEditOp::SetPageMargins { .. }
-                | XlsxEditOp::SetHeaderFooter { .. } => {
+                | XlsxEditOp::SetHeaderFooter { .. }
+                | XlsxEditOp::SetSheetZoom { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -204,7 +206,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
-            | XlsxEditOp::SetHeaderFooter { .. } => {
+            | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetSheetZoom { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -346,7 +349,8 @@ fn render_new_cell(
         | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
-        | XlsxEditOp::SetHeaderFooter { .. } => {
+        | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetSheetZoom { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -533,7 +537,8 @@ fn render_cell_parts(
         | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
-        | XlsxEditOp::SetHeaderFooter { .. } => {
+        | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetSheetZoom { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

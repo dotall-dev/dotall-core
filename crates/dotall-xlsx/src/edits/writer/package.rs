@@ -25,6 +25,7 @@ use super::page_orientation;
 use super::paper_size;
 use super::print_scale;
 use super::shared_strings;
+use super::sheet_zoom;
 use super::structural;
 use super::tab_color;
 use super::workbook;
@@ -125,6 +126,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     }
     if let [XlsxEditOp::SetPaperSize { sheet, paper_size }] = operations.as_slice() {
         return patch_paper_size(&original, sheet, *paper_size);
+    }
+    if let [XlsxEditOp::SetSheetZoom { sheet, zoom }] = operations.as_slice() {
+        return patch_sheet_zoom(&original, sheet, *zoom);
     }
     if let [XlsxEditOp::SetPrintScale { sheet, scale }] = operations.as_slice() {
         return patch_print_scale(&original, sheet, *scale);
@@ -325,6 +329,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetCenterOnPage { .. }
                 | XlsxEditOp::SetPageMargins { .. }
                 | XlsxEditOp::SetHeaderFooter { .. }
+                | XlsxEditOp::SetSheetZoom { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -366,7 +371,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
-            | XlsxEditOp::SetHeaderFooter { .. } => {
+            | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetSheetZoom { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -825,6 +831,21 @@ fn patch_paper_size(original: &[u8], sheet: &str, paper_size: u32) -> Result<Pat
     let xml = entry_bytes(original, path)?;
     let mut replacements = BTreeMap::new();
     replacements.insert(path.clone(), paper_size::patch(&xml, paper_size)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_sheet_zoom(original: &[u8], sheet: &str, zoom: u32) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), sheet_zoom::patch(&xml, zoom)?);
     let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
