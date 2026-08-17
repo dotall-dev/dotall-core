@@ -1795,3 +1795,150 @@ fn capabilities_advertise_set_form_field_no_export() {
         "capabilities must advertise set_form_field_no_export"
     );
 }
+
+#[test]
+fn set_form_field_multi_select_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let dept_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Department"))
+        .expect("Department");
+    assert_eq!(dept_field["field_type"], "ch");
+    assert_eq!(dept_field["multi_select"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Department", "multi_select": true }),
+            }],
+        )
+        .expect("validate multi_select");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let dept = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Department")
+        .expect("Department");
+    assert!(dept.multi_select);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_multi_select");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_dept = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Department")
+        .expect("Department in inspect");
+    assert_eq!(inspect_dept["multi_select"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Department", "multi_select": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    fs::write(&path, &cleared.bytes).expect("rewrite");
+    let final_model = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let dept = final_model
+        .fields
+        .iter()
+        .find(|field| field.name == "Department")
+        .expect("Department");
+    assert!(!dept.multi_select);
+}
+
+#[test]
+fn set_form_field_multi_select_rejects_non_choice() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+
+    let tx_error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Name", "multi_select": true }),
+            }],
+        )
+        .expect_err("tx");
+    let tx_message = tx_error.to_string().to_lowercase();
+    assert!(
+        tx_message.contains("choice")
+            || tx_message.contains("multi_select")
+            || tx_message.contains("ch"),
+        "unexpected tx error: {tx_error}"
+    );
+
+    let btn_error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Agree", "multi_select": true }),
+            }],
+        )
+        .expect_err("btn");
+    let btn_message = btn_error.to_string().to_lowercase();
+    assert!(
+        btn_message.contains("choice")
+            || btn_message.contains("multi_select")
+            || btn_message.contains("ch"),
+        "unexpected btn error: {btn_error}"
+    );
+}
+
+#[test]
+fn set_form_field_multi_select_rejects_unknown_field() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Missing", "multi_select": true }),
+            }],
+        )
+        .expect_err("unknown field");
+    assert!(error.to_string().contains("was not found"));
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_multi_select() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_multi_select"),
+        "capabilities must advertise set_form_field_multi_select"
+    );
+}

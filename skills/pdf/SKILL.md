@@ -17,7 +17,7 @@ operators.
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -42,6 +42,7 @@ or radio states `Low` / `Medium` / `High`) from `/AP /N` across widgets.
 Choice fields (`ch`) expose `options` from `/Opt` on inspect and field read.
 Inspect surfaces `read_only` per field from `/Ff` bit 1.
 Inspect surfaces `no_export` per field from `/Ff` bit 3.
+Inspect surfaces `multi_select` per choice field from `/Ff` bit 20.
 
 ### Edit
 
@@ -197,6 +198,15 @@ Exclude a field from export or include it (`/Ff` NoExport bit; any field type):
 {
   "kind": "set_form_field_no_export",
   "payload": { "name": "Name", "no_export": true }
+}
+```
+
+Mark a choice field as multi-select or single-select (`/Ff` MultiSelect bit; `ch` only):
+
+```json
+{
+  "kind": "set_form_field_multi_select",
+  "payload": { "name": "Department", "multi_select": true }
 }
 ```
 

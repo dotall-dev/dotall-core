@@ -71,6 +71,9 @@ pub struct PdfFieldModel {
     /// AcroForm NoExport flag (`/Ff` bit 3) for any field type.
     #[serde(default)]
     pub no_export: bool,
+    /// AcroForm MultiSelect flag (`/Ff` bit 20) for choice fields.
+    #[serde(default)]
+    pub multi_select: bool,
     /// AcroForm `/MaxLen` for text fields when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_length: Option<u32>,

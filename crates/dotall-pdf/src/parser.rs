@@ -170,6 +170,7 @@ fn walk_field(
     let do_not_spell_check = flags & 4_194_304 == 4_194_304;
     let rich_text = flags & 33_554_432 == 33_554_432;
     let no_export = flags & 8 == 8;
+    let multi_select = flags & 1_048_576 == 1_048_576;
     let max_length = dict
         .get(b"MaxLen")
         .ok()
@@ -196,6 +197,7 @@ fn walk_field(
             do_not_spell_check,
             rich_text,
             no_export,
+            multi_select,
             max_length,
         });
     }

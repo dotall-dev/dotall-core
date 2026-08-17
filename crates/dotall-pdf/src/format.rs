@@ -167,6 +167,7 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         "do_not_spell_check": field.do_not_spell_check,
         "rich_text": field.rich_text,
         "no_export": field.no_export,
+        "multi_select": field.multi_select,
     });
     if let Some(max_length) = field.max_length {
         summary["max_length"] = json!(max_length);
@@ -380,6 +381,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "name": "Name", "no_export": true }
             }),
             safety: "Toggles /Ff NoExport on any field type. Inspect surfaces no_export. Rejects encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "set_form_field_multi_select".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear the AcroForm choice-field MultiSelect flag (/Ff bit 20)."
+                .into(),
+            example: json!({
+                "kind": "set_form_field_multi_select",
+                "payload": { "name": "Department", "multi_select": true }
+            }),
+            safety: "Toggles /Ff MultiSelect on ch fields only. Inspect surfaces multi_select. Rejects non-choice fields, encrypted and signed PDFs.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),
