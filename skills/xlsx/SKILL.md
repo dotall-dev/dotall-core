@@ -210,6 +210,14 @@ Set worksheet print margins (`pageMargins` in inches; `header`/`footer` optional
 
 Inspect surfaces `page_margins` per sheet when present. Other worksheets stay byte-identical.
 
+Set worksheet print scale (`pageSetup` `scale` percent 10–400):
+
+```json
+{ "kind": "set_print_scale", "payload": { "sheet": "Revenue", "scale": 75 } }
+```
+
+Inspect surfaces `print_scale` per sheet when present. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

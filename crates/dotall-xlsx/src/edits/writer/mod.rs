@@ -5,6 +5,7 @@ mod merges;
 mod package;
 mod page_margins;
 mod page_orientation;
+mod print_scale;
 mod shared_strings;
 mod structural;
 mod tab_color;

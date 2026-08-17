@@ -142,6 +142,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 orientation: required_string(operation, "orientation")?,
             }),
+            "set_print_scale" => Ok(XlsxEditOp::SetPrintScale {
+                sheet: required_string(operation, "sheet")?,
+                scale: required_print_scale(operation)?,
+            }),
             "set_page_margins" => Ok(XlsxEditOp::SetPageMargins {
                 sheet: required_string(operation, "sheet")?,
                 margins: required_page_margins(operation)?,
@@ -173,6 +177,24 @@ fn required_page_margins(
         header,
         footer,
     })
+}
+
+fn required_print_scale(operation: &dotall_core::SemanticOperation) -> dotall_core::Result<u32> {
+    operation
+        .payload
+        .get("scale")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_f64().map(|f| f as u64))
+                .and_then(|v| u32::try_from(v).ok())
+        })
+        .filter(|scale| (10..=400).contains(scale))
+        .ok_or_else(|| {
+            invalid_operation(
+                "validated edit operation requires `scale` integer between 10 and 400",
+            )
+        })
 }
 
 fn required_non_negative_f64(

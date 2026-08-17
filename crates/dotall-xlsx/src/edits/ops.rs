@@ -120,6 +120,11 @@ pub enum XlsxEditOp {
         /// `portrait` or `landscape`.
         orientation: String,
     },
+    SetPrintScale {
+        sheet: String,
+        /// Print scale percent 10–400.
+        scale: u32,
+    },
     SetPageMargins {
         sheet: String,
         margins: crate::model::PageMargins,

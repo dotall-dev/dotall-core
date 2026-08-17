@@ -29,6 +29,7 @@ struct WorksheetPart {
     tab_color: Option<String>,
     auto_filter: Option<String>,
     page_orientation: Option<String>,
+    print_scale: Option<u32>,
     page_margins: Option<PageMargins>,
     cell_styles: BTreeMap<String, u32>,
 }
@@ -80,6 +81,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                     tab_color: None,
                     auto_filter: None,
                     page_orientation: None,
+                    print_scale: None,
                     page_margins: None,
                     cell_styles: BTreeMap::new(),
                 });
@@ -205,6 +207,7 @@ where
         print_area: print.print_area,
         print_titles: print.print_titles,
         page_orientation: part.page_orientation,
+        print_scale: part.print_scale,
         page_margins: part.page_margins,
         cells,
     })
@@ -261,6 +264,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
         let tab_color = parse_tab_color(&worksheet, source)?;
         let auto_filter = parse_auto_filter(&worksheet, source)?;
         let page_orientation = parse_page_orientation(&worksheet, source)?;
+        let print_scale = parse_print_scale(&worksheet, source)?;
         let page_margins = parse_page_margins(&worksheet, source)?;
         let cell_styles = parse_cell_style_indices(&worksheet, source)?;
         parts.insert(
@@ -271,6 +275,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
                 tab_color,
                 auto_filter,
                 page_orientation,
+                print_scale,
                 page_margins,
                 cell_styles,
             },
@@ -528,6 +533,38 @@ fn parse_page_orientation(xml: &[u8], source: &Path) -> Result<Option<String>> {
                             .to_ascii_lowercase();
                         if value == "portrait" || value == "landscape" {
                             return Ok(Some(value));
+                        }
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(None)
+}
+
+fn parse_print_scale(xml: &[u8], source: &Path) -> Result<Option<u32>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if local_name(element.name().as_ref()) == b"pageSetup" =>
+            {
+                for attribute in element.attributes().flatten() {
+                    if local_name(attribute.key.as_ref()) == b"scale" {
+                        let value = String::from_utf8_lossy(attribute.value.as_ref())
+                            .trim()
+                            .parse::<u32>()
+                            .ok()
+                            .filter(|scale| (10..=400).contains(scale));
+                        if let Some(scale) = value {
+                            return Ok(Some(scale));
                         }
                     }
                 }

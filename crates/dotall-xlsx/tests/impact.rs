@@ -311,6 +311,7 @@ fn fixture_sheet(name: &str) -> SheetModel {
         print_area: None,
         print_titles: None,
         page_orientation: None,
+        print_scale: None,
         page_margins: None,
         cells: Vec::new(),
     }

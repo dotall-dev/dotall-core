@@ -131,6 +131,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_print_area",
             "set_print_titles",
             "set_page_orientation",
+            "set_print_scale",
             "set_page_margins",
         ]
     );
@@ -613,6 +614,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                 print_area: None,
                 print_titles: None,
                 page_orientation: None,
+                print_scale: None,
                 page_margins: None,
                 cells,
             }],

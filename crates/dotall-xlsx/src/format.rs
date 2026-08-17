@@ -84,6 +84,7 @@ impl FormatHandler for XlsxFormat {
                     "print_area": sheet.print_area,
                     "print_titles": sheet.print_titles,
                     "page_orientation": sheet.page_orientation,
+                    "print_scale": sheet.print_scale,
                     "page_margins": sheet.page_margins,
                 })
             })
@@ -618,6 +619,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "orientation": "landscape" }
             }),
             safety: "Surgically patches only the target worksheet pageSetup orientation attribute. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_print_scale".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet print scale via pageSetup (percent 10–400).".into(),
+            example: json!({
+                "kind": "set_print_scale",
+                "payload": { "sheet": "Revenue", "scale": 75 }
+            }),
+            safety: "Surgically patches only the target worksheet pageSetup scale attribute. Inspect surfaces print_scale. Other sheets stay byte-identical."
                 .into(),
         },
         EditCapability {

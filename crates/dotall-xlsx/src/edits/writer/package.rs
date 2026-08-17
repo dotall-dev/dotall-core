@@ -19,6 +19,7 @@ use super::freeze_panes;
 use super::merges;
 use super::page_margins;
 use super::page_orientation;
+use super::print_scale;
 use super::shared_strings;
 use super::structural;
 use super::tab_color;
@@ -117,6 +118,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     }
     if let [XlsxEditOp::SetPageOrientation { sheet, orientation }] = operations.as_slice() {
         return patch_page_orientation(&original, sheet, orientation);
+    }
+    if let [XlsxEditOp::SetPrintScale { sheet, scale }] = operations.as_slice() {
+        return patch_print_scale(&original, sheet, *scale);
     }
     if let [XlsxEditOp::SetPageMargins { sheet, margins }] = operations.as_slice() {
         return patch_page_margins(&original, sheet, margins);
@@ -285,6 +289,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetPrintArea { .. }
                 | XlsxEditOp::SetPrintTitles { .. }
                 | XlsxEditOp::SetPageOrientation { .. }
+                | XlsxEditOp::SetPrintScale { .. }
                 | XlsxEditOp::SetPageMargins { .. }
         )
     }) {
@@ -322,6 +327,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetPrintArea { .. }
             | XlsxEditOp::SetPrintTitles { .. }
             | XlsxEditOp::SetPageOrientation { .. }
+            | XlsxEditOp::SetPrintScale { .. }
             | XlsxEditOp::SetPageMargins { .. } => {
                 unreachable!("structural operations return above")
             }
@@ -766,6 +772,21 @@ fn patch_page_orientation(
     let xml = entry_bytes(original, path)?;
     let mut replacements = BTreeMap::new();
     replacements.insert(path.clone(), page_orientation::patch(&xml, orientation)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_print_scale(original: &[u8], sheet: &str, scale: u32) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), print_scale::patch(&xml, scale)?);
     let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
