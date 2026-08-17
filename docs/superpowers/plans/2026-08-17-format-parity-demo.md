@@ -505,6 +505,19 @@ After Wave 18 integrates (set_paper_size, set_shape_caps, set_paragraph_caps, se
 
 Each task ends with the standing demo gate.
 
+## Wave 20 — slide-/document-wide replace-across + companion slices (parallel)
+
+After Wave 19 integrates (set_header_footer, set_shape_hyperlink, set_paragraph_hyperlink, set_form_field_no_export):
+
+1. **XLSX:** `set_sheet_zoom` — set worksheet view zoom via surgical `sheetView` `zoomScale` (integer 10–400); inspect surfaces `zoom` when present. Must preserve existing freeze-pane children / other `sheetView` attributes (merge onto the open tag; do not replace the whole `sheetViews` block).
+2. **PPTX:** `replace_across_shapes` — find/replace a substring across all **text-frame** shapes on one slide (payload `slide`, `find`, `replace`; reject empty `find` / no match on the slide). Reuse the existing `replace_shape_text` first-run rewrite per matching shape. Content-on-slide; only the target slide part changes. Skip tables/SmartArt/charts.
+3. **DOCX:** `replace_across_paragraphs` — find/replace a substring across all editable body/table paragraphs (payload `find`, `replace`; reject empty `find` / no match). Reuse `replace_paragraph_text` rewrite per matching paragraph. Content-in-document companion; only `word/document.xml` changes. Skip non-editable (tracked changes / SDT / fields).
+4. **PDF:** `set_form_field_multi_select` — set/clear AcroForm choice-field MultiSelect (`/Ff` bit 20 = 1048576); `ch` only; inspect surfaces `multi_select`. Reject non-`ch` fields.
+
+**Deferred:** list/bullet text, richer table cell content; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
