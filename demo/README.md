@@ -96,6 +96,16 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"define_name","payload":{"name":"Rate","formula":"Inputs!$B$2"}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 7: delete_name (workbook.xml only), then restore Rate for demos
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"delete_name","payload":{"name":"Rate"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL read demo/financials.xlsx --selector-kind named_ranges
+# expect Rate gone
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"define_name","payload":{"name":"Rate","formula":"Inputs!$B$2"}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -158,9 +168,19 @@ $DOTALL edit demo/deck.pptx --ops-json \
 $DOTALL apply demo/deck.pptx --all
 $DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 2'
 # expect Callout gone; Title / Metrics remain
+
+# Wave 7 — rename Title → Headline on the title slide (Slide 2 after reorder)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"rename_shape","payload":{"slide":"Slide 2","shape":"Title","name":"Headline"}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 2'
+# expect Headline shape; restore for demos:
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"rename_shape","payload":{"slide":"Slide 2","shape":"Headline","name":"Title"}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` patch only the target slide part.
 
 ---
 
@@ -220,6 +240,11 @@ $DOTALL edit demo/memo.docx --ops-json \
 $DOTALL apply demo/memo.docx --all
 $DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:3'
 # expect index 2 style_id Heading1
+
+# Wave 7 — paragraph alignment (w:jc)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_alignment","payload":{"index":2,"alignment":"center"}}]'
+$DOTALL apply demo/memo.docx --all
 ```
 
 ---
@@ -288,6 +313,17 @@ $DOTALL edit demo/form.pdf --ops-json \
 $DOTALL apply demo/form.pdf --all
 $DOTALL read demo/form.pdf --selector-kind field --selector Priority
 # expect value Off
+
+# Wave 7 — clear /Info Title/Author/Subject (Creator/Producer remain)
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"clear_document_metadata","payload":{}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect summary.metadata title/author/subject empty or absent
+# restore for demos:
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_document_metadata","payload":{"title":"Vendor Intake Form","author":"Dotall Demo","subject":"Vendor onboarding"}}]'
+$DOTALL apply demo/form.pdf --all
 ```
 
 ---
