@@ -44,10 +44,20 @@ pub struct SheetModel {
     /// Fit-to-page widths/heights from `pageSetup` when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fit_to_page: Option<FitToPage>,
+    /// Print centering from `printOptions` when either axis is centered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub center_on_page: Option<CenterOnPage>,
     /// Print page margins in inches. Absent when no `pageMargins` element.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_margins: Option<PageMargins>,
     pub cells: Vec<CellModel>,
+}
+
+/// Worksheet print centering (`printOptions` horizontalCentered / verticalCentered).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct CenterOnPage {
+    pub horizontal: bool,
+    pub vertical: bool,
 }
 
 /// Worksheet fit-to-page (`pageSetup` fitToWidth / fitToHeight).

@@ -151,6 +151,13 @@ pub(crate) fn parse_validated_operations(
                 width: optional_u32(operation, "width")?,
                 height: optional_u32(operation, "height")?,
             }),
+            "set_center_on_page" => Ok(XlsxEditOp::SetCenterOnPage {
+                sheet: required_string(operation, "sheet")?,
+                center: crate::model::CenterOnPage {
+                    horizontal: required_bool(operation, "horizontal")?,
+                    vertical: required_bool(operation, "vertical")?,
+                },
+            }),
             "set_page_margins" => Ok(XlsxEditOp::SetPageMargins {
                 sheet: required_string(operation, "sheet")?,
                 margins: required_page_margins(operation)?,

@@ -1,4 +1,5 @@
 mod auto_filter;
+mod center_on_page;
 mod dimensions;
 mod fit_to_page;
 mod freeze_panes;

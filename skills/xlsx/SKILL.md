@@ -226,6 +226,14 @@ Set or clear worksheet fit-to-page (`pageSetup` `fitToWidth`/`fitToHeight` + `pa
 
 Inspect surfaces `fit_to_page` per sheet when present. Other worksheets stay byte-identical.
 
+Set or clear worksheet print centering (`printOptions` `horizontalCentered`/`verticalCentered`; both false clears):
+
+```json
+{ "kind": "set_center_on_page", "payload": { "sheet": "Revenue", "horizontal": true, "vertical": false } }
+```
+
+Inspect surfaces `center_on_page` per sheet when either axis is centered. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

@@ -106,6 +106,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_center_on_page"))
+    {
+        return validate_set_center_on_page_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "set_page_margins"))
     {
         return validate_set_page_margins_operations(model, operations);
@@ -229,6 +235,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_fit_to_page"))
     {
         return validate_set_fit_to_page_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_center_on_page"))
+    {
+        return validate_set_center_on_page_operations(model, operations);
     }
     if operations
         .iter()
@@ -1458,6 +1470,84 @@ fn optional_fit_dim(payload: &Value, field: &str) -> Result<Option<u32>> {
     }
 }
 
+fn validate_set_center_on_page_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_center_on_page edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_center_on_page" {
+        return Err(format_error("unsupported set_center_on_page edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_center_on_page requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.center_on_page.clone();
+    let horizontal = operation
+        .payload
+        .get("horizontal")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format_error("set_center_on_page requires `horizontal` boolean"))?;
+    let vertical = operation
+        .payload
+        .get("vertical")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format_error("set_center_on_page requires `vertical` boolean"))?;
+    let after = if horizontal || vertical {
+        format!(
+            "h={} v={}",
+            if horizontal { "1" } else { "0" },
+            if vertical { "1" } else { "0" }
+        )
+    } else {
+        "cleared".into()
+    };
+    let before_text = match before {
+        Some(center) => format!(
+            "h={} v={}",
+            if center.horizontal { "1" } else { "0" },
+            if center.vertical { "1" } else { "0" }
+        ),
+        None => "unset".into(),
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_center_on_page".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "horizontal": horizontal,
+                "vertical": vertical,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!center_on_page"),
+            element_id: format!("center_on_page:{canonical_sheet}"),
+            change: "set_center_on_page".into(),
+            before: Some(before_text),
+            after: Some(after),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_page_margins_operations(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
@@ -2273,6 +2363,7 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::SetPageOrientation { .. }
                 | XlsxEditOp::SetPrintScale { .. }
  | XlsxEditOp::SetFitToPage { .. }
+        | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
@@ -2394,6 +2485,7 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetPageOrientation { .. }
         | XlsxEditOp::SetPrintScale { .. }
         | XlsxEditOp::SetFitToPage { .. }
+        | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
@@ -2473,6 +2565,7 @@ mod tests {
             page_orientation: None,
             print_scale: None,
             fit_to_page: None,
+            center_on_page: None,
             page_margins: None,
             cells,
         }

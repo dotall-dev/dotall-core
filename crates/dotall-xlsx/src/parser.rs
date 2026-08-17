@@ -12,8 +12,8 @@ use zip::ZipArchive;
 use crate::FORMAT_ID;
 use crate::ids;
 use crate::model::{
-    CellModel, CellValue, FitToPage, NamedRange, PageMargins, SCHEMA_VERSION, SheetDimensions,
-    SheetModel, StyleEntry, UnmodeledMap, WorkbookModel, column_name,
+    CellModel, CellValue, CenterOnPage, FitToPage, NamedRange, PageMargins, SCHEMA_VERSION,
+    SheetDimensions, SheetModel, StyleEntry, UnmodeledMap, WorkbookModel, column_name,
 };
 
 /// Parsed `xl/styles.xml` cellXfs + number-format resolution.
@@ -31,6 +31,7 @@ struct WorksheetPart {
     page_orientation: Option<String>,
     print_scale: Option<u32>,
     fit_to_page: Option<FitToPage>,
+    center_on_page: Option<CenterOnPage>,
     page_margins: Option<PageMargins>,
     cell_styles: BTreeMap<String, u32>,
 }
@@ -84,6 +85,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                     page_orientation: None,
                     print_scale: None,
                     fit_to_page: None,
+                    center_on_page: None,
                     page_margins: None,
                     cell_styles: BTreeMap::new(),
                 });
@@ -211,6 +213,7 @@ where
         page_orientation: part.page_orientation,
         print_scale: part.print_scale,
         fit_to_page: part.fit_to_page,
+        center_on_page: part.center_on_page,
         page_margins: part.page_margins,
         cells,
     })
@@ -269,6 +272,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
         let page_orientation = parse_page_orientation(&worksheet, source)?;
         let print_scale = parse_print_scale(&worksheet, source)?;
         let fit_to_page = parse_fit_to_page(&worksheet, source)?;
+        let center_on_page = parse_center_on_page(&worksheet, source)?;
         let page_margins = parse_page_margins(&worksheet, source)?;
         let cell_styles = parse_cell_style_indices(&worksheet, source)?;
         parts.insert(
@@ -281,6 +285,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
                 page_orientation,
                 print_scale,
                 fit_to_page,
+                center_on_page,
                 page_margins,
                 cell_styles,
             },
@@ -610,6 +615,45 @@ fn parse_fit_to_page(xml: &[u8], source: &Path) -> Result<Option<FitToPage>> {
                 if width.is_some() || height.is_some() {
                     return Ok(Some(FitToPage { width, height }));
                 }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(None)
+}
+
+fn parse_center_on_page(xml: &[u8], source: &Path) -> Result<Option<CenterOnPage>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if local_name(element.name().as_ref()) == b"printOptions" =>
+            {
+                let mut horizontal = false;
+                let mut vertical = false;
+                for attribute in element.attributes().flatten() {
+                    let key = local_name(attribute.key.as_ref());
+                    let raw = String::from_utf8_lossy(attribute.value.as_ref());
+                    let enabled = matches!(raw.trim(), "1" | "true" | "TRUE");
+                    match key {
+                        b"horizontalCentered" => horizontal = enabled,
+                        b"verticalCentered" => vertical = enabled,
+                        _ => {}
+                    }
+                }
+                if horizontal || vertical {
+                    return Ok(Some(CenterOnPage {
+                        horizontal,
+                        vertical,
+                    }));
+                }
+                return Ok(None);
             }
             Event::Eof => break,
             _ => {}

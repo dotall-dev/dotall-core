@@ -134,6 +134,7 @@ fn fixture_sheet(name: &str, cells: Vec<CellModel>) -> SheetModel {
         page_orientation: None,
         print_scale: None,
         fit_to_page: None,
+        center_on_page: None,
         page_margins: None,
         cells,
     }

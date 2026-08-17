@@ -14,6 +14,7 @@ use crate::edits::transform::{Axis, AxisChange};
 use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
 use super::auto_filter;
+use super::center_on_page;
 use super::dimensions;
 use super::fit_to_page;
 use super::freeze_panes;
@@ -132,6 +133,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     ] = operations.as_slice()
     {
         return patch_fit_to_page(&original, sheet, *width, *height);
+    }
+    if let [XlsxEditOp::SetCenterOnPage { sheet, center }] = operations.as_slice() {
+        return patch_center_on_page(&original, sheet, center);
     }
     if let [XlsxEditOp::SetPageMargins { sheet, margins }] = operations.as_slice() {
         return patch_page_margins(&original, sheet, margins);
@@ -302,6 +306,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetPageOrientation { .. }
                 | XlsxEditOp::SetPrintScale { .. }
                 | XlsxEditOp::SetFitToPage { .. }
+                | XlsxEditOp::SetCenterOnPage { .. }
                 | XlsxEditOp::SetPageMargins { .. }
         )
     }) {
@@ -341,6 +346,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetPageOrientation { .. }
             | XlsxEditOp::SetPrintScale { .. }
             | XlsxEditOp::SetFitToPage { .. }
+            | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. } => {
                 unreachable!("structural operations return above")
             }
@@ -820,6 +826,25 @@ fn patch_fit_to_page(
     let xml = entry_bytes(original, path)?;
     let mut replacements = BTreeMap::new();
     replacements.insert(path.clone(), fit_to_page::patch(&xml, width, height)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_center_on_page(
+    original: &[u8],
+    sheet: &str,
+    center: &crate::model::CenterOnPage,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), center_on_page::patch(&xml, center)?);
     let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),

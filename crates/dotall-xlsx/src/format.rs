@@ -86,6 +86,7 @@ impl FormatHandler for XlsxFormat {
                     "page_orientation": sheet.page_orientation,
                     "print_scale": sheet.print_scale,
                     "fit_to_page": sheet.fit_to_page,
+                    "center_on_page": sheet.center_on_page,
                     "page_margins": sheet.page_margins,
                 })
             })
@@ -644,6 +645,19 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "width": 1, "height": 1 }
             }),
             safety: "Surgically patches only the target worksheet sheetPr/pageSetUpPr and pageSetup fit attrs. Pass null width and height to clear. Inspect surfaces fit_to_page. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_center_on_page".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description:
+                "Set or clear worksheet print centering via printOptions horizontalCentered/verticalCentered."
+                    .into(),
+            example: json!({
+                "kind": "set_center_on_page",
+                "payload": { "sheet": "Revenue", "horizontal": true, "vertical": false }
+            }),
+            safety: "Surgically patches only the target worksheet printOptions. Both false clears centering. Inspect surfaces center_on_page when either axis is centered. Other sheets stay byte-identical."
                 .into(),
         },
         EditCapability {

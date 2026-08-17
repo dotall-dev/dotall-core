@@ -132,6 +132,10 @@ pub enum XlsxEditOp {
         /// Pages tall; `None` with width `None` clears fit-to-page.
         height: Option<u32>,
     },
+    SetCenterOnPage {
+        sheet: String,
+        center: crate::model::CenterOnPage,
+    },
     SetPageMargins {
         sheet: String,
         margins: crate::model::PageMargins,
