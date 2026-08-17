@@ -4,22 +4,22 @@ description: >-
   Work with .pdf files through Dotall MCP. Use when inspecting pages, listing
   AcroForm fields, filling or clearing a text/checkbox/choice/radio field,
   inserting a sticky/text comment annotation, inserting a stamp/picture
-  annotation, setting /Info metadata, or reverting a PDF in a Dotall workspace.
-  Do not rewrite page content streams.
+  annotation, rotating a page via /Rotate, setting /Info metadata, or reverting
+  a PDF in a Dotall workspace. Do not rewrite page content streams.
 ---
 
 # PDF via Dotall MCP
 
-v0 is **form fill + document metadata + comment annotations + stamp pictures**.
-Do not unzip, reprint, or rewrite page operators. Charts are N/A for PDF
-(`summary.charts` is omit or `[]`).
+v0 is **form fill + document metadata + comment annotations + stamp pictures +
+page rotate**. Do not unzip, reprint, or rewrite page operators. Charts are N/A
+for PDF (`summary.charts` is omit or `[]`).
 
 ## Workflow
 
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | set_form_field_edit | clear_form_field | clear_all_form_fields | set_document_metadata | insert_comment | insert_picture (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | set_form_field_edit | clear_form_field | clear_all_form_fields | set_document_metadata | insert_comment | insert_picture | rotate_page (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -39,6 +39,8 @@ for humans inspecting `.all/`, not required in the edit loop.
 Text extraction is best-effort but operator-aware (`Tj` / `TJ` / `'` / `"`, line
 breaks from `Td` / `T*`). Inspect `encrypted` and `has_signature` before editing.
 Inspect `metadata` for `/Info` Title / Author / Subject / Creator / Producer when present.
+Inspect `page_rotations` for non-zero page `/Rotate` values as
+`[{ "page": 1, "rotate": 90 }]` (always keeps `page_count`).
 Checkbox and radio fields (`btn`) may include `export_values` (e.g. `Yes`, `Off`,
 or radio states `Low` / `Medium` / `High`) from `/AP /N` across widgets.
 Choice fields (`ch`) expose `options` from `/Opt` on inspect and field read.
@@ -298,6 +300,19 @@ rewrite):
 `/AP` Form XObject wrapping an Image XObject, then appends to `/Annots`. PNG is
 limited to IHDR 8-bit RGB (1×1 in v0); JPEG uses `/Filter /DCTDecode`. Rejected:
 `draw_image`, `replace_picture`, `delete_picture`, and content-stream drawing.
+
+Rotate a page (page dictionary `/Rotate` only — no content-stream rewrite):
+
+```json
+{
+  "kind": "rotate_page",
+  "payload": { "page": 1, "degrees": 90 }
+}
+```
+
+`page` is 1-based. `degrees` must be `0`, `90`, `180`, or `270`. `0` removes
+`/Rotate` if present. Form field values are unchanged. Inspect surfaces non-zero
+rotations in `summary.page_rotations`.
 
 Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios
 without an export value, empty metadata payloads.

@@ -55,6 +55,9 @@ pub struct PdfPageModel {
     pub element_id: String,
     pub number: u32,
     pub text: String,
+    /// Page `/Rotate` when non-zero (0/absent omitted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotate: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

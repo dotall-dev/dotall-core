@@ -63,6 +63,18 @@ impl FormatHandler for PdfFormat {
             format_id: FORMAT_ID.into(),
             summary: json!({
                 "page_count": document.page_count,
+                "page_rotations": document
+                    .pages
+                    .iter()
+                    .filter_map(|page| {
+                        page.rotate.map(|rotate| {
+                            json!({
+                                "page": page.number,
+                                "rotate": rotate,
+                            })
+                        })
+                    })
+                    .collect::<Vec<_>>(),
                 "field_names": document.fields.iter().map(|field| &field.name).collect::<Vec<_>>(),
                 "fields": document.fields.iter().map(field_summary).collect::<Vec<_>>(),
                 "comments": document.comments.iter().map(comment_summary).collect::<Vec<_>>(),
@@ -493,6 +505,16 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 }
             }),
             safety: "Adds a new /Annot /Subtype /Stamp with annot-owned /AP Form XObject wrapping an Image XObject. Does not rewrite page /Contents or mutate existing annot dictionaries (including Widgets). PNG is limited to IHDR 8-bit RGB (1×1 in v0); JPEG uses DCTDecode. Rejects draw_image/replace_picture and encrypted/signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "rotate_page".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set a page /Rotate value (0, 90, 180, or 270 degrees).".into(),
+            example: json!({
+                "kind": "rotate_page",
+                "payload": { "page": 1, "degrees": 90 }
+            }),
+            safety: "Writes page dictionary /Rotate only. degrees=0 removes /Rotate. Does not rewrite page content streams or change form field values. Rejects encrypted and signed PDFs.".into(),
         },
     ]
 }

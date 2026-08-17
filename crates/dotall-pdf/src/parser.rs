@@ -44,6 +44,7 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
             element_id: ids::page_id(*number, SCHEMA_VERSION),
             number: *number,
             text,
+            rotate: page_rotate(&document, *page_id),
         });
     }
     pages.sort_by_key(|page| page.number);
@@ -69,6 +70,19 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
 
 fn page_text(document: &Document, page_id: lopdf::ObjectId, number: u32) -> String {
     crate::text::page_text(document, page_id, number)
+}
+
+fn page_rotate(document: &Document, page_id: lopdf::ObjectId) -> Option<u32> {
+    let Ok(Object::Dictionary(dict)) = document.get_object(page_id) else {
+        return None;
+    };
+    let Ok(Object::Integer(value)) = dict.get(b"Rotate") else {
+        return None;
+    };
+    if *value == 0 {
+        return None;
+    }
+    u32::try_from(*value).ok()
 }
 
 fn encrypted_stub(source_hash: &str) -> PdfDocumentModel {

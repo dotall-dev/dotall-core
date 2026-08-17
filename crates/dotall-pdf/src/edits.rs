@@ -51,6 +51,7 @@ pub fn validate(
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         "insert_comment" => validate_insert_comment(model, operation),
         "insert_picture" => validate_insert_picture(model, operation),
+        "rotate_page" => validate_rotate_page(model, operation),
         "set_comment" | "delete_comment" | "replace_comment" => Err(format_error(format!(
             "unsupported pdf edit `{}`; mutate-existing comment ops are rejected — use insert_comment",
             operation.kind
@@ -60,7 +61,7 @@ pub fn validate(
             operation.kind
         ))),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_form_field_rich_text, set_form_field_no_export, set_form_field_multi_select, set_form_field_combo, set_form_field_edit, set_document_metadata, clear_document_metadata, insert_comment, or insert_picture"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_form_field_rich_text, set_form_field_no_export, set_form_field_multi_select, set_form_field_combo, set_form_field_edit, set_document_metadata, clear_document_metadata, insert_comment, insert_picture, or rotate_page"
         ))),
     }
 }
@@ -1064,6 +1065,49 @@ fn validate_insert_picture(
     })
 }
 
+fn validate_rotate_page(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let page = required_page(&operation.payload)?;
+    if page == 0 || page > model.page_count {
+        return Err(format_error(format!(
+            "page `{page}` is out of range (1..={})",
+            model.page_count
+        )));
+    }
+    let degrees = required_degrees(&operation.payload)?;
+    let page_model = model.pages.iter().find(|p| p.number == page);
+    let before = page_model
+        .and_then(|p| p.rotate)
+        .map(|rotate| rotate.to_string());
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "rotate_page".into(),
+            payload: serde_json::json!({
+                "page": page,
+                "degrees": degrees,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("page:{page}"),
+            element_id: page_model
+                .map(|p| p.element_id.clone())
+                .unwrap_or_else(|| model.document_id.clone()),
+            change: "rotate_page".into(),
+            before,
+            after: Some(degrees.to_string()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 pub fn apply(source: &std::path::Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
         path: source.to_path_buf(),
@@ -1273,6 +1317,11 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let content_type = normalize_image_content_type(content_type)?;
             let rect = optional_rect(&operation.payload)?.unwrap_or([400.0, 700.0, 500.0, 780.0]);
             insert_stamp_annot(&mut document, page, &bytes, content_type, rect)?;
+        }
+        "rotate_page" => {
+            let page = required_page(&operation.payload)?;
+            let degrees = required_degrees(&operation.payload)?;
+            set_page_rotate(&mut document, page, degrees)?;
         }
         other => {
             return Err(format_error(format!(
@@ -1785,6 +1834,26 @@ fn append_page_annot(document: &mut Document, page_id: ObjectId, annot_id: Objec
     Ok(())
 }
 
+fn set_page_rotate(document: &mut Document, page: u32, degrees: u32) -> Result<()> {
+    let pages = document.get_pages();
+    let page_id = pages
+        .get(&page)
+        .copied()
+        .ok_or_else(|| format_error(format!("page `{page}` was not found in the PDF page tree")))?;
+    let page_obj = document
+        .get_object_mut(page_id)
+        .map_err(|error| format_error(format!("cannot update page: {error}")))?;
+    let Object::Dictionary(dict) = page_obj else {
+        return Err(format_error("page is not a dictionary"));
+    };
+    if degrees == 0 {
+        let _ = dict.remove(b"Rotate");
+    } else {
+        dict.set("Rotate", Object::Integer(i64::from(degrees)));
+    }
+    Ok(())
+}
+
 enum AnnotsTarget {
     Inline,
     Indirect(ObjectId),
@@ -2002,6 +2071,26 @@ fn required_page(payload: &serde_json::Value) -> Result<u32> {
             .ok_or_else(|| format_error("`page` must be a positive integer")),
         Some(_) => Err(format_error("`page` must be a positive integer")),
         None => Err(format_error("`page` is required")),
+    }
+}
+
+fn required_degrees(payload: &serde_json::Value) -> Result<u32> {
+    let degrees = match payload.get("degrees") {
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| format_error("`degrees` must be 0, 90, 180, or 270"))?,
+        Some(_) => {
+            return Err(format_error("`degrees` must be 0, 90, 180, or 270"));
+        }
+        None => return Err(format_error("`degrees` is required")),
+    };
+    if matches!(degrees, 0 | 90 | 180 | 270) {
+        Ok(degrees)
+    } else {
+        Err(format_error(
+            "`degrees` must be 0, 90, 180, or 270 (multiples of 90 only)",
+        ))
     }
 }
 
