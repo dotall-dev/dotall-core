@@ -9,10 +9,22 @@ pub struct PdfDocumentModel {
     pub page_count: u32,
     pub pages: Vec<PdfPageModel>,
     pub fields: Vec<PdfFieldModel>,
+    #[serde(default)]
+    pub comments: Vec<PdfCommentModel>,
     pub outline: Vec<String>,
     pub encrypted: bool,
     #[serde(default)]
     pub metadata: PdfMetadata,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PdfCommentModel {
+    pub element_id: String,
+    pub page: u32,
+    pub subtype: String,
+    pub contents: String,
+    #[serde(default)]
+    pub author: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]

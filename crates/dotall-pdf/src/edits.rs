@@ -47,8 +47,13 @@ pub fn validate(
         "set_form_field_edit" => validate_set_form_field_edit(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
+        "insert_comment" => validate_insert_comment(model, operation),
+        "set_comment" | "delete_comment" | "replace_comment" => Err(format_error(format!(
+            "unsupported pdf edit `{}`; mutate-existing comment ops are rejected — use insert_comment",
+            operation.kind
+        ))),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_form_field_rich_text, set_form_field_no_export, set_form_field_multi_select, set_form_field_combo, set_form_field_edit, set_document_metadata, or clear_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_form_field_rich_text, set_form_field_no_export, set_form_field_multi_select, set_form_field_combo, set_form_field_edit, set_document_metadata, clear_document_metadata, or insert_comment"
         ))),
     }
 }
@@ -950,6 +955,53 @@ fn validate_clear_document_metadata(
     })
 }
 
+fn validate_insert_comment(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let page = required_page(&operation.payload)?;
+    if page == 0 || page > model.page_count {
+        return Err(format_error(format!(
+            "page `{page}` is out of range (1..={})",
+            model.page_count
+        )));
+    }
+    let contents = required_str(&operation.payload, "contents")?;
+    if contents.is_empty() {
+        return Err(format_error("`contents` must not be empty"));
+    }
+    let author = optional_str(&operation.payload, "author")?.unwrap_or("Dotall");
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_comment".into(),
+            payload: serde_json::json!({
+                "page": page,
+                "contents": contents,
+                "author": author,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("page:{page}"),
+            element_id: model
+                .pages
+                .iter()
+                .find(|p| p.number == page)
+                .map(|p| p.element_id.clone())
+                .unwrap_or_else(|| model.document_id.clone()),
+            change: "insert_comment".into(),
+            before: None,
+            after: Some(contents.to_owned()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 pub fn apply(source: &std::path::Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
         path: source.to_path_buf(),
@@ -1141,6 +1193,12 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 .and_then(serde_json::Value::as_bool)
                 .ok_or_else(|| format_error("`edit` boolean is required"))?;
             set_field_flag(&mut document, name, FIELD_FLAG_EDIT, edit)?;
+        }
+        "insert_comment" => {
+            let page = required_page(&operation.payload)?;
+            let contents = required_str(&operation.payload, "contents")?;
+            let author = optional_str(&operation.payload, "author")?.unwrap_or("Dotall");
+            insert_text_annot(&mut document, page, contents, author)?;
         }
         other => {
             return Err(format_error(format!(
@@ -1492,6 +1550,140 @@ fn set_need_appearances(document: &mut Document) -> Result<()> {
         dict.set("NeedAppearances", true);
     }
     Ok(())
+}
+
+fn insert_text_annot(
+    document: &mut Document,
+    page_number: u32,
+    contents: &str,
+    author: &str,
+) -> Result<()> {
+    let pages = document.get_pages();
+    let page_id = pages
+        .get(&page_number)
+        .copied()
+        .ok_or_else(|| format_error(format!("page `{page_number}` was not found in the PDF")))?;
+    let rect = sticky_rect_for_page(document, page_id);
+    let mut annot = Dictionary::new();
+    annot.set("Type", Object::Name(b"Annot".to_vec()));
+    annot.set("Subtype", Object::Name(b"Text".to_vec()));
+    annot.set("Contents", Object::string_literal(contents));
+    annot.set("T", Object::string_literal(author));
+    annot.set("Rect", Object::Array(rect));
+    annot.set("P", Object::Reference(page_id));
+    annot.set(
+        "C",
+        Object::Array(vec![
+            Object::Real(1.0),
+            Object::Real(1.0),
+            Object::Real(0.0),
+        ]),
+    );
+    annot.set("Open", Object::Boolean(false));
+    annot.set("Name", Object::Name(b"Comment".to_vec()));
+    let annot_id = document.add_object(Object::Dictionary(annot));
+
+    // Resolve /Annots when stored as an indirect array so we only append a ref.
+    let annots_target = {
+        let page_obj = document
+            .get_object(page_id)
+            .map_err(|error| format_error(format!("cannot read page: {error}")))?;
+        let Object::Dictionary(page_dict) = page_obj else {
+            return Err(format_error("page is not a dictionary"));
+        };
+        match page_dict.get(b"Annots") {
+            Ok(Object::Reference(id)) => Some(AnnotsTarget::Indirect(*id)),
+            Ok(Object::Array(_)) => Some(AnnotsTarget::Inline),
+            Ok(_) => {
+                return Err(format_error("page /Annots has an unsupported type"));
+            }
+            Err(_) => None,
+        }
+    };
+
+    match annots_target {
+        Some(AnnotsTarget::Indirect(array_id)) => {
+            let object = document
+                .get_object_mut(array_id)
+                .map_err(|error| format_error(format!("cannot update Annots: {error}")))?;
+            let Object::Array(items) = object else {
+                return Err(format_error("page /Annots reference is not an array"));
+            };
+            items.push(Object::Reference(annot_id));
+        }
+        Some(AnnotsTarget::Inline) | None => {
+            let page_obj = document
+                .get_object_mut(page_id)
+                .map_err(|error| format_error(format!("cannot update page: {error}")))?;
+            let Object::Dictionary(page_dict) = page_obj else {
+                return Err(format_error("page is not a dictionary"));
+            };
+            match page_dict.get_mut(b"Annots") {
+                Ok(Object::Array(items)) => {
+                    items.push(Object::Reference(annot_id));
+                }
+                Ok(_) => {
+                    return Err(format_error("page /Annots is not an array"));
+                }
+                Err(_) => {
+                    page_dict.set("Annots", Object::Array(vec![Object::Reference(annot_id)]));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+enum AnnotsTarget {
+    Inline,
+    Indirect(ObjectId),
+}
+
+fn sticky_rect_for_page(document: &Document, page_id: ObjectId) -> Vec<Object> {
+    let media = document
+        .get_object(page_id)
+        .ok()
+        .and_then(|object| match object {
+            Object::Dictionary(dict) => dict.get(b"MediaBox").ok().cloned(),
+            _ => None,
+        });
+    let (x1, y1, x2, y2) = match media {
+        Some(Object::Array(values)) if values.len() == 4 => {
+            let nums: Vec<f32> = values
+                .iter()
+                .map(|v| match v {
+                    Object::Integer(n) => *n as f32,
+                    Object::Real(n) => *n,
+                    _ => 0.0,
+                })
+                .collect();
+            (nums[0], nums[1], nums[2], nums[3])
+        }
+        _ => (0.0, 0.0, 612.0, 792.0),
+    };
+    let width = 24.0;
+    let height = 24.0;
+    let left = x1 + 12.0;
+    let top = y2 - 12.0;
+    let bottom = (top - height).max(y1);
+    let right = (left + width).min(x2);
+    vec![
+        Object::Real(left),
+        Object::Real(bottom),
+        Object::Real(right),
+        Object::Real(top),
+    ]
+}
+
+fn required_page(payload: &serde_json::Value) -> Result<u32> {
+    match payload.get("page") {
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .ok_or_else(|| format_error("`page` must be a positive integer")),
+        Some(_) => Err(format_error("`page` must be a positive integer")),
+        None => Err(format_error("`page` is required")),
+    }
 }
 
 fn required_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<&'a str> {

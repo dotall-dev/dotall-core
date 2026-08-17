@@ -3,21 +3,22 @@ name: pdf
 description: >-
   Work with .pdf files through Dotall MCP. Use when inspecting pages, listing
   AcroForm fields, filling or clearing a text/checkbox/choice/radio field,
-  setting /Info metadata, or reverting a PDF in a Dotall workspace. Do not
-  rewrite page content streams.
+  inserting a sticky/text comment annotation, setting /Info metadata, or
+  reverting a PDF in a Dotall workspace. Do not rewrite page content streams.
 ---
 
 # PDF via Dotall MCP
 
-v0 is **form fill + document metadata**. Do not unzip, reprint, or rewrite page
-operators.
+v0 is **form fill + document metadata + comment annotations**. Do not unzip,
+reprint, or rewrite page operators. Charts are N/A for PDF (`summary.charts` is
+omit or `[]`).
 
 ## Workflow
 
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | set_form_field_edit | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | set_form_field_edit | clear_form_field | clear_all_form_fields | set_document_metadata | insert_comment (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -44,6 +45,10 @@ Inspect surfaces `read_only` per field from `/Ff` bit 1.
 Inspect surfaces `no_export` per field from `/Ff` bit 3.
 Inspect surfaces `multi_select` per choice field from `/Ff` bit 20.
 Inspect surfaces `combo` per choice field from `/Ff` bit 17.
+
+Inspect `comments[]` lists non-Widget page annotations (`/Text`, `/FreeText`)
+with `element_id`, `page`, `subtype`, `contents`, and `author`. AcroForm
+`/Widget` annots are form fields, not comments. `charts` is omit or `[]`.
 
 ### Edit
 
@@ -250,6 +255,25 @@ Clear `/Info` Title, Author, and Subject (Creator/Producer left untouched):
   "payload": {}
 }
 ```
+
+Insert a sticky/text comment annotation (new object only; no content-stream drawing):
+
+```json
+{
+  "kind": "insert_comment",
+  "payload": {
+    "page": 1,
+    "contents": "Check Name field",
+    "author": "Dotall"
+  }
+}
+```
+
+`page` is 1-based. `author` defaults to `"Dotall"`. Creates `/Type /Annot`
+`/Subtype /Text` with `/Contents` and `/T`, appends to the page `/Annots` array.
+Does **not** rewrite page `/Contents` streams or mutate existing annot dicts
+(including Widget form fields). Rejected: `set_comment`, `delete_comment`,
+`replace_comment`, and any draw-text-on-page kind.
 
 Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios
 without an export value, empty metadata payloads.
