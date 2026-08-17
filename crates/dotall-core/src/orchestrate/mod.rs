@@ -83,6 +83,11 @@ impl Engine {
         Self { store, registry }
     }
 
+    /// Borrow the underlying store for read-only workspace queries such as search.
+    pub fn store(&self) -> &DotallStore {
+        &self.store
+    }
+
     pub fn inspect(&mut self, relative: &str) -> Result<InspectResult> {
         let LoadedModel {
             key,

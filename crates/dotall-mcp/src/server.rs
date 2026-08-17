@@ -7,6 +7,7 @@ use dotall_core::registry::{
     Actor, ActorKind, Capability, FormatRegistry, ReadRequest, ReadSelector, SemanticOperation,
 };
 use dotall_core::{DotallError, DotallStore, EditRequest, Engine, Result as DotallResult};
+use dotall_core::{SearchRequest, search_store};
 use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::{ServerHandler, tool, tool_handler, tool_router};
 use serde_json::json;
@@ -14,7 +15,7 @@ use uuid::Uuid;
 
 use crate::params::{
     ApplyParams, CapabilitiesParams, DepsParams, DiffParams, DiscardParams, EditParams, FileParams,
-    HistoryParams, InitParams, ReadParams, RevertParams, StagedParams, StatusParams,
+    HistoryParams, InitParams, ReadParams, RevertParams, SearchParams, StagedParams, StatusParams,
 };
 use crate::response::{JsonResult, ToolResponse};
 use crate::tools::{blocking, relative_path_for_file};
@@ -235,6 +236,30 @@ impl DotallServer {
                     serde_json::to_value(session.engine.inspect(&relative)?)
                         .map_err(serialization_error)?,
                 )
+            })
+            .await,
+        )
+    }
+
+    #[tool(
+        name = "dotall_search",
+        description = "Search cached agent views and models in .all/. Does not unzip source files. Call inspect or read first so files are indexed."
+    )]
+    pub async fn dotall_search(
+        &self,
+        Parameters(params): Parameters<SearchParams>,
+    ) -> Json<ToolResponse<JsonResult>> {
+        let server = self.clone();
+        Json(
+            blocking(move || {
+                let session = server.session();
+                let session = session.lock().map_err(lock_error)?;
+                let request = SearchRequest {
+                    query: params.query,
+                    glob: params.glob,
+                };
+                let results = search_store(session.engine.store(), &request)?;
+                json_result(serde_json::to_value(results).map_err(serialization_error)?)
             })
             .await,
         )

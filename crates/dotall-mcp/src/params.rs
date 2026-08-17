@@ -116,3 +116,15 @@ pub struct RevertParams {
     )]
     pub actor_id: Option<String>,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+pub struct SearchParams {
+    #[schemars(
+        description = "Case-insensitive query matched against cached views and named ranges"
+    )]
+    pub query: String,
+    #[schemars(
+        description = "Optional glob filtering tracked paths; `*` matches one segment, `**` spans segments"
+    )]
+    pub glob: Option<String>,
+}
