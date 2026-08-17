@@ -15,6 +15,11 @@ cargo run -p dotall-cli --example generate_demos
 
 Skills: [`xlsx`](../skills/xlsx/SKILL.md) · [`pptx`](../skills/pptx/SKILL.md) · [`docx`](../skills/docx/SKILL.md) · [`pdf`](../skills/pdf/SKILL.md)
 
+Heavy Q3 board-pack bake-off fixtures live under [`q3-pack/`](q3-pack/README.md)
+(`q3-financials.xlsx`, `q3-deck.pptx`, `q3-memo.docx`, `q3-intake.pdf`) — the
+Dotall vs no-Dotall investor demo. See `q3-pack/README.md` for the brief,
+expected live targets, decoy warning, and filming steps.
+
 ## Setup
 
 ```bash

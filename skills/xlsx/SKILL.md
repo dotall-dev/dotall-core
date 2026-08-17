@@ -47,6 +47,12 @@ dotall_capabilities or dotall_inspect
   → dotall_history / dotall_diff / dotall_revert
 ```
 
+## Pack / needle-finding
+
+Pack / needle-finding: call `dotall_search` (query like `10%` or `Rate`) instead
+of unzipping OOXML. Then `read`/`edit` using returned selectors. `dotall viz` is
+for humans inspecting `.all/`, not required in the edit loop.
+
 ### 1. Discover before every edit
 
 Call **`dotall_capabilities`** (lightweight) or **`dotall_inspect`** (full summary)

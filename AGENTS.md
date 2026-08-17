@@ -14,6 +14,8 @@ brainstorming notes live elsewhere.
 - `docs/specs/xlsx-engine-v0.md` — the current milestone: XLSX engine, CLI-first.
 - `docs/superpowers/specs/2026-07-21-mcp-agent-interface-design.md` — MCP tools,
   flush-on-close, capabilities discovery.
+- `docs/superpowers/specs/2026-08-17-killer-demo-design.md` — Dotall vs no-Dotall
+  bake-off: Q3 board-pack brief, `dotall search` / `dotall viz`, filming notes.
 - `skills/xlsx/SKILL.md` — agent workflow for `.xlsx` via Dotall MCP.
 - `skills/pptx/SKILL.md` — agent workflow for `.pptx` via Dotall MCP.
 - `skills/docx/SKILL.md` — agent workflow for `.docx` via Dotall MCP.
