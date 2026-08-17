@@ -440,6 +440,19 @@ After Wave 13 integrates (set_page_orientation, set_shape_font_color, set_paragr
 
 Each task ends with the standing demo gate.
 
+## Wave 15 — replace text (content-first) + companion slices (parallel)
+
+After Wave 14 integrates (set_page_margins, set_shape_highlight, set_paragraph_highlight, set_form_field_max_length):
+
+1. **XLSX:** `set_print_scale` — set worksheet print scale via surgical `pageSetup` (`scale` integer 10–400); inspect surfaces `print_scale` when present
+2. **PPTX:** `replace_shape_text` — find/replace substring inside one slide shape’s text (payload `slide`, `shape`, `find`, `replace`; reject empty `find` / no match); content-on-slide; reuses surgical shape text patch (first-run rewrite like `set_shape_text`)
+3. **DOCX:** `replace_paragraph_text` — find/replace substring inside one body/table paragraph by index/element_id (`find`, `replace`; reject empty `find` / no match); content-in-document companion
+4. **PDF:** `set_form_field_comb` — set/clear AcroForm text-field Comb (`/Ff` bit 25); pairs with `set_form_field_max_length`; reject non-`tx` fields; inspect surfaces `comb`
+
+**Deferred:** slide-/document-wide replace-across, hyperlinks, richer table cell content, strike/superscript run props; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
