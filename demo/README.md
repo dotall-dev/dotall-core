@@ -231,6 +231,13 @@ $DOTALL apply demo/financials.xlsx --all
 $DOTALL inspect demo/financials.xlsx
 # expect sheets[].show_gridlines false for Revenue
 
+# Wave 22: set_right_to_left (sheetView rightToLeft)
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_right_to_left","payload":{"sheet":"Revenue","rtl":true}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect sheets[].right_to_left true for Revenue
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -375,9 +382,14 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_shape_bullet","payload":{"slide":"Slide 2","shape":"Title","bullet":true}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 22 — bold Metrics cell (a:rPr b)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_table_cell_bold","payload":{"slide":"Slide 1","table":"Metrics","row":1,"col":1,"bold":true}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `set_shape_strikethrough` / `set_shape_vert_align` / `set_shape_caps` / `replace_shape_text` / `replace_across_shapes` / `set_shape_bullet` patch only the target slide part. `set_shape_hyperlink` also patches that slide’s `.rels`.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `set_shape_strikethrough` / `set_shape_vert_align` / `set_shape_caps` / `replace_shape_text` / `replace_across_shapes` / `set_shape_bullet` / `set_table_cell_text` / `set_table_cell_bold` patch only the target slide part. `set_shape_hyperlink` also patches that slide’s `.rels`.
 
 ---
 
@@ -513,6 +525,11 @@ $DOTALL apply demo/memo.docx --all
 # Wave 21 — paragraph bullet (w:numPr + numbering.xml)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_bullet","payload":{"index":2,"bullet":true}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 22 — table cell shading (w:shd fill on enclosing w:tc)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_cell_shading","payload":{"index":3,"color":"#FFFF00"}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
@@ -726,6 +743,16 @@ $DOTALL inspect demo/form.pdf
 # expect fields[].combo true for Department
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field_combo","payload":{"name":"Department","combo":false}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 22 — mark Department edit (Ff Edit / combo type-in), then clear
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_edit","payload":{"name":"Department","edit":true}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect fields[].edit true for Department
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_edit","payload":{"name":"Department","edit":false}}]'
 $DOTALL apply demo/form.pdf --all
 ```
 
