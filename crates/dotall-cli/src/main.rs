@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use dotall_core::registry::{FormatRegistry, ReadRequest, ReadSelector, SemanticOperation};
 use dotall_core::{
     Actor, ActorKind, AppliedEdit, DotallError, DotallStore, EditRequest, Engine, HistoryRecord,
-    HistorySummary, ObjectStatus, StagedEdit,
+    HistorySummary, ObjectStatus, SearchRequest, StagedEdit, search_store,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -116,6 +116,13 @@ enum Command {
         version: u64,
         #[arg(long)]
         tx: Option<Uuid>,
+    },
+    Search {
+        query: String,
+        #[arg(long)]
+        glob: Option<String>,
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -288,6 +295,37 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
         Command::History { path } => run_history(cli, path)?,
         Command::Diff { path, version } => run_diff(cli, path, *version)?,
         Command::Revert { path, version, tx } => run_revert(cli, path, *version, *tx)?,
+        Command::Search { query, glob, path } => run_search(cli, query, glob, path)?,
+    }
+    Ok(())
+}
+
+fn run_search(
+    cli: &Cli,
+    query: &str,
+    glob: &Option<String>,
+    path: &Path,
+) -> dotall_core::Result<()> {
+    let store = DotallStore::open(path)?;
+    let results = search_store(
+        &store,
+        &SearchRequest {
+            query: query.to_string(),
+            glob: glob.clone(),
+        },
+    )?;
+    if cli.json {
+        print_json(&results);
+    } else {
+        for hit in &results.hits {
+            println!(
+                "{}\t{}\t{}\t{}",
+                hit.path,
+                hit.selector_kind.as_deref().unwrap_or(""),
+                hit.selector.as_deref().unwrap_or(""),
+                hit.snippet
+            );
+        }
     }
     Ok(())
 }
