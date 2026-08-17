@@ -912,6 +912,101 @@ fn set_paragraph_font_color_rejects_invalid() {
 }
 
 #[test]
+fn set_paragraph_highlight_sets_whighlight_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_highlight".into(),
+                payload: serde_json::json!({ "index": 1, "color": "yellow" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document_xml = String::from_utf8(zip_entries(&patched.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        document_xml.contains(r#"<w:highlight w:val="yellow"/>"#)
+            || document_xml.contains(r#"w:val="yellow""#),
+        "expected w:highlight yellow, got: {document_xml}"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "set_paragraph_highlight");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("yellow"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_highlight_clear_removes_whighlight() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_highlight".into(),
+                payload: serde_json::json!({ "index": 1, "color": "cyan" }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_highlight".into(),
+                payload: serde_json::json!({ "index": 1, "color": null }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let document_xml = String::from_utf8(zip_entries(&cleared.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    let para = document_xml.split("<w:p>").nth(2).unwrap_or(&document_xml);
+    assert!(
+        !para.contains("<w:highlight"),
+        "cleared highlight must remove w:highlight from target paragraph"
+    );
+}
+
+#[test]
+fn set_paragraph_highlight_rejects_invalid() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_highlight".into(),
+                payload: serde_json::json!({ "index": 1, "color": "neon" }),
+            }],
+        )
+        .expect_err("invalid highlight");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("highlight") || message.contains("color") || message.contains("yellow"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn set_paragraph_underline_sets_wu_and_leaves_other_parts_byte_identical() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("memo.docx");

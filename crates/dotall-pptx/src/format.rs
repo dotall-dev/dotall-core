@@ -386,5 +386,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Upserts a:solidFill/a:srgbClr val from #RRGGBB/RRGGBB (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
+        EditCapability {
+            operation: "set_shape_highlight".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear text highlight on all runs inside a slide shape (a:highlight/a:srgbClr)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_highlight",
+                "payload": { "slide": "Slide 1", "shape": "Title", "color": "#FFFF00" }
+            }),
+            safety: "Upserts a:highlight/a:srgbClr val from #RRGGBB/RRGGBB (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
     ]
 }

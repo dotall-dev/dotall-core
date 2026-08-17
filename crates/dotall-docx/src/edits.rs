@@ -33,6 +33,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_font_size" => validate_set_paragraph_font_size(model, operation),
         "set_paragraph_font_name" => validate_set_paragraph_font_name(model, operation),
         "set_paragraph_font_color" => validate_set_paragraph_font_color(model, operation),
+        "set_paragraph_highlight" => validate_set_paragraph_highlight(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -40,7 +41,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -383,6 +384,46 @@ fn validate_set_paragraph_font_color(
     })
 }
 
+fn validate_set_paragraph_highlight(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let color = optional_highlight_color(&operation.payload, "color")?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_highlight".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "color": color,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_highlight".into(),
+            before: None,
+            after: Some(match color.as_deref() {
+                Some(value) => value.to_owned(),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_paragraph_run_bool(
     model: &DocumentModel,
     operation: &SemanticOperation,
@@ -697,6 +738,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let color = optional_srgb_color(&operation.payload, "color")?;
             let original = entry_bytes(package, "word/document.xml")?;
             let patched_xml = patch_paragraph_font_color(&original, index, color.as_deref())?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
+        "set_paragraph_highlight" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let color = optional_highlight_color(&operation.payload, "color")?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_highlight(&original, index, color.as_deref())?;
             let bytes = rebuild_package(
                 package,
                 &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
@@ -1358,6 +1417,16 @@ pub fn patch_paragraph_font_color(xml: &[u8], index: u32, color: Option<&str>) -
             patch_paragraph_named_run_prop(xml, index, "w:color", Some(&prop))
         }
         None => patch_paragraph_named_run_prop(xml, index, "w:color", None),
+    }
+}
+
+pub fn patch_paragraph_highlight(xml: &[u8], index: u32, color: Option<&str>) -> Result<Vec<u8>> {
+    match color {
+        Some(name) => {
+            let prop = format!(r#"<w:highlight w:val="{name}"/>"#);
+            patch_paragraph_named_run_prop(xml, index, "w:highlight", Some(&prop))
+        }
+        None => patch_paragraph_named_run_prop(xml, index, "w:highlight", None),
     }
 }
 
@@ -2188,6 +2257,19 @@ fn optional_srgb_color(payload: &serde_json::Value, key: &str) -> Result<Option<
     }
 }
 
+fn optional_highlight_color(payload: &serde_json::Value, key: &str) -> Result<Option<String>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => {
+            let raw = value
+                .as_str()
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| format_error(format!("`{key}` must be a non-empty string")))?;
+            Ok(Some(normalize_highlight_color(raw)?))
+        }
+    }
+}
+
 fn normalize_srgb_color(raw: &str) -> Result<String> {
     let trimmed = raw.trim().trim_start_matches('#');
     if trimmed.len() != 6 || !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -2196,6 +2278,40 @@ fn normalize_srgb_color(raw: &str) -> Result<String> {
         ));
     }
     Ok(trimmed.to_ascii_uppercase())
+}
+
+const HIGHLIGHT_COLORS: &[&str] = &[
+    "yellow",
+    "green",
+    "cyan",
+    "magenta",
+    "blue",
+    "red",
+    "darkBlue",
+    "darkCyan",
+    "darkGreen",
+    "darkMagenta",
+    "darkRed",
+    "darkYellow",
+    "darkGray",
+    "lightGray",
+    "black",
+    "none",
+];
+
+fn normalize_highlight_color(raw: &str) -> Result<String> {
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("none") {
+        return Ok("none".into());
+    }
+    for candidate in HIGHLIGHT_COLORS {
+        if trimmed.eq_ignore_ascii_case(candidate) {
+            return Ok((*candidate).to_owned());
+        }
+    }
+    Err(format_error(
+        "`color` must be a Word highlight name (yellow, green, cyan, magenta, blue, red, darkBlue, darkCyan, darkGreen, darkMagenta, darkRed, darkYellow, darkGray, lightGray, black, or none)",
+    ))
 }
 
 fn format_size_pt(value: f64) -> String {

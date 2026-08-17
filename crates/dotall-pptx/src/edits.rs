@@ -48,8 +48,9 @@ pub fn validate(
         "set_shape_font_size" => validate_set_shape_font_size(model, operation),
         "set_shape_font_name" => validate_set_shape_font_name(model, operation),
         "set_shape_font_color" => validate_set_shape_font_color(model, operation),
+        "set_shape_highlight" => validate_set_shape_highlight(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -374,6 +375,51 @@ fn validate_set_shape_font_color(
             target: format!("{}!{}", slide.name, shape.name),
             element_id: shape.element_id.clone(),
             change: "set_shape_font_color".into(),
+            before: None,
+            after: Some(match color.as_deref() {
+                Some(value) => value.to_owned(),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_shape_highlight(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let shape_ref = required_str(&operation.payload, "shape")?;
+    let color = optional_srgb_color(&operation.payload, "color")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| shape.name == shape_ref || shape.element_id == shape_ref)
+        .ok_or_else(|| format_error(format!("shape `{shape_ref}` was not found")))?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_shape_highlight".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "shape": shape.name,
+                "color": color,
+                "part_name": slide.part_name,
+                "element_id": shape.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, shape.name),
+            element_id: shape.element_id.clone(),
+            change: "set_shape_highlight".into(),
             before: None,
             after: Some(match color.as_deref() {
                 Some(value) => value.to_owned(),
@@ -904,6 +950,20 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 removals: BTreeSet::new(),
             }
         }
+        "set_shape_highlight" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let color = optional_srgb_color(&operation.payload, "color")?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_shape_highlight(&original, shape, color.as_deref())?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
         other => {
             return Err(format_error(format!(
                 "cannot apply unsupported pptx edit `{other}`"
@@ -1298,12 +1358,52 @@ pub fn patch_shape_font_color(xml: &[u8], shape: &str, color: Option<&str>) -> R
     Ok(output.into_bytes())
 }
 
+pub fn patch_shape_highlight(xml: &[u8], shape: &str, color: Option<&str>) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let needle = format!("name=\"{shape}\"");
+    let name_at = source
+        .find(&needle)
+        .ok_or_else(|| format_error(format!("shape `{shape}` was not found in slide XML")))?;
+    let sp_start = source[..name_at]
+        .rfind("<p:sp")
+        .ok_or_else(|| format_error("shape is missing a p:sp wrapper"))?;
+    let rel_end = source[name_at..]
+        .find("</p:sp>")
+        .ok_or_else(|| format_error("shape is missing a closing p:sp"))?;
+    let sp_end = name_at + rel_end + "</p:sp>".len();
+    let sp = &source[sp_start..sp_end];
+    if sp.contains("<p:graphicFrame")
+        || sp.contains("<a:graphic")
+        || sp.contains("<mc:AlternateContent")
+    {
+        return Err(format_error("cannot edit non-text shape"));
+    }
+    let patched_sp = match color {
+        Some(hex) => set_shape_runs_highlight(sp, hex)?,
+        None => clear_shape_runs_highlight(sp)?,
+    };
+    let mut output = String::new();
+    output.push_str(&source[..sp_start]);
+    output.push_str(&patched_sp);
+    output.push_str(&source[sp_end..]);
+    Ok(output.into_bytes())
+}
+
 fn set_shape_runs_solid_fill(sp: &str, color: &str) -> Result<String> {
     map_shape_runs(sp, |run| upsert_drawing_run_solid_fill(run, Some(color)))
 }
 
 fn clear_shape_runs_solid_fill(sp: &str) -> Result<String> {
     map_shape_runs(sp, |run| upsert_drawing_run_solid_fill(run, None))
+}
+
+fn set_shape_runs_highlight(sp: &str, color: &str) -> Result<String> {
+    map_shape_runs(sp, |run| upsert_drawing_run_highlight(run, Some(color)))
+}
+
+fn clear_shape_runs_highlight(sp: &str) -> Result<String> {
+    map_shape_runs(sp, |run| upsert_drawing_run_highlight(run, None))
 }
 
 fn upsert_drawing_run_solid_fill(run: &str, color: Option<&str>) -> Result<String> {
@@ -1333,12 +1433,61 @@ fn upsert_drawing_run_solid_fill(run: &str, color: Option<&str>) -> Result<Strin
     Ok(format!("{}{}{}", &run[..open_end], r_pr, rest))
 }
 
+fn upsert_drawing_run_highlight(run: &str, color: Option<&str>) -> Result<String> {
+    let open_end = run
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated a:r"))?;
+    if run[..open_end].ends_with("/>") {
+        return Ok(run.to_owned());
+    }
+    let rest = &run[open_end..];
+    if let Some(r_pr_start) = find_tag(rest, 0, "a:rPr") {
+        let r_pr_end = element_end_drawing(rest, r_pr_start, "a:rPr")?;
+        let patched = upsert_rpr_highlight(&rest[r_pr_start..r_pr_end], color)?;
+        return Ok(format!(
+            "{}{}{}{}",
+            &run[..open_end],
+            &rest[..r_pr_start],
+            patched,
+            &rest[r_pr_end..]
+        ));
+    }
+    let Some(color) = color else {
+        return Ok(run.to_owned());
+    };
+    let r_pr = format!(r#"<a:rPr><a:highlight><a:srgbClr val="{color}"/></a:highlight></a:rPr>"#);
+    Ok(format!("{}{}{}", &run[..open_end], r_pr, rest))
+}
+
 fn upsert_rpr_solid_fill(r_pr: &str, color: Option<&str>) -> Result<String> {
     let without = remove_drawing_child(r_pr, "a:solidFill")?;
     let Some(color) = color else {
         return Ok(without);
     };
     let children = format!(r#"<a:solidFill><a:srgbClr val="{color}"/></a:solidFill>"#);
+    let open_end = without
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated a:rPr"))?;
+    if without[..open_end].ends_with("/>") {
+        let open = without[..open_end].trim_end_matches("/>").trim_end();
+        return Ok(format!("{open}>{children}</a:rPr>"));
+    }
+    Ok(format!(
+        "{}{}{}",
+        &without[..open_end],
+        children,
+        &without[open_end..]
+    ))
+}
+
+fn upsert_rpr_highlight(r_pr: &str, color: Option<&str>) -> Result<String> {
+    let without = remove_drawing_child(r_pr, "a:highlight")?;
+    let Some(color) = color else {
+        return Ok(without);
+    };
+    let children = format!(r#"<a:highlight><a:srgbClr val="{color}"/></a:highlight>"#);
     let open_end = without
         .find('>')
         .map(|offset| offset + 1)

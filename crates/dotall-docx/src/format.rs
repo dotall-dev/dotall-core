@@ -434,6 +434,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_highlight".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear highlight (w:highlight) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_highlight",
+                "payload": { "index": 1, "color": "yellow" }
+            }),
+            safety:
+                "Upserts w:highlight w:val from Word highlight names (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:
