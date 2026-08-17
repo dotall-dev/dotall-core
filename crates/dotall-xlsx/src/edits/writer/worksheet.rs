@@ -44,6 +44,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetCellFont { .. }
+            | XlsxEditOp::SetCellFill { .. }
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
             | XlsxEditOp::SetRightToLeft { .. }
@@ -168,6 +170,8 @@ pub(super) fn patch(
                 | XlsxEditOp::SetCenterOnPage { .. }
                 | XlsxEditOp::SetPageMargins { .. }
                 | XlsxEditOp::SetHeaderFooter { .. }
+                | XlsxEditOp::SetCellFont { .. }
+                | XlsxEditOp::SetCellFill { .. }
                 | XlsxEditOp::SetSheetZoom { .. }
                 | XlsxEditOp::SetShowGridlines { .. }
                 | XlsxEditOp::SetRightToLeft { .. }
@@ -215,6 +219,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetCellFont { .. }
+            | XlsxEditOp::SetCellFill { .. }
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
             | XlsxEditOp::SetRightToLeft { .. }
@@ -362,6 +368,8 @@ fn render_new_cell(
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetCellFont { .. }
+        | XlsxEditOp::SetCellFill { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
         | XlsxEditOp::SetRightToLeft { .. }
@@ -554,6 +562,8 @@ fn render_cell_parts(
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetCellFont { .. }
+        | XlsxEditOp::SetCellFill { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
         | XlsxEditOp::SetRightToLeft { .. }

@@ -137,6 +137,8 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_center_on_page",
             "set_page_margins",
             "set_header_footer",
+            "set_cell_font",
+            "set_cell_fill",
             "set_sheet_zoom",
             "set_show_gridlines",
             "set_right_to_left",

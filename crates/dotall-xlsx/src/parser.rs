@@ -51,8 +51,9 @@ struct SheetStyleContext<'a> {
 ///
 /// Calamine does not expose worksheet merges or cell style indices through its
 /// public API, so merges and style refs are read from OOXML (`styles.xml` + sheet
-/// cell `s` attributes). Style entries stay id-only; full font/fill writers are
-/// out of scope.
+/// cell `s` attributes). Style catalog entries stay id-only on read; font/fill
+/// writers append fonts/fills/cellXfs surgically via `set_cell_font` /
+/// `set_cell_fill`.
 pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
     let source_bytes = fs::read(source).map_err(|error| format_error(source, error))?;
     let source_hash = blake3::hash(&source_bytes).to_hex().to_string();

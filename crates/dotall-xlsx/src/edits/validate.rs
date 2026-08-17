@@ -143,6 +143,18 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_cell_font"))
+    {
+        return validate_set_cell_font_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_cell_fill"))
+    {
+        return validate_set_cell_fill_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "set_sheet_zoom"))
     {
         return validate_set_sheet_zoom_operations(model, operations);
@@ -315,6 +327,18 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_header_footer"))
     {
         return validate_set_header_footer_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_cell_font"))
+    {
+        return validate_set_cell_font_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_cell_fill"))
+    {
+        return validate_set_cell_fill_operations(model, operations);
     }
     if operations
         .iter()
@@ -2071,6 +2095,208 @@ fn validate_set_header_footer_operations(
     })
 }
 
+fn validate_set_cell_font_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_cell_font edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_cell_font" {
+        return Err(format_error("unsupported set_cell_font edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_cell_font requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let address_raw = operation
+        .payload
+        .get("address")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .ok_or_else(|| format_error("set_cell_font requires a non-empty `address` field"))?;
+    let address = format_address(parse_address(address_raw)?);
+    let bold = optional_bool_field(&operation.payload, "bold")?;
+    let italic = optional_bool_field(&operation.payload, "italic")?;
+    let name = optional_non_empty_string_field(&operation.payload, "name")?;
+    let size_pt = optional_positive_f64_field(&operation.payload, "size_pt")?;
+    let color = match operation.payload.get("color") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(normalize_tab_color(value).map_err(|_| {
+            format_error("set_cell_font `color` must be a 6- or 8-digit RGB/AARRGGBB hex string")
+        })?),
+        _ => {
+            return Err(format_error(
+                "set_cell_font `color` must be a hex string when present",
+            ));
+        }
+    };
+    if bold.is_none() && italic.is_none() && name.is_none() && size_pt.is_none() && color.is_none()
+    {
+        return Err(format_error(
+            "set_cell_font requires at least one font field (`bold`, `italic`, `name`, `size_pt`, or `color`)",
+        ));
+    }
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_cell_font".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "address": address,
+                "bold": bold,
+                "italic": italic,
+                "name": name,
+                "size_pt": size_pt,
+                "color": color,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!{address}"),
+            element_id: ids::cell_id(&canonical_sheet, &address, MODEL_SCHEMA_VERSION),
+            change: "set_cell_font".into(),
+            before: None,
+            after: Some(format!(
+                "bold={:?} italic={:?} name={:?} size_pt={:?} color={:?}",
+                bold, italic, name, size_pt, color
+            )),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_cell_fill_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_cell_fill edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_cell_fill" {
+        return Err(format_error("unsupported set_cell_fill edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_cell_fill requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let address_raw = operation
+        .payload
+        .get("address")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .ok_or_else(|| format_error("set_cell_fill requires a non-empty `address` field"))?;
+    let address = format_address(parse_address(address_raw)?);
+    if !operation
+        .payload
+        .as_object()
+        .is_some_and(|obj| obj.contains_key("color"))
+    {
+        return Err(format_error(
+            "set_cell_fill requires a `color` field (hex string or null)",
+        ));
+    }
+    let color = match operation.payload.get("color") {
+        Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(normalize_tab_color(value).map_err(|_| {
+            format_error("set_cell_fill `color` must be a 6- or 8-digit RGB/AARRGGBB hex string")
+        })?),
+        _ => {
+            return Err(format_error(
+                "set_cell_fill `color` must be a hex string or null",
+            ));
+        }
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_cell_fill".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "address": address,
+                "color": color,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!{address}"),
+            element_id: ids::cell_id(&canonical_sheet, &address, MODEL_SCHEMA_VERSION),
+            change: "set_cell_fill".into(),
+            before: None,
+            after: color.clone().or_else(|| Some("cleared".into())),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn optional_bool_field(payload: &Value, field: &str) -> Result<Option<bool>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        _ => Err(format_error(format!(
+            "set_cell_font `{field}` must be a boolean when present"
+        ))),
+    }
+}
+
+fn optional_non_empty_string_field(payload: &Value, field: &str) -> Result<Option<String>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.trim().to_owned())),
+        Some(Value::String(_)) => Err(format_error(format!(
+            "set_cell_font `{field}` must be a non-empty string when present"
+        ))),
+        _ => Err(format_error(format!(
+            "set_cell_font `{field}` must be a string when present"
+        ))),
+    }
+}
+
+fn optional_positive_f64_field(payload: &Value, field: &str) -> Result<Option<f64>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(Some)
+            .ok_or_else(|| {
+                format_error(format!(
+                    "set_cell_font `{field}` must be a positive number when present"
+                ))
+            }),
+    }
+}
+
 fn validate_set_sheet_zoom_operations(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
@@ -3000,6 +3226,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetCellFont { .. }
+        | XlsxEditOp::SetCellFill { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
         | XlsxEditOp::SetRightToLeft { .. }
@@ -3129,6 +3357,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetCellFont { .. }
+        | XlsxEditOp::SetCellFill { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
         | XlsxEditOp::SetRightToLeft { .. }

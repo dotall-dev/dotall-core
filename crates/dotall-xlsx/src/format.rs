@@ -730,6 +730,37 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 .into(),
         },
         EditCapability {
+            operation: "set_cell_font".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set cell font (bold/italic/name/size_pt/color) via styles.xml fonts + cellXfs."
+                .into(),
+            example: json!({
+                "kind": "set_cell_font",
+                "payload": {
+                    "sheet": "Inputs",
+                    "address": "A1",
+                    "bold": true,
+                    "name": "Calibri",
+                    "size_pt": 14,
+                    "color": "#1F4E79"
+                }
+            }),
+            safety: "Append-only patch of xl/styles.xml fonts/cellXfs plus the target cell s= index. Requires at least one of bold/italic/name/size_pt/color. Color is #RRGGBB or RRGGBB (normalized like set_tab_color). No theme rewrite. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_cell_fill".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear cell solid fill via styles.xml fills + cellXfs."
+                .into(),
+            example: json!({
+                "kind": "set_cell_fill",
+                "payload": { "sheet": "Inputs", "address": "A1", "color": "#FFFF00" }
+            }),
+            safety: "Append-only patch of xl/styles.xml fills/cellXfs plus the target cell s= index. Pass null color to clear to fillId 0. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
             operation: "set_sheet_zoom".into(),
             schema_version: crate::edits::SCHEMA_VERSION,
             description: "Set worksheet view zoom via sheetView zoomScale (percent 10–400)."

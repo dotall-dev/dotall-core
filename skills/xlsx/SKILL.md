@@ -262,6 +262,20 @@ Set or clear worksheet print header/footer (`headerFooter`/`oddHeader`/`oddFoote
 
 Inspect surfaces `header_footer` per sheet when present. Other worksheets stay byte-identical.
 
+Set cell font (append-only `xl/styles.xml` fonts/cellXfs + cell `s=`; at least one font field required):
+
+```json
+{ "kind": "set_cell_font", "payload": { "sheet": "Inputs", "address": "A1", "bold": true, "name": "Calibri", "size_pt": 14, "color": "#1F4E79" } }
+```
+
+Set or clear cell solid fill (`null` color clears to fillId 0):
+
+```json
+{ "kind": "set_cell_fill", "payload": { "sheet": "Inputs", "address": "A1", "color": "#FFFF00" } }
+```
+
+Other worksheets stay byte-identical; `styles.xml` is an allowed target part.
+
 Set worksheet view zoom (`sheetView` `zoomScale` percent 10–400):
 
 ```json

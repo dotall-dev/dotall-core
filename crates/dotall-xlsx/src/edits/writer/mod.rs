@@ -1,4 +1,5 @@
 mod auto_filter;
+mod cell_style;
 mod center_on_page;
 mod comments;
 mod dimensions;

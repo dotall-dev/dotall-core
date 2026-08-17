@@ -14,6 +14,7 @@ use crate::edits::transform::{Axis, AxisChange};
 use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
 use super::auto_filter;
+use super::cell_style;
 use super::center_on_page;
 use super::comments;
 use super::dimensions;
@@ -213,6 +214,41 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     {
         return patch_header_footer(&original, sheet, header.as_deref(), footer.as_deref());
     }
+    if let [
+        XlsxEditOp::SetCellFont {
+            sheet,
+            address,
+            bold,
+            italic,
+            name,
+            size_pt,
+            color,
+        },
+    ] = operations.as_slice()
+    {
+        return patch_cell_font(
+            &original,
+            sheet,
+            address,
+            cell_style::FontPatch {
+                bold: *bold,
+                italic: *italic,
+                name: name.clone(),
+                size_pt: *size_pt,
+                color: color.clone(),
+            },
+        );
+    }
+    if let [
+        XlsxEditOp::SetCellFill {
+            sheet,
+            address,
+            color,
+        },
+    ] = operations.as_slice()
+    {
+        return patch_cell_fill(&original, sheet, address, color.as_deref());
+    }
     if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
         let patch = workbook::define_name(&original, name, formula)?;
         let bytes = rebuild_package(
@@ -383,6 +419,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetCenterOnPage { .. }
                 | XlsxEditOp::SetPageMargins { .. }
                 | XlsxEditOp::SetHeaderFooter { .. }
+                | XlsxEditOp::SetCellFont { .. }
+                | XlsxEditOp::SetCellFill { .. }
                 | XlsxEditOp::SetSheetZoom { .. }
                 | XlsxEditOp::SetShowGridlines { .. }
                 | XlsxEditOp::SetRightToLeft { .. }
@@ -430,6 +468,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetCellFont { .. }
+            | XlsxEditOp::SetCellFill { .. }
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
             | XlsxEditOp::SetRightToLeft { .. }
@@ -1037,6 +1077,53 @@ fn patch_header_footer(
         bytes,
     })
 }
+
+fn patch_cell_font(
+    original: &[u8],
+    sheet: &str,
+    address: &str,
+    font: cell_style::FontPatch,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let sheet_xml = entry_bytes(original, path)?;
+    let styles_xml = entry_bytes(original, "xl/styles.xml")?;
+    let (styles_out, sheet_out) = cell_style::patch_font(&styles_xml, &sheet_xml, address, &font)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert("xl/styles.xml".into(), styles_out);
+    replacements.insert(path.clone(), sheet_out);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_cell_fill(
+    original: &[u8],
+    sheet: &str,
+    address: &str,
+    color: Option<&str>,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let sheet_xml = entry_bytes(original, path)?;
+    let styles_xml = entry_bytes(original, "xl/styles.xml")?;
+    let (styles_out, sheet_out) = cell_style::patch_fill(&styles_xml, &sheet_xml, address, color)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert("xl/styles.xml".into(), styles_out);
+    replacements.insert(path.clone(), sheet_out);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
 fn shared_strings_path(package: &[u8]) -> Result<Option<String>> {
     let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
     if let Some(target) = parse_shared_strings_target(&relationships)? {
