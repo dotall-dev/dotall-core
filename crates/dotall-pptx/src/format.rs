@@ -327,5 +327,16 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Upserts a:rPr b on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
+        EditCapability {
+            operation: "set_shape_italic".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear italic on all text runs inside a slide shape (a:rPr i)."
+                .into(),
+            example: json!({
+                "kind": "set_shape_italic",
+                "payload": { "slide": "Slide 1", "shape": "Title", "italic": true }
+            }),
+            safety: "Upserts a:rPr i on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
     ]
 }

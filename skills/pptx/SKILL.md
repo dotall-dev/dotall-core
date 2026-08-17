@@ -137,6 +137,12 @@ Set or clear bold on shape text runs (`a:rPr b`):
 { "kind": "set_shape_bold", "payload": { "slide": "Slide 1", "shape": "Title", "bold": true } }
 ```
 
+Set or clear italic on shape text runs (`a:rPr i`):
+
+```json
+{ "kind": "set_shape_italic", "payload": { "slide": "Slide 1", "shape": "Title", "italic": true } }
+```
+
 Speaker notes (existing notes slide part only):
 
 ```json
@@ -152,6 +158,7 @@ Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
 `delete_shape` removes a `p:sp` by name or element_id; rejects missing shapes (tables use graphicFrame and are not deleted here).
 `rename_shape` updates `cNvPr` name; rejects empty/duplicate names (including table names on the same slide).
 `set_shape_bold` upserts `a:rPr b` on each text run in the shape; rejects non-text shapes.
+`set_shape_italic` upserts `a:rPr i` on each text run in the shape; rejects non-text shapes.
 
 Safety:
 
@@ -161,6 +168,7 @@ Safety:
 - `add_slide` / `delete_slide`: surgically update `presentation.xml`, `presentation.xml.rels`, and `[Content_Types].xml`; duplicate a blank slide template or remove the target slide part. Untouched slide/media parts stay byte-identical.
 - `move_slide`: reorders only `p:sldId` entries in `ppt/presentation.xml`. Slide parts, notes, rels, and Content_Types stay byte-identical.
 - `set_shape_bold`: upserts `a:rPr b` on runs in the target shape’s `txBody`; other parts stay byte-identical.
+- `set_shape_italic`: upserts `a:rPr i` on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `add_textbox`: inserts a `p:sp` text box (`txBox="1"`) into the target slide’s `spTree`; other parts stay byte-identical.
 - `delete_shape`: removes the matching `p:sp` from the target slide part; other parts stay byte-identical.
 - `rename_shape`: rewrites the matching `cNvPr` name attribute on the target slide part; other parts stay byte-identical.

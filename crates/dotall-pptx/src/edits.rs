@@ -43,8 +43,9 @@ pub fn validate(
         "delete_shape" => validate_delete_shape(model, operation),
         "rename_shape" => validate_rename_shape(model, operation),
         "set_shape_bold" => validate_set_shape_bold(model, operation),
+        "set_shape_italic" => validate_set_shape_italic(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -230,9 +231,25 @@ fn validate_set_shape_bold(
     model: &PresentationModel,
     operation: &SemanticOperation,
 ) -> Result<ValidatedEdit> {
+    validate_set_shape_run_bool(model, operation, "set_shape_bold", "bold")
+}
+
+fn validate_set_shape_italic(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    validate_set_shape_run_bool(model, operation, "set_shape_italic", "italic")
+}
+
+fn validate_set_shape_run_bool(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+    kind: &str,
+    flag: &str,
+) -> Result<ValidatedEdit> {
     let slide_ref = required_str(&operation.payload, "slide")?;
     let shape_ref = required_str(&operation.payload, "shape")?;
-    let bold = required_bool(&operation.payload, "bold")?;
+    let enabled = required_bool(&operation.payload, flag)?;
     let slide = selector::resolve_slide(model, slide_ref)
         .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
     let shape = slide
@@ -245,11 +262,11 @@ fn validate_set_shape_bold(
         schema_id: SCHEMA_ID.into(),
         schema_version: SCHEMA_VERSION,
         operations: vec![SemanticOperation {
-            kind: "set_shape_bold".into(),
+            kind: kind.into(),
             payload: serde_json::json!({
                 "slide": slide.name,
                 "shape": shape.name,
-                "bold": bold,
+                flag: enabled,
                 "part_name": slide.part_name,
                 "element_id": shape.element_id,
             }),
@@ -257,9 +274,9 @@ fn validate_set_shape_bold(
         semantic_diff: vec![SemanticChange {
             target: format!("{}!{}", slide.name, shape.name),
             element_id: shape.element_id.clone(),
-            change: "set_shape_bold".into(),
+            change: kind.into(),
             before: None,
-            after: Some(if bold { "true" } else { "false" }.into()),
+            after: Some(if enabled { "true" } else { "false" }.into()),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -649,7 +666,25 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             PackagePatch {
                 replacements: BTreeMap::from([(
                     part_name.to_owned(),
-                    patch_shape_bold(&original, shape, bold)?,
+                    patch_shape_run_bool(&original, shape, "b", bold)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
+        "set_shape_italic" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let italic = operation
+                .payload
+                .get("italic")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`italic` boolean is required"))?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_shape_run_bool(&original, shape, "i", italic)?,
                 )]),
                 additions: BTreeMap::new(),
                 removals: BTreeSet::new(),
@@ -960,6 +995,14 @@ pub fn patch_shape_text(xml: &[u8], shape: &str, text: &str) -> Result<Vec<u8>> 
 }
 
 pub fn patch_shape_bold(xml: &[u8], shape: &str, bold: bool) -> Result<Vec<u8>> {
+    patch_shape_run_bool(xml, shape, "b", bold)
+}
+
+pub fn patch_shape_italic(xml: &[u8], shape: &str, italic: bool) -> Result<Vec<u8>> {
+    patch_shape_run_bool(xml, shape, "i", italic)
+}
+
+fn patch_shape_run_bool(xml: &[u8], shape: &str, attr: &str, enabled: bool) -> Result<Vec<u8>> {
     let source = std::str::from_utf8(xml)
         .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
     let needle = format!("name=\"{shape}\"");
@@ -980,7 +1023,7 @@ pub fn patch_shape_bold(xml: &[u8], shape: &str, bold: bool) -> Result<Vec<u8>> 
     {
         return Err(format_error("cannot edit non-text shape"));
     }
-    let patched_sp = set_shape_runs_bold(sp, bold)?;
+    let patched_sp = set_shape_runs_bool(sp, attr, enabled)?;
     let mut output = String::new();
     output.push_str(&source[..sp_start]);
     output.push_str(&patched_sp);
@@ -988,7 +1031,7 @@ pub fn patch_shape_bold(xml: &[u8], shape: &str, bold: bool) -> Result<Vec<u8>> 
     Ok(output.into_bytes())
 }
 
-fn set_shape_runs_bold(sp: &str, bold: bool) -> Result<String> {
+fn set_shape_runs_bool(sp: &str, attr: &str, enabled: bool) -> Result<String> {
     let mut output = String::with_capacity(sp.len() + 32);
     let mut cursor = 0;
     let mut patched_any = false;
@@ -1002,18 +1045,20 @@ fn set_shape_runs_bold(sp: &str, bold: bool) -> Result<String> {
         }
         let end = element_end_drawing(sp, start, "a:r")?;
         output.push_str(&sp[cursor..start]);
-        output.push_str(&upsert_drawing_run_bold(&sp[start..end], bold)?);
+        output.push_str(&upsert_drawing_run_bool(&sp[start..end], attr, enabled)?);
         cursor = end;
         patched_any = true;
     }
     output.push_str(&sp[cursor..]);
     if !patched_any {
-        return Err(format_error("shape has no text run to bold"));
+        return Err(format_error(format!(
+            "shape has no text run to set `{attr}`"
+        )));
     }
     Ok(output)
 }
 
-fn upsert_drawing_run_bold(run: &str, bold: bool) -> Result<String> {
+fn upsert_drawing_run_bool(run: &str, attr: &str, enabled: bool) -> Result<String> {
     let open_end = run
         .find('>')
         .map(|offset| offset + 1)
@@ -1024,7 +1069,7 @@ fn upsert_drawing_run_bold(run: &str, bold: bool) -> Result<String> {
     let rest = &run[open_end..];
     if let Some(r_pr_start) = find_tag(rest, 0, "a:rPr") {
         let r_pr_end = element_end_drawing(rest, r_pr_start, "a:rPr")?;
-        let patched = set_rpr_bold_attr(&rest[r_pr_start..r_pr_end], bold)?;
+        let patched = set_rpr_bool_attr(&rest[r_pr_start..r_pr_end], attr, enabled)?;
         return Ok(format!(
             "{}{}{}{}",
             &run[..open_end],
@@ -1033,23 +1078,20 @@ fn upsert_drawing_run_bold(run: &str, bold: bool) -> Result<String> {
             &rest[r_pr_end..]
         ));
     }
-    let r_pr = if bold {
-        r#"<a:rPr b="1"/>"#.to_owned()
-    } else {
-        r#"<a:rPr b="0"/>"#.to_owned()
-    };
+    let value = if enabled { "1" } else { "0" };
+    let r_pr = format!(r#"<a:rPr {attr}="{value}"/>"#);
     Ok(format!("{}{}{}", &run[..open_end], r_pr, rest))
 }
 
-fn set_rpr_bold_attr(r_pr: &str, bold: bool) -> Result<String> {
-    let value = if bold { "1" } else { "0" };
-    let needle = "b=\"";
-    if let Some(rel) = r_pr.find(needle) {
+fn set_rpr_bool_attr(r_pr: &str, attr: &str, enabled: bool) -> Result<String> {
+    let value = if enabled { "1" } else { "0" };
+    let needle = format!("{attr}=\"");
+    if let Some(rel) = r_pr.find(&needle) {
         let value_start = rel + needle.len();
         let value_end = r_pr[value_start..]
             .find('"')
             .map(|offset| value_start + offset)
-            .ok_or_else(|| format_error("unterminated b attribute"))?;
+            .ok_or_else(|| format_error(format!("unterminated {attr} attribute")))?;
         return Ok(format!(
             "{}{}{}",
             &r_pr[..value_start],
@@ -1057,14 +1099,14 @@ fn set_rpr_bold_attr(r_pr: &str, bold: bool) -> Result<String> {
             &r_pr[value_end..]
         ));
     }
-    // Insert b= before the tag close.
+    // Insert attr= before the tag close.
     if r_pr.ends_with("/>") {
         let open = r_pr.trim_end_matches("/>").trim_end();
-        return Ok(format!("{open} b=\"{value}\"/>"));
+        return Ok(format!("{open} {attr}=\"{value}\"/>"));
     }
     if let Some(gt) = r_pr.find('>') {
         let open = r_pr[..gt].trim_end();
-        return Ok(format!("{open} b=\"{value}\">{}", &r_pr[gt + 1..]));
+        return Ok(format!("{open} {attr}=\"{value}\">{}", &r_pr[gt + 1..]));
     }
     Err(format_error("unterminated a:rPr"))
 }
