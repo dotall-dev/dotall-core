@@ -338,6 +338,17 @@ After Wave 5 integrates (freeze_panes, add_textbox, delete_paragraph, radio Btn)
 
 Each task ends with the standing demo gate.
 
+## Wave 7 — next openpyxl-class gaps (parallel)
+
+After Wave 6 integrates (define_name, delete_shape, set_paragraph_style, clear_form_field):
+
+1. **XLSX:** `delete_name` — remove a workbook defined name (surgical workbook.xml); pairs with `define_name`
+2. **PPTX:** `rename_shape` by slide+old name → new name (surgical `cNvPr` on slide part); pairs with add/delete shape
+3. **DOCX:** `set_paragraph_alignment` (`w:jc` left/center/right/both) — light para formatting beside style_id
+4. **PDF:** `clear_document_metadata` — clear `/Info` Title/Author/Subject (opaque whole-file snapshot); pairs with `set_document_metadata`
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
