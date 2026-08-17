@@ -79,6 +79,7 @@ impl FormatHandler for XlsxFormat {
                     "formula_count": sheet.cells.iter().filter(|cell| cell.formula.is_some()).count(),
                     "merges": sheet.merges,
                     "freeze_panes": sheet.freeze_panes,
+                    "tab_color": sheet.tab_color,
                 })
             })
             .collect::<Vec<_>>();
@@ -552,6 +553,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "hidden": true }
             }),
             safety: "Surgically patches only xl/workbook.xml sheet state. Rejects hiding the last visible sheet. Worksheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_tab_color".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear a worksheet tab color (sheetPr/tabColor rgb)."
+                .into(),
+            example: json!({
+                "kind": "set_tab_color",
+                "payload": { "sheet": "Inputs", "color": "FF4472C4" }
+            }),
+            safety: "Surgically patches only the target worksheet sheetPr/tabColor. Pass null color to clear. Other sheets stay byte-identical."
                 .into(),
         },
     ]

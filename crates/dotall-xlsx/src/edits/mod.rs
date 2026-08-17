@@ -121,6 +121,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 hidden: required_bool(operation, "hidden")?,
             }),
+            "set_tab_color" => Ok(XlsxEditOp::SetTabColor {
+                sheet: required_string(operation, "sheet")?,
+                color: optional_string(operation, "color")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),

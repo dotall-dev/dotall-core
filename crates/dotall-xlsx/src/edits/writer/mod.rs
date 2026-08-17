@@ -4,6 +4,7 @@ mod merges;
 mod package;
 mod shared_strings;
 mod structural;
+mod tab_color;
 mod workbook;
 mod worksheet;
 

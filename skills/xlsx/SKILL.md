@@ -151,6 +151,14 @@ Hide or unhide a worksheet (`state="hidden"` on the workbook sheet tag only):
 
 Rejects hiding the last visible sheet. Worksheets stay byte-identical.
 
+Set or clear a worksheet tab color (`sheetPr`/`tabColor` rgb AARRGGBB; `null` clears):
+
+```json
+{ "kind": "set_tab_color", "payload": { "sheet": "Inputs", "color": "FF4472C4" } }
+```
+
+Inspect surfaces `tab_color` per sheet when present. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

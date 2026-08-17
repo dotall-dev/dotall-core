@@ -64,6 +64,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_tab_color"))
+    {
+        return validate_set_tab_color_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "define_name"))
     {
         return validate_define_name_operations(model, operations);
@@ -139,6 +145,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "freeze_panes"))
     {
         return validate_freeze_panes_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_tab_color"))
+    {
+        return validate_set_tab_color_operations(model, operations);
     }
     if operations
         .iter()
@@ -773,6 +785,80 @@ fn validate_freeze_panes_operations(
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
             notes: vec!["refs parsed; values not evaluated".into()],
+        },
+    })
+}
+
+fn normalize_tab_color(raw: &str) -> Result<String> {
+    let trimmed = raw.trim().trim_start_matches('#').to_ascii_uppercase();
+    let hex = if trimmed.len() == 6 {
+        format!("FF{trimmed}")
+    } else {
+        trimmed
+    };
+    if hex.len() != 8 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format_error(
+            "set_tab_color `color` must be a 6- or 8-digit RGB/AARRGGBB hex string",
+        ));
+    }
+    Ok(hex)
+}
+
+fn validate_set_tab_color_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_tab_color edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_tab_color" {
+        return Err(format_error("unsupported set_tab_color edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_tab_color requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.tab_color.clone();
+    let color = match operation.payload.get("color") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(normalize_tab_color(value)?),
+        _ => {
+            return Err(format_error(
+                "set_tab_color `color` must be a hex string or null",
+            ));
+        }
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_tab_color".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "color": color,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!tab_color"),
+            element_id: format!("tab_color:{canonical_sheet}"),
+            change: "set_tab_color".into(),
+            before,
+            after: color.clone(),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
         },
     })
 }
@@ -1487,7 +1573,7 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::FreezePanes { .. }
             | XlsxEditOp::DefineName { .. }
             | XlsxEditOp::DeleteName { .. }
-            | XlsxEditOp::HideSheet { .. } => {
+            | XlsxEditOp::HideSheet { .. } | XlsxEditOp::SetTabColor { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -1600,7 +1686,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::FreezePanes { .. }
         | XlsxEditOp::DefineName { .. }
         | XlsxEditOp::DeleteName { .. }
-        | XlsxEditOp::HideSheet { .. } => {
+        | XlsxEditOp::HideSheet { .. }
+        | XlsxEditOp::SetTabColor { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )
@@ -1672,6 +1759,7 @@ mod tests {
             dimensions: SheetDimensions { rows: 10, cols: 4 },
             merges: Vec::new(),
             freeze_panes: None,
+            tab_color: None,
             cells,
         }
     }

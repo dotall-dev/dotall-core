@@ -26,6 +26,7 @@ struct StyleCatalog {
 struct WorksheetPart {
     merges: Vec<String>,
     freeze_panes: Option<String>,
+    tab_color: Option<String>,
     cell_styles: BTreeMap<String, u32>,
 }
 
@@ -70,6 +71,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                 .unwrap_or_else(|| WorksheetPart {
                     merges: Vec::new(),
                     freeze_panes: None,
+                    tab_color: None,
                     cell_styles: BTreeMap::new(),
                 });
             parse_sheet(
@@ -182,6 +184,7 @@ where
         dimensions,
         merges: part.merges,
         freeze_panes: part.freeze_panes,
+        tab_color: part.tab_color,
         cells,
     })
 }
@@ -229,12 +232,14 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
         let worksheet = entry_bytes(package, &path, source)?;
         let merges = parse_merge_refs(&worksheet, source)?;
         let freeze_panes = parse_freeze_panes(&worksheet, source)?;
+        let tab_color = parse_tab_color(&worksheet, source)?;
         let cell_styles = parse_cell_style_indices(&worksheet, source)?;
         parts.insert(
             name,
             WorksheetPart {
                 merges,
                 freeze_panes,
+                tab_color,
                 cell_styles,
             },
         );
@@ -411,6 +416,36 @@ fn parse_u32_attr(value: &[u8]) -> Option<u32> {
     std::str::from_utf8(value)
         .ok()
         .and_then(|value| value.parse().ok())
+}
+
+fn parse_tab_color(xml: &[u8], source: &Path) -> Result<Option<String>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if local_name(element.name().as_ref()) == b"tabColor" =>
+            {
+                for attribute in element.attributes().flatten() {
+                    if local_name(attribute.key.as_ref()) == b"rgb" {
+                        let rgb = String::from_utf8_lossy(attribute.value.as_ref())
+                            .trim()
+                            .to_ascii_uppercase();
+                        if !rgb.is_empty() {
+                            return Ok(Some(rgb));
+                        }
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(None)
 }
 
 fn parse_freeze_panes(xml: &[u8], source: &Path) -> Result<Option<String>> {

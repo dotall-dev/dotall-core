@@ -23,6 +23,9 @@ pub struct SheetModel {
     /// Openpyxl-style freeze cell (`B2` freezes row 1 + col A). Absent when unfrozen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freeze_panes: Option<String>,
+    /// Worksheet tab color as OOXML `rgb` AARRGGBB (e.g. `FF4472C4`). Absent when default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_color: Option<String>,
     pub cells: Vec<CellModel>,
 }
 

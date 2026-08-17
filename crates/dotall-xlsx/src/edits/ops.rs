@@ -93,6 +93,11 @@ pub enum XlsxEditOp {
         sheet: String,
         hidden: bool,
     },
+    SetTabColor {
+        sheet: String,
+        /// AARRGGBB hex (with or without leading FF); `None` clears tab color.
+        color: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

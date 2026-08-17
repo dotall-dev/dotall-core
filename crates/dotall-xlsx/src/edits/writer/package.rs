@@ -18,6 +18,7 @@ use super::freeze_panes;
 use super::merges;
 use super::shared_strings;
 use super::structural;
+use super::tab_color;
 use super::workbook;
 use super::worksheet;
 
@@ -78,6 +79,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     }
     if let [XlsxEditOp::FreezePanes { sheet, cell }] = operations.as_slice() {
         return patch_freeze_panes(&original, sheet, cell.as_deref());
+    }
+    if let [XlsxEditOp::SetTabColor { sheet, color }] = operations.as_slice() {
+        return patch_tab_color(&original, sheet, color.as_deref());
     }
     if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
         let patch = workbook::define_name(&original, name, formula)?;
@@ -238,6 +242,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::DefineName { .. }
                 | XlsxEditOp::DeleteName { .. }
                 | XlsxEditOp::HideSheet { .. }
+                | XlsxEditOp::SetTabColor { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -268,7 +273,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::FreezePanes { .. }
             | XlsxEditOp::DefineName { .. }
             | XlsxEditOp::DeleteName { .. }
-            | XlsxEditOp::HideSheet { .. } => {
+            | XlsxEditOp::HideSheet { .. }
+            | XlsxEditOp::SetTabColor { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -663,6 +669,21 @@ fn patch_freeze_panes(original: &[u8], sheet: &str, cell: Option<&str>) -> Resul
     let xml = entry_bytes(original, path)?;
     let mut replacements = BTreeMap::new();
     replacements.insert(path.clone(), freeze_panes::patch(&xml, cell)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_tab_color(original: &[u8], sheet: &str, color: Option<&str>) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), tab_color::patch(&xml, color)?);
     let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),

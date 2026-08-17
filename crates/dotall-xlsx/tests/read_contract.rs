@@ -126,6 +126,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "define_name",
             "delete_name",
             "hide_sheet",
+            "set_tab_color",
         ]
     );
     assert_eq!(
@@ -602,6 +603,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                 },
                 merges: Vec::new(),
                 freeze_panes: None,
+                tab_color: None,
                 cells,
             }],
             named_ranges: Vec::new(),

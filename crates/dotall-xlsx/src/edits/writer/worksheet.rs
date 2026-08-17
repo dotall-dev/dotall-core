@@ -32,7 +32,8 @@ pub(super) fn patch(
             | XlsxEditOp::FreezePanes { .. }
             | XlsxEditOp::DefineName { .. }
             | XlsxEditOp::DeleteName { .. }
-            | XlsxEditOp::HideSheet { .. } => {
+            | XlsxEditOp::HideSheet { .. }
+            | XlsxEditOp::SetTabColor { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -140,7 +141,8 @@ pub(super) fn patch(
                 | XlsxEditOp::FreezePanes { .. }
                 | XlsxEditOp::DefineName { .. }
                 | XlsxEditOp::DeleteName { .. }
-                | XlsxEditOp::HideSheet { .. } => {
+                | XlsxEditOp::HideSheet { .. }
+                | XlsxEditOp::SetTabColor { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -171,7 +173,8 @@ pub(super) fn patch(
             | XlsxEditOp::FreezePanes { .. }
             | XlsxEditOp::DefineName { .. }
             | XlsxEditOp::DeleteName { .. }
-            | XlsxEditOp::HideSheet { .. } => {
+            | XlsxEditOp::HideSheet { .. }
+            | XlsxEditOp::SetTabColor { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -302,7 +305,8 @@ fn render_new_cell(
         | XlsxEditOp::FreezePanes { .. }
         | XlsxEditOp::DefineName { .. }
         | XlsxEditOp::DeleteName { .. }
-        | XlsxEditOp::HideSheet { .. } => {
+        | XlsxEditOp::HideSheet { .. }
+        | XlsxEditOp::SetTabColor { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -478,7 +482,8 @@ fn render_cell_parts(
         | XlsxEditOp::FreezePanes { .. }
         | XlsxEditOp::DefineName { .. }
         | XlsxEditOp::DeleteName { .. }
-        | XlsxEditOp::HideSheet { .. } => {
+        | XlsxEditOp::HideSheet { .. }
+        | XlsxEditOp::SetTabColor { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }
