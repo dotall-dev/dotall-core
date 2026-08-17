@@ -57,6 +57,8 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "delete_paragraph" => validate_delete_paragraph(model, operation),
         "set_paragraph_style" => validate_set_paragraph_style(model, operation),
         "set_paragraph_alignment" => validate_set_paragraph_alignment(model, operation),
+        "set_paragraph_spacing" => validate_set_paragraph_spacing(model, operation),
+        "insert_page_break" => validate_insert_page_break(model, operation),
         "set_paragraph_bold" => validate_set_paragraph_bold(model, operation),
         "set_paragraph_italic" => validate_set_paragraph_italic(model, operation),
         "set_paragraph_underline" => validate_set_paragraph_underline(model, operation),
@@ -81,7 +83,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_paragraph_bullet, set_cell_shading, insert_comment, insert_picture, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_spacing, insert_page_break, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_paragraph_bullet, set_cell_shading, insert_comment, insert_picture, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -394,6 +396,105 @@ fn normalize_alignment(raw: &str) -> Result<String> {
             "unsupported alignment `{other}`; use left, center, right, or both"
         ))),
     }
+}
+
+fn validate_set_paragraph_spacing(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let before_pt = optional_non_negative_f64(&operation.payload, "before_pt")?;
+    let after_pt = optional_non_negative_f64(&operation.payload, "after_pt")?;
+    if before_pt.is_none() && after_pt.is_none() {
+        return Err(format_error(
+            "set_paragraph_spacing requires at least one of `before_pt` or `after_pt`",
+        ));
+    }
+    let before_twips = before_pt.map(pt_to_twips);
+    let after_twips = after_pt.map(pt_to_twips);
+    let mut payload = serde_json::json!({
+        "index": paragraph.index,
+        "element_id": paragraph.element_id,
+    });
+    if let Some(value) = before_pt {
+        payload["before_pt"] = serde_json::json!(value);
+    }
+    if let Some(value) = after_pt {
+        payload["after_pt"] = serde_json::json!(value);
+    }
+    if let Some(value) = before_twips {
+        payload["before_twips"] = serde_json::json!(value);
+    }
+    if let Some(value) = after_twips {
+        payload["after_twips"] = serde_json::json!(value);
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_spacing".into(),
+            payload,
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_spacing".into(),
+            before: None,
+            after: Some(format!(
+                "before_pt={:?}, after_pt={:?}",
+                before_pt, after_pt
+            )),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_insert_page_break(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_page_break".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "insert_page_break".into(),
+            before: None,
+            after: Some("page".into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn pt_to_twips(pt: f64) -> u32 {
+    (pt * 20.0).round() as u32
 }
 
 fn validate_set_paragraph_bold(
@@ -1127,6 +1228,55 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 bytes,
             })
         }
+        "set_paragraph_spacing" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let before_twips = operation
+                .payload
+                .get("before_twips")
+                .and_then(serde_json::Value::as_u64)
+                .map(|value| value as u32);
+            let after_twips = operation
+                .payload
+                .get("after_twips")
+                .and_then(serde_json::Value::as_u64)
+                .map(|value| value as u32);
+            if before_twips.is_none() && after_twips.is_none() {
+                return Err(format_error(
+                    "set_paragraph_spacing requires at least one of `before_pt` or `after_pt`",
+                ));
+            }
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_spacing(&original, index, before_twips, after_twips)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
+        "insert_page_break" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_insert_page_break(&original, index)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
         "set_paragraph_bold" => {
             let index = operation
                 .payload
@@ -1583,6 +1733,146 @@ fn upsert_p_jc(p_pr: &str, jc_tag: &str) -> Result<String> {
         jc_tag,
         &p_pr[open_end..]
     ))
+}
+
+pub fn patch_paragraph_spacing(
+    xml: &[u8],
+    index: u32,
+    before_twips: Option<u32>,
+    after_twips: Option<u32>,
+) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let open_end = paragraph
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    let replacement = match extract_p_pr(&paragraph[open_end..]) {
+        Some(p_pr) => {
+            let patched_p_pr = upsert_p_spacing(p_pr, before_twips, after_twips)?;
+            format!(
+                "{}{}{}",
+                &paragraph[..open_end],
+                patched_p_pr,
+                &paragraph[open_end + p_pr.len()..]
+            )
+        }
+        None => {
+            let spacing_tag = format_spacing_tag(before_twips, after_twips);
+            format!(
+                "{}<w:pPr>{}</w:pPr>{}",
+                &paragraph[..open_end],
+                spacing_tag,
+                &paragraph[open_end..]
+            )
+        }
+    };
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&replacement);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
+fn upsert_p_spacing(
+    p_pr: &str,
+    before_twips: Option<u32>,
+    after_twips: Option<u32>,
+) -> Result<String> {
+    let (existing_before, existing_after) = if let Some(start) = find_named_open(p_pr, "w:spacing")
+    {
+        let end = element_end(p_pr, start, "w:spacing")?;
+        let existing = &p_pr[start..end];
+        (
+            attr_u32(existing, "w:before"),
+            attr_u32(existing, "w:after"),
+        )
+    } else {
+        (None, None)
+    };
+    let merged_before = before_twips.or(existing_before);
+    let merged_after = after_twips.or(existing_after);
+    let spacing_tag = format_spacing_tag(merged_before, merged_after);
+    if let Some(start) = find_named_open(p_pr, "w:spacing") {
+        let end = element_end(p_pr, start, "w:spacing")?;
+        return Ok(format!("{}{}{}", &p_pr[..start], spacing_tag, &p_pr[end..]));
+    }
+    let open_end = p_pr
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:pPr"))?;
+    if p_pr[..open_end].ends_with("/>") {
+        let open = p_pr[..open_end].trim_end_matches("/>");
+        return Ok(format!("{open}>{spacing_tag}</w:pPr>"));
+    }
+    Ok(format!(
+        "{}{}{}",
+        &p_pr[..open_end],
+        spacing_tag,
+        &p_pr[open_end..]
+    ))
+}
+
+fn format_spacing_tag(before_twips: Option<u32>, after_twips: Option<u32>) -> String {
+    let mut tag = String::from("<w:spacing");
+    if let Some(before) = before_twips {
+        tag.push_str(&format!(r#" w:before="{before}""#));
+    }
+    if let Some(after) = after_twips {
+        tag.push_str(&format!(r#" w:after="{after}""#));
+    }
+    tag.push_str("/>");
+    tag
+}
+
+fn attr_u32(element: &str, name: &str) -> Option<u32> {
+    let needle = format!(r#"{name}=""#);
+    let at = element.find(&needle)?;
+    let value_start = at + needle.len();
+    let value_end = element[value_start..].find('"')? + value_start;
+    element[value_start..value_end].parse().ok()
+}
+
+pub fn patch_insert_page_break(xml: &[u8], index: u32) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let (content_start, _) = paragraph_content_span(paragraph)?;
+    const BREAK_RUN: &str = r#"<w:r><w:br w:type="page"/></w:r>"#;
+    let mut replacement = String::new();
+    replacement.push_str(&paragraph[..content_start]);
+    replacement.push_str(BREAK_RUN);
+    replacement.push_str(&paragraph[content_start..]);
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&replacement);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
 }
 
 pub fn patch_paragraph_bold(xml: &[u8], index: u32, bold: bool) -> Result<Vec<u8>> {
@@ -3975,6 +4265,17 @@ fn optional_positive_f64(payload: &serde_json::Value, key: &str) -> Result<Optio
             .filter(|n| n.is_finite() && *n > 0.0)
             .map(Some)
             .ok_or_else(|| format_error(format!("`{key}` must be a positive number"))),
+    }
+}
+
+fn optional_non_negative_f64(payload: &serde_json::Value, key: &str) -> Result<Option<f64>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|n| n.is_finite() && *n >= 0.0)
+            .map(Some)
+            .ok_or_else(|| format_error(format!("`{key}` must be a non-negative number"))),
     }
 }
 

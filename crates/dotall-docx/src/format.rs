@@ -384,6 +384,34 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_spacing".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set paragraph spacing before/after in points (w:spacing w:before/w:after in twips)."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_spacing",
+                "payload": { "index": 1, "before_pt": 12, "after_pt": 6 }
+            }),
+            safety:
+                "Requires at least one of before_pt/after_pt (non-negative). Writes twips (pt*20) on w:spacing inside w:pPr, merging existing attrs. Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "insert_page_break".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Insert a page break as the first run of a body/table paragraph (w:br w:type=page)."
+                    .into(),
+            example: json!({
+                "kind": "insert_page_break",
+                "payload": { "index": 1 }
+            }),
+            safety:
+                "Inserts <w:r><w:br w:type=\"page\"/></w:r> after w:pPr (if any). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_paragraph_bold".into(),
             schema_version: SCHEMA_VERSION,
             description: "Set or clear bold (w:b) on all runs in a body/table paragraph.".into(),

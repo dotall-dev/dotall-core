@@ -128,6 +128,26 @@ Set paragraph alignment (`w:jc`: `left`, `center`, `right`, `both` / `justify`):
 }
 ```
 
+Set paragraph spacing before/after in points (`w:spacing` `w:before`/`w:after` in twips = `pt * 20`). At least one of `before_pt` / `after_pt` required; non-negative; merges existing spacing attrs:
+
+```json
+{
+  "kind": "set_paragraph_spacing",
+  "payload": { "index": 1, "before_pt": 12, "after_pt": 6 }
+}
+```
+
+Insert a page break as the first run of a body/table paragraph (`<w:br w:type="page"/>` after `w:pPr` if any):
+
+```json
+{
+  "kind": "insert_page_break",
+  "payload": { "index": 1 }
+}
+```
+
+`element_id` is also accepted instead of `index`. Both ops patch only `word/document.xml`.
+
 Set or clear bold on all runs in a body/table paragraph (`w:b`):
 
 ```json
