@@ -62,6 +62,55 @@ pub fn minimal_radio_pdf() -> Vec<u8> {
     )
 }
 
+/// Q3 intake: same fields as [`demo_form_pdf`] plus `Rate` (default `10%`) and `Owner`.
+pub fn demo_q3_intake_pdf() -> Vec<u8> {
+    let page_text = "\
+BT
+/F1 18 Tf 20 480 Td (Q3 Vendor Intake) Tj
+0 -28 Td /F1 12 Tf (Name) Tj
+0 -40 Td (Email) Tj
+0 -50 Td (Agree to terms) Tj
+0 -50 Td (Priority) Tj
+0 -50 Td (Department) Tj
+0 -50 Td (Rate) Tj
+0 -40 Td (Owner) Tj
+ET
+";
+    let content = content_object(4, page_text);
+    assemble(
+        &[
+            "1 0 obj<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>endobj\n",
+            "2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n",
+            "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 510] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> /Annots [7 0 R 9 0 R 11 0 R 15 0 R 16 0 R 17 0 R 21 0 R 24 0 R 26 0 R] >>endobj\n",
+            content.as_str(),
+            "5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n",
+            "6 0 obj<< /Fields [8 0 R 10 0 R 12 0 R 18 0 R 22 0 R 25 0 R 27 0 R] /NeedAppearances true >>endobj\n",
+            "7 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 420 280 445] /P 3 0 R /Parent 8 0 R /F 4 >>endobj\n",
+            "8 0 obj<< /FT /Tx /T (Name) /V (Ada Lovelace) /Kids [7 0 R] >>endobj\n",
+            "9 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 380 280 405] /P 3 0 R /Parent 10 0 R /F 4 >>endobj\n",
+            "10 0 obj<< /FT /Tx /T (Email) /V (ada@example.com) /Kids [9 0 R] >>endobj\n",
+            "11 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 330 100 350] /P 3 0 R /Parent 12 0 R /F 4 /AS /Off /AP << /N << /Yes 13 0 R /Off 14 0 R >> >> >>endobj\n",
+            "12 0 obj<< /FT /Btn /T (Agree) /V /Off /Kids [11 0 R] >>endobj\n",
+            "13 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+            "14 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+            "15 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 280 100 300] /P 3 0 R /Parent 18 0 R /F 4 /AS /Off /AP << /N << /Low 19 0 R /Off 20 0 R >> >> >>endobj\n",
+            "16 0 obj<< /Type /Annot /Subtype /Widget /Rect [110 280 130 300] /P 3 0 R /Parent 18 0 R /F 4 /AS /Medium /AP << /N << /Medium 19 0 R /Off 20 0 R >> >> >>endobj\n",
+            "17 0 obj<< /Type /Annot /Subtype /Widget /Rect [140 280 160 300] /P 3 0 R /Parent 18 0 R /F 4 /AS /Off /AP << /N << /High 19 0 R /Off 20 0 R >> >> >>endobj\n",
+            "18 0 obj<< /FT /Btn /Ff 32768 /T (Priority) /V /Medium /Kids [15 0 R 16 0 R 17 0 R] >>endobj\n",
+            "19 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+            "20 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream\nendstream\nendobj\n",
+            "21 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 220 280 245] /P 3 0 R /Parent 22 0 R /F 4 >>endobj\n",
+            "22 0 obj<< /FT /Ch /T (Department) /V (Engineering) /Opt [(Engineering) (Sales) (Operations)] /Kids [21 0 R] >>endobj\n",
+            "23 0 obj<< /Title (Q3 Vendor Intake) /Author (Dotall Demo) /Subject (Q3 board pack) /Creator (dotall-pdf) /Producer (dotall-pdf) >>endobj\n",
+            "24 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 170 280 195] /P 3 0 R /Parent 25 0 R /F 4 >>endobj\n",
+            "25 0 obj<< /FT /Tx /T (Rate) /V (10%) /Kids [24 0 R] >>endobj\n",
+            "26 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 120 280 145] /P 3 0 R /Parent 27 0 R /F 4 >>endobj\n",
+            "27 0 obj<< /FT /Tx /T (Owner) /V () /Kids [26 0 R] >>endobj\n",
+        ],
+        Some(23),
+    )
+}
+
 /// Intake form: Name + Email text, Agree checkbox, Priority radio, Department choice, `/Info`.
 ///
 /// Page content lists the form title and field labels so `read.page` returns meaningful text.
@@ -142,7 +191,7 @@ fn assemble(objects: &[&str], info_object: Option<usize>) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{content_object, demo_form_pdf, minimal_form_pdf};
+    use super::{content_object, demo_form_pdf, demo_q3_intake_pdf, minimal_form_pdf};
     use crate::parser::parse_pdf_bytes;
 
     #[test]
@@ -177,5 +226,24 @@ mod tests {
     fn minimal_form_still_extracts_hello() {
         let model = parse_pdf_bytes(&minimal_form_pdf()).expect("parse");
         assert!(model.pages[0].text.contains("Hello"));
+    }
+
+    #[test]
+    fn q3_intake_has_rate_default_and_owner() {
+        let model = parse_pdf_bytes(&demo_q3_intake_pdf()).expect("parse");
+        let rate = model
+            .fields
+            .iter()
+            .find(|f| f.name == "Rate")
+            .expect("Rate field");
+        assert_eq!(rate.value, "10%");
+        assert!(
+            model.fields.iter().any(|f| f.name == "Owner"),
+            "Owner field missing"
+        );
+        assert!(
+            model.fields.iter().any(|f| f.name == "Name"),
+            "base Name field missing"
+        );
     }
 }

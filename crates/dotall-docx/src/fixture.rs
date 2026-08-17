@@ -35,6 +35,20 @@ pub fn demo_memo_docx() -> Vec<u8> {
     package(DEMO_MEMO, false, Some(DEMO_HEADER), None)
 }
 
+/// Heavy Q3 memo: 24 decoy channel-mix paragraphs plus one live commission-rate line.
+pub fn demo_q3_memo_docx() -> Vec<u8> {
+    let mut body = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>"#,
+    );
+    for _ in 0..24 {
+        body.push_str(r#"<w:p><w:r><w:t>Prior year channel mix stayed at 10%.</w:t></w:r></w:p>"#);
+    }
+    body.push_str(
+        r#"<w:p><w:r><w:t>Q3 commission rate: 10%.</w:t></w:r></w:p></w:body></w:document>"#,
+    );
+    package(body.as_bytes(), false, None, None)
+}
+
 fn package(
     document: &[u8],
     include_media: bool,
@@ -124,3 +138,27 @@ const DOCUMENT_MULTI_RUN: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" stand
 /// Heading + multi-run body + body + 1×2 status table (indices 0..4 in document order).
 /// Paragraph 1 has bold + italic runs for Wave 3 multi-run edit fidelity.
 const DEMO_MEMO: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Internal Memo: Agent Pilot</w:t></w:r></w:p><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>We ran a two-week pilot</w:t></w:r><w:r><w:rPr><w:i/></w:rPr><w:t> using Dotall for spreadsheet and document edits.</w:t></w:r></w:p><w:p><w:r><w:t>Please update the status table below before Friday standup.</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Owner</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Status</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Platform</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>In progress</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"#;
+
+#[cfg(test)]
+mod q3_tests {
+    use super::demo_q3_memo_docx;
+    use std::io::{Cursor, Read};
+    use zip::ZipArchive;
+
+    #[test]
+    fn q3_memo_contains_decoy_and_live_line() {
+        let bytes = demo_q3_memo_docx();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("open docx zip");
+        let mut document = archive.by_name("word/document.xml").expect("document.xml");
+        let mut xml = String::new();
+        document.read_to_string(&mut xml).expect("read document");
+        let decoy = "Prior year channel mix stayed at 10%.";
+        let live = "Q3 commission rate: 10%.";
+        let decoy_count = xml.matches(decoy).count();
+        assert!(
+            decoy_count >= 24,
+            "expected >=24 decoy paragraphs, got {decoy_count}"
+        );
+        assert!(xml.contains(live), "missing live Q3 commission line");
+    }
+}

@@ -18,7 +18,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::write(demo.join("memo.docx"), dotall_docx::demo_memo_docx())?;
     fs::write(demo.join("form.pdf"), dotall_pdf::demo_form_pdf())?;
 
+    let q3 = demo.join("q3-pack");
+    dotall_cli::q3_pack::write_q3_pack(&q3)?;
+
     println!("Wrote demo files to {}", demo.display());
+    println!("Wrote Q3 pack to {}", q3.display());
     Ok(())
 }
 
