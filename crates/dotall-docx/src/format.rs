@@ -476,6 +476,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_caps".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear small-caps/all-caps (w:smallCaps / w:caps) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_caps",
+                "payload": { "index": 1, "caps": "small" }
+            }),
+            safety:
+                "Upserts w:smallCaps or w:caps (null clears both). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "replace_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

@@ -51,9 +51,10 @@ pub fn validate(
         "set_shape_highlight" => validate_set_shape_highlight(model, operation),
         "set_shape_strikethrough" => validate_set_shape_strikethrough(model, operation),
         "set_shape_vert_align" => validate_set_shape_vert_align(model, operation),
+        "set_shape_caps" => validate_set_shape_caps(model, operation),
         "replace_shape_text" => validate_replace_shape_text(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -353,6 +354,51 @@ fn validate_set_shape_vert_align(
             change: "set_shape_vert_align".into(),
             before: None,
             after: Some(match vert_align {
+                Some(value) => value.to_owned(),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_shape_caps(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let shape_ref = required_str(&operation.payload, "shape")?;
+    let caps = optional_caps(&operation.payload, "caps")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| shape.name == shape_ref || shape.element_id == shape_ref)
+        .ok_or_else(|| format_error(format!("shape `{shape_ref}` was not found")))?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_shape_caps".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "shape": shape.name,
+                "caps": caps,
+                "part_name": slide.part_name,
+                "element_id": shape.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, shape.name),
+            element_id: shape.element_id.clone(),
+            change: "set_shape_caps".into(),
+            before: None,
+            after: Some(match caps {
                 Some(value) => value.to_owned(),
                 None => "cleared".into(),
             }),
@@ -1107,6 +1153,20 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 removals: BTreeSet::new(),
             }
         }
+        "set_shape_caps" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let caps = optional_caps(&operation.payload, "caps")?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_shape_caps(&original, shape, caps)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
         other => {
             return Err(format_error(format!(
                 "cannot apply unsupported pptx edit `{other}`"
@@ -1445,6 +1505,17 @@ pub fn patch_shape_vert_align(
             "`vert_align` must be superscript, subscript, or null; got `{other}`"
         ))),
         None => patch_shape_clear_run_attr(xml, shape, "baseline"),
+    }
+}
+
+pub fn patch_shape_caps(xml: &[u8], shape: &str, caps: Option<&str>) -> Result<Vec<u8>> {
+    match caps {
+        Some("small") => patch_shape_run_attr(xml, shape, "cap", "small"),
+        Some("all") => patch_shape_run_attr(xml, shape, "cap", "all"),
+        Some(other) => Err(format_error(format!(
+            "`caps` must be small, all, or null; got `{other}`"
+        ))),
+        None => patch_shape_clear_run_attr(xml, shape, "cap"),
     }
 }
 
@@ -2603,6 +2674,22 @@ fn optional_vert_align<'a>(payload: &'a serde_json::Value, key: &str) -> Result<
                 _ => Err(format_error(format!(
                     "`{key}` must be superscript, subscript, or null"
                 ))),
+            }
+        }
+    }
+}
+
+fn optional_caps<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option<&'a str>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => {
+            let text = value
+                .as_str()
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| format_error(format!("`{key}` must be a non-empty string")))?;
+            match text {
+                "small" | "all" => Ok(Some(text)),
+                _ => Err(format_error(format!("`{key}` must be small, all, or null"))),
             }
         }
     }

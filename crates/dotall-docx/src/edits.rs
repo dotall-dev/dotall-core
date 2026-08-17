@@ -36,6 +36,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_highlight" => validate_set_paragraph_highlight(model, operation),
         "set_paragraph_strikethrough" => validate_set_paragraph_strikethrough(model, operation),
         "set_paragraph_vert_align" => validate_set_paragraph_vert_align(model, operation),
+        "set_paragraph_caps" => validate_set_paragraph_caps(model, operation),
         "replace_paragraph_text" => validate_replace_paragraph_text(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
@@ -44,7 +45,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -360,6 +361,46 @@ fn validate_set_paragraph_vert_align(
             change: "set_paragraph_vert_align".into(),
             before: None,
             after: Some(match vert_align {
+                Some(value) => value.to_owned(),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_paragraph_caps(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let caps = optional_caps(&operation.payload, "caps")?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_caps".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "caps": caps,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_caps".into(),
+            before: None,
+            after: Some(match caps {
                 Some(value) => value.to_owned(),
                 None => "cleared".into(),
             }),
@@ -912,6 +953,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 bytes,
             })
         }
+        "set_paragraph_caps" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let caps = optional_caps(&operation.payload, "caps")?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_caps(&original, index, caps)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
         "set_header_paragraph_text" | "set_footer_paragraph_text" => {
             let part = required_str(&operation.payload, "part")?;
             let index = operation
@@ -1149,6 +1208,31 @@ pub fn patch_paragraph_vert_align(
             "`vert_align` must be superscript, subscript, or null; got `{other}`"
         ))),
         None => patch_paragraph_named_run_prop(xml, index, "w:vertAlign", None),
+    }
+}
+
+pub fn patch_paragraph_caps(xml: &[u8], index: u32, caps: Option<&str>) -> Result<Vec<u8>> {
+    match caps {
+        Some("small") => {
+            let cleared = patch_paragraph_named_run_prop(xml, index, "w:caps", None)?;
+            patch_paragraph_named_run_prop(
+                &cleared,
+                index,
+                "w:smallCaps",
+                Some(r#"<w:smallCaps/>"#),
+            )
+        }
+        Some("all") => {
+            let cleared = patch_paragraph_named_run_prop(xml, index, "w:smallCaps", None)?;
+            patch_paragraph_named_run_prop(&cleared, index, "w:caps", Some(r#"<w:caps/>"#))
+        }
+        Some(other) => Err(format_error(format!(
+            "`caps` must be small, all, or null; got `{other}`"
+        ))),
+        None => {
+            let cleared = patch_paragraph_named_run_prop(xml, index, "w:smallCaps", None)?;
+            patch_paragraph_named_run_prop(&cleared, index, "w:caps", None)
+        }
     }
 }
 
@@ -2433,6 +2517,22 @@ fn optional_vert_align<'a>(payload: &'a serde_json::Value, key: &str) -> Result<
                 _ => Err(format_error(format!(
                     "`{key}` must be superscript, subscript, or null"
                 ))),
+            }
+        }
+    }
+}
+
+fn optional_caps<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option<&'a str>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => {
+            let text = value
+                .as_str()
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| format_error(format!("`{key}` must be a non-empty string")))?;
+            match text {
+                "small" | "all" => Ok(Some(text)),
+                _ => Err(format_error(format!("`{key}` must be small, all, or null"))),
             }
         }
     }

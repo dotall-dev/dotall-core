@@ -185,6 +185,12 @@ Set or clear superscript/subscript on shape runs (`a:rPr baseline`; `null` clear
 { "kind": "set_shape_vert_align", "payload": { "slide": "Slide 1", "shape": "Title", "vert_align": "superscript" } }
 ```
 
+Set or clear small-caps/all-caps on shape runs (`a:rPr cap`; `null` clears):
+
+```json
+{ "kind": "set_shape_caps", "payload": { "slide": "Slide 1", "shape": "Title", "caps": "small" } }
+```
+
 Find/replace a substring inside one shape’s text (rejects empty `find` / no match; first-run rewrite like `set_shape_text`):
 
 ```json
@@ -222,6 +228,7 @@ Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
 `set_shape_highlight` upserts `a:highlight`/`a:srgbClr` from `#RRGGBB`/`RRGGBB` (null clears); rejects non-text shapes.
 `set_shape_strikethrough` upserts `a:rPr strike="sngStrike"` / `strike="noStrike"` on each text run; rejects non-text shapes.
 `set_shape_vert_align` upserts `a:rPr baseline="30000"` (superscript) / `"-25000"` (subscript); null clears; rejects non-text shapes.
+`set_shape_caps` upserts `a:rPr cap="small"` / `"all"`; null clears; rejects non-text shapes.
 `replace_shape_text` replaces all occurrences of `find` in the shape text model, then patches the slide part; rejects empty `find` and no-match.
 
 Safety:
@@ -240,6 +247,7 @@ Safety:
 - `set_shape_highlight`: upserts `a:highlight`/`a:srgbClr` on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `set_shape_strikethrough`: upserts `a:rPr strike` on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `set_shape_vert_align`: upserts `a:rPr baseline` (superscript/subscript) on runs in the target shape’s `txBody`; other parts stay byte-identical.
+- `set_shape_caps`: upserts `a:rPr cap` (small/all) on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `replace_shape_text`: find/replace on shape text then first-run rewrite like `set_shape_text`; other parts stay byte-identical.
 - `add_textbox`: inserts a `p:sp` text box (`txBox="1"`) into the target slide’s `spTree`; other parts stay byte-identical.
 - `delete_shape`: removes the matching `p:sp` from the target slide part; other parts stay byte-identical.

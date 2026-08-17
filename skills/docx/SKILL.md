@@ -197,6 +197,15 @@ Set or clear superscript/subscript on all runs in a body/table paragraph (`w:ver
 }
 ```
 
+Set or clear small-caps/all-caps on all runs in a body/table paragraph (`w:smallCaps` / `w:caps`; `null` clears):
+
+```json
+{
+  "kind": "set_paragraph_caps",
+  "payload": { "index": 1, "caps": "small" }
+}
+```
+
 Find/replace a substring inside one body/table paragraph (rejects empty `find` / no match; first-run rewrite like `set_paragraph_text`):
 
 ```json

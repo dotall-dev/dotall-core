@@ -423,6 +423,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Upserts a:rPr baseline=\"30000\" (superscript) / \"-25000\" (subscript); null clears. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
         EditCapability {
+            operation: "set_shape_caps".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear small-caps/all-caps on all text runs inside a slide shape (a:rPr cap)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_caps",
+                "payload": { "slide": "Slide 1", "shape": "Title", "caps": "small" }
+            }),
+            safety: "Upserts a:rPr cap=\"small\"|\"all\"; null clears. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
             operation: "replace_shape_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

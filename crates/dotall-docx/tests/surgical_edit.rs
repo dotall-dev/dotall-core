@@ -1211,6 +1211,122 @@ fn capabilities_advertise_set_paragraph_vert_align() {
 }
 
 #[test]
+fn set_paragraph_caps_small_sets_wsmall_caps_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_caps".into(),
+                payload: serde_json::json!({ "index": 1, "caps": "small" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document_xml = String::from_utf8(zip_entries(&patched.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        document_xml.contains("<w:smallCaps") || document_xml.contains("<w:smallCaps/>"),
+        "expected w:smallCaps in document.xml: {document_xml}"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "set_paragraph_caps");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("small"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_caps_all_and_clear() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_caps".into(),
+                payload: serde_json::json!({ "index": 1, "caps": "all" }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    let document_xml = String::from_utf8(zip_entries(&patched.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        document_xml.contains("<w:caps") || document_xml.contains("<w:caps/>"),
+        "expected w:caps: {document_xml}"
+    );
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_caps".into(),
+                payload: serde_json::json!({ "index": 1, "caps": null }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let document_xml = String::from_utf8(zip_entries(&cleared.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        !document_xml.contains("w:smallCaps") && !document_xml.contains("<w:caps"),
+        "expected caps cleared: {document_xml}"
+    );
+}
+
+#[test]
+fn set_paragraph_caps_rejects_invalid_value() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_caps".into(),
+                payload: serde_json::json!({ "index": 1, "caps": "title" }),
+            }],
+        )
+        .expect_err("invalid caps");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("caps") || message.contains("small") || message.contains("all"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_paragraph_caps() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_paragraph_caps"),
+        "capabilities must advertise set_paragraph_caps"
+    );
+}
+
+#[test]
 fn set_paragraph_underline_sets_wu_and_leaves_other_parts_byte_identical() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("memo.docx");
