@@ -453,6 +453,19 @@ After Wave 14 integrates (set_page_margins, set_shape_highlight, set_paragraph_h
 
 Each task ends with the standing demo gate.
 
+## Wave 16 — strikethrough run props + companion slices (parallel)
+
+After Wave 15 integrates (set_print_scale, replace_shape_text, replace_paragraph_text, set_form_field_comb):
+
+1. **XLSX:** `set_fit_to_page` — set/clear worksheet fit-to-page via surgical `pageSetup` `fitToWidth`/`fitToHeight` and `sheetPr`/`pageSetUpPr` `fitToPage` (`width`/`height` non-negative integers; both null clears); inspect surfaces `fit_to_page` when present
+2. **PPTX:** `set_shape_strikethrough` — set/clear strikethrough on shape text runs (`a:rPr strike="sngStrike"` / `strike="noStrike"`); content-on-slide companion to highlight/underline
+3. **DOCX:** `set_paragraph_strikethrough` — set/clear `w:strike` on runs in a body/table paragraph; content-in-document companion
+4. **PDF:** `set_form_field_do_not_scroll` — set/clear AcroForm text-field DoNotScroll (`/Ff` bit 24); pairs with comb/max_length; reject non-`tx` fields; inspect surfaces `do_not_scroll`
+
+**Deferred:** superscript/subscript, hyperlinks, richer table cell content, list/bullet text, document-/slide-wide replace-across; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
