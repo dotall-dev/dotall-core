@@ -17,7 +17,7 @@ operators.
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | set_form_field_edit | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -217,6 +217,15 @@ Mark a choice field as combo (dropdown) or list (`/Ff` Combo bit; `ch` only):
 {
   "kind": "set_form_field_combo",
   "payload": { "name": "Department", "combo": true }
+}
+```
+
+Allow typing in a combo choice field (`/Ff` Edit bit; `ch` only):
+
+```json
+{
+  "kind": "set_form_field_edit",
+  "payload": { "name": "Department", "edit": true }
 }
 ```
 

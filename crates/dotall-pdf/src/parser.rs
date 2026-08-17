@@ -172,6 +172,7 @@ fn walk_field(
     let no_export = flags & 8 == 8;
     let multi_select = flags & 1_048_576 == 1_048_576;
     let combo = flags & 131_072 == 131_072;
+    let edit = flags & 262_144 == 262_144;
     let max_length = dict
         .get(b"MaxLen")
         .ok()
@@ -200,6 +201,7 @@ fn walk_field(
             no_export,
             multi_select,
             combo,
+            edit,
             max_length,
         });
     }

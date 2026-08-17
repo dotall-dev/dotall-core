@@ -77,6 +77,9 @@ pub struct PdfFieldModel {
     /// AcroForm Combo flag (`/Ff` bit 17) for choice fields.
     #[serde(default)]
     pub combo: bool,
+    /// AcroForm Edit flag (`/Ff` bit 18) for choice fields.
+    #[serde(default)]
+    pub edit: bool,
     /// AcroForm `/MaxLen` for text fields when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_length: Option<u32>,

@@ -169,6 +169,7 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         "no_export": field.no_export,
         "multi_select": field.multi_select,
         "combo": field.combo,
+        "edit": field.edit,
     });
     if let Some(max_length) = field.max_length {
         summary["max_length"] = json!(max_length);
@@ -404,6 +405,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "name": "Department", "combo": true }
             }),
             safety: "Toggles /Ff Combo on ch fields only. Inspect surfaces combo. Rejects non-choice fields, encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "set_form_field_edit".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear the AcroForm choice-field Edit flag (/Ff bit 18)."
+                .into(),
+            example: json!({
+                "kind": "set_form_field_edit",
+                "payload": { "name": "Department", "edit": true }
+            }),
+            safety: "Toggles /Ff Edit on ch fields only (combo can type). Inspect surfaces edit. Rejects non-choice fields, encrypted and signed PDFs.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),
