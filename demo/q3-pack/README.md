@@ -57,6 +57,14 @@ dotall_init
   → dotall viz
 ```
 
+CLI walkthrough (scratch workspace; does not mutate committed binaries):
+
+```bash
+chmod +x demo/q3-pack/run-demo.sh
+demo/q3-pack/run-demo.sh          # default: $TMPDIR/dotall-q3-demo
+./target/debug/dotall viz --port 8765 "$TMPDIR/dotall-q3-demo"
+```
+
 Edits use **existing** ops: `set_cell_value` on `Rate`; `replace_shape_text` /
 `set_table_cell_text`; `replace_paragraph_text`; `set_form_fields`; plus one
 visible run style (bold/color) so native apps look updated.

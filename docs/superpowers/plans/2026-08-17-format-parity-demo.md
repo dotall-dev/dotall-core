@@ -518,6 +518,19 @@ After Wave 19 integrates (set_header_footer, set_shape_hyperlink, set_paragraph_
 
 Each task ends with the standing demo gate.
 
+## Wave 21 — bullets (content-first) + companion slices (parallel)
+
+After Wave 20 integrates (set_sheet_zoom, replace_across_shapes, replace_across_paragraphs, set_form_field_multi_select):
+
+1. **XLSX:** `set_show_gridlines` — show/hide worksheet view gridlines via surgical `sheetView` `showGridLines` (`show` boolean; `false` writes `showGridLines="0"`; `true` removes the attribute / default shown); inspect surfaces `show_gridlines` (`false` when hidden). Must preserve freeze-pane children, `zoomScale`, and other `sheetView` attributes (upsert on the open tag; clone `set_sheet_zoom`).
+2. **PPTX:** `set_shape_bullet` — set/clear a bullet on a slide text-frame’s paragraphs (`a:buChar char="•"` vs `a:buNone` inside `a:pPr`); payload `slide`, `shape`, `bullet` boolean; content-on-slide. Skip tables/SmartArt/charts. Only the target slide part changes.
+3. **DOCX:** `set_paragraph_bullet` — set/clear a bullet on a body/table paragraph (`w:numPr` `numId`/`ilvl` plus a surgical `word/numbering.xml` bullet definition and document rel / Content_Types if missing); payload paragraph index/element_id + `bullet` boolean; `false` removes `w:numPr`. Content-in-document companion. Other ZIP parts stay byte-identical except numbering.xml + document.xml.rels + `[Content_Types].xml` when those parts must be created.
+4. **PDF:** `set_form_field_combo` — set/clear AcroForm choice-field Combo (`/Ff` bit 17 = 131072); `ch` only; inspect surfaces `combo`. Reject non-`ch` fields.
+
+**Deferred:** richer table cell content (run props inside table cells); further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
