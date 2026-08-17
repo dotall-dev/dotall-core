@@ -48,7 +48,7 @@ dotall_capabilities or dotall_inspect
 
 Pack / needle-finding: call `dotall_search` (query like `10%` or `Rate`) instead
 of unzipping OOXML. Then `read`/`edit` using returned selectors. `dotall viz` is
-for humans inspecting `.all/`, not required in the edit loop.
+CLI-only (not an MCP tool) for humans inspecting `.all/`.
 
 ### 1. Discover before every edit
 

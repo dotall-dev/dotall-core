@@ -189,25 +189,28 @@ fn search_model(
     walk_model_value(
         &cached.artifact.payload,
         &[],
-        status_path,
-        format_id,
-        needle,
-        hits,
-        remaining,
+        &mut ModelWalk {
+            status_path,
+            format_id,
+            needle,
+            hits,
+            remaining,
+        },
+        &HitContext::default(),
     );
     Ok(())
 }
 
-fn walk_model_value(
-    value: &Value,
-    path: &[&str],
-    status_path: &str,
-    format_id: &str,
-    needle: &str,
-    hits: &mut Vec<SearchHit>,
-    remaining: &mut usize,
-) {
-    if *remaining == 0 {
+struct ModelWalk<'a> {
+    status_path: &'a str,
+    format_id: &'a str,
+    needle: &'a str,
+    hits: &'a mut Vec<SearchHit>,
+    remaining: &'a mut usize,
+}
+
+fn walk_model_value(value: &Value, path: &[&str], walk: &mut ModelWalk<'_>, context: &HitContext) {
+    if *walk.remaining == 0 {
         return;
     }
 
@@ -215,31 +218,52 @@ fn walk_model_value(
         && let Some(entries) = value.as_array()
     {
         for entry in entries {
-            if *remaining == 0 {
+            if *walk.remaining == 0 {
                 return;
             }
-            push_named_range_hit(entry, status_path, format_id, needle, hits, remaining);
+            push_named_range_hit(
+                entry,
+                walk.status_path,
+                walk.format_id,
+                walk.needle,
+                walk.hits,
+                walk.remaining,
+            );
         }
         return;
     }
 
     match value {
         Value::String(text) => {
-            if text.to_ascii_lowercase().contains(needle) {
-                hits.push(SearchHit {
-                    path: status_path.to_string(),
-                    format_id: format_id.to_string(),
-                    selector_kind: None,
-                    selector: None,
-                    snippet: truncate_snippet(text.trim()),
-                });
-                *remaining = remaining.saturating_sub(1);
+            if text.to_ascii_lowercase().contains(walk.needle) {
+                push_contextual_hit(
+                    walk.status_path,
+                    walk.format_id,
+                    text.trim(),
+                    context,
+                    walk.hits,
+                    walk.remaining,
+                );
+            }
+        }
+        Value::Number(number) => {
+            let rendered = number.to_string();
+            if rendered.to_ascii_lowercase().contains(walk.needle) {
+                push_contextual_hit(
+                    walk.status_path,
+                    walk.format_id,
+                    &rendered,
+                    context,
+                    walk.hits,
+                    walk.remaining,
+                );
             }
         }
         Value::Array(items) => {
             for item in items {
-                walk_model_value(item, path, status_path, format_id, needle, hits, remaining);
-                if *remaining == 0 {
+                let child_context = context_from_value(item, path, context);
+                walk_model_value(item, path, walk, &child_context);
+                if *walk.remaining == 0 {
                     return;
                 }
             }
@@ -248,22 +272,107 @@ fn walk_model_value(
             for (key, child) in map {
                 let mut child_path = path.to_vec();
                 child_path.push(key.as_str());
-                walk_model_value(
-                    child,
-                    &child_path,
-                    status_path,
-                    format_id,
-                    needle,
-                    hits,
-                    remaining,
-                );
-                if *remaining == 0 {
+                let child_context = context_from_value(child, &child_path, context);
+                walk_model_value(child, &child_path, walk, &child_context);
+                if *walk.remaining == 0 {
                     return;
                 }
             }
         }
         _ => {}
     }
+}
+
+#[derive(Clone, Debug, Default)]
+struct HitContext {
+    sheet: Option<String>,
+    slide: Option<String>,
+    address: Option<String>,
+    paragraph_index: Option<u64>,
+    field_name: Option<String>,
+    page: Option<u64>,
+}
+
+fn context_from_value(value: &Value, path: &[&str], parent: &HitContext) -> HitContext {
+    let Some(map) = value.as_object() else {
+        return parent.clone();
+    };
+    let mut context = parent.clone();
+    let parent_key = path.last().copied();
+
+    if (parent_key == Some("sheets") || map.contains_key("cells"))
+        && let Some(name) = map.get("name").and_then(Value::as_str)
+    {
+        context.sheet = Some(name.to_string());
+    }
+    if parent_key == Some("slides") || map.contains_key("shapes") {
+        context.slide = map
+            .get("name")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                map.get("index")
+                    .and_then(Value::as_u64)
+                    .map(|index| (index + 1).to_string())
+            });
+    }
+    if (parent_key == Some("cells") || map.contains_key("address"))
+        && let Some(address) = map.get("address").and_then(Value::as_str)
+    {
+        context.address = Some(address.to_string());
+    }
+    if parent_key == Some("paragraphs")
+        && let Some(index) = map.get("index").and_then(Value::as_u64)
+    {
+        context.paragraph_index = Some(index);
+    }
+    if parent_key == Some("fields")
+        && let Some(name) = map.get("name").and_then(Value::as_str)
+    {
+        context.field_name = Some(name.to_string());
+    }
+    if parent_key == Some("pages")
+        && let Some(number) = map.get("number").and_then(Value::as_u64)
+    {
+        context.page = Some(number);
+    }
+    context
+}
+
+fn push_contextual_hit(
+    status_path: &str,
+    format_id: &str,
+    snippet: &str,
+    context: &HitContext,
+    hits: &mut Vec<SearchHit>,
+    remaining: &mut usize,
+) {
+    let (selector_kind, selector) = if let (Some(sheet), Some(address)) =
+        (context.sheet.as_deref(), context.address.as_deref())
+    {
+        (
+            Some("range".to_string()),
+            Some(format!("{sheet}!{address}:{address}")),
+        )
+    } else if let Some(field) = context.field_name.as_deref() {
+        (Some("field".to_string()), Some(field.to_string()))
+    } else if let Some(index) = context.paragraph_index {
+        (Some("paragraphs".to_string()), Some(index.to_string()))
+    } else if let Some(slide) = context.slide.as_deref() {
+        (Some("slide".to_string()), Some(slide.to_string()))
+    } else if let Some(page) = context.page {
+        (Some("page".to_string()), Some(page.to_string()))
+    } else {
+        (None, None)
+    };
+    hits.push(SearchHit {
+        path: status_path.to_string(),
+        format_id: format_id.to_string(),
+        selector_kind,
+        selector,
+        snippet: truncate_snippet(snippet),
+    });
+    *remaining = remaining.saturating_sub(1);
 }
 
 fn push_named_range_hit(

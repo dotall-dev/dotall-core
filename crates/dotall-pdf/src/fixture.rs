@@ -15,6 +15,25 @@ pub fn minimal_form_pdf() -> Vec<u8> {
     )
 }
 
+/// Form with catalog `/Perms` (DocMDP) and a normal text field — no `/FT /Sig`.
+pub fn catalog_perms_pdf() -> Vec<u8> {
+    let content = content_object(4, "BT /F1 24 Tf 10 150 Td (Hello) Tj ET\n");
+    assemble(
+        &[
+            "1 0 obj<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R /Perms << /DocMDP 9 0 R >> >>endobj\n",
+            "2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n",
+            "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> /Annots [7 0 R] >>endobj\n",
+            content.as_str(),
+            "5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n",
+            "6 0 obj<< /Fields [8 0 R] /NeedAppearances true >>endobj\n",
+            "7 0 obj<< /Type /Annot /Subtype /Widget /Rect [10 10 120 40] /P 3 0 R /Parent 8 0 R /F 4 >>endobj\n",
+            "8 0 obj<< /FT /Tx /T (Name) /V (Ada) /Kids [7 0 R] >>endobj\n",
+            "9 0 obj<< /Type /Sig /Filter /Adobe.PPKLite /SubFilter /adbe.pkcs7.detached >>endobj\n",
+        ],
+        None,
+    )
+}
+
 /// Form page with one `/Text` sticky annot plus the Widget field (Widget must not appear in comments).
 pub fn minimal_text_annot_pdf() -> Vec<u8> {
     let content = content_object(4, "BT /F1 24 Tf 10 150 Td (Hello) Tj ET\n");

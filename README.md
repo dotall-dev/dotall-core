@@ -22,9 +22,11 @@ stage edits, surgically patch the source, keep history and revert.
 | XLSX read (inspect / read / deps) | Shipped |
 | XLSX stage → apply → history → revert | Shipped |
 | Structural XLSX ops (rows/cols/sheets, `set_range`) | Shipped |
-| Stdio MCP (`dotall-mcp`) + `skills/xlsx` | Shipped |
-| Demo workbook (`demo/`) | Shipped |
-| DOCX / PDF / audio / SDKs | Not yet |
+| Stdio MCP (`dotall-mcp`) + format skills | Shipped |
+| PPTX / DOCX / PDF read + surgical/form edits | Shipped |
+| `dotall search` / `dotall viz` | Shipped |
+| Demo kit (`demo/` + `demo/q3-pack/`) | Shipped |
+| Audio / SDKs | Not yet |
 
 ## Quick start
 
@@ -94,8 +96,12 @@ Stdout is MCP protocol only; logs go to stderr.
 
 ```text
 crates/
-├── dotall-core/   # store, registry, pipeline, read, history, Engine
+├── dotall-core/   # store, registry, pipeline, read, history, Engine, search, viz
+├── dotall-ooxml/  # shared ZIP snapshots + package probes
 ├── dotall-xlsx/   # XLSX model, views, formula deps, surgical OOXML edits
+├── dotall-pptx/   # slides, shape text, surgical OOXML edits
+├── dotall-docx/   # paragraphs/tables, surgical OOXML edits
+├── dotall-pdf/    # pages, AcroForm fill (full rewrite, not incremental)
 ├── dotall-cli/    # `dotall` binary
 └── dotall-mcp/    # stdio MCP binary (`dotall-mcp`)
 ```
@@ -127,12 +133,15 @@ disagree — fix one deliberately.
 | [`docs/specs/core-format-architecture.md`](docs/specs/core-format-architecture.md) | Core vs format-family boundaries |
 | [`docs/superpowers/specs/2026-07-21-mcp-agent-interface-design.md`](docs/superpowers/specs/2026-07-21-mcp-agent-interface-design.md) | MCP tools, flush-on-close, discovery |
 | [`skills/xlsx/SKILL.md`](skills/xlsx/SKILL.md) | Agent workflow for spreadsheets |
+| [`skills/pptx/SKILL.md`](skills/pptx/SKILL.md) | Agent workflow for decks |
+| [`skills/docx/SKILL.md`](skills/docx/SKILL.md) | Agent workflow for documents |
+| [`skills/pdf/SKILL.md`](skills/pdf/SKILL.md) | Agent workflow for PDF forms |
 
 ## Non-goals (v0)
 
 No formula evaluation · no global `~/.all/cache` · no watch daemon · no multi-agent
-locking · no branching history · no DOCX/PDF yet · no Python/JS SDK · no editing of
-charts/pivots (preserve them, don't mutate).
+locking · no branching history · no Python/JS SDK · no editing of charts/pivots
+(preserve them, don't mutate).
 
 ## License
 

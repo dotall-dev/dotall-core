@@ -15,6 +15,9 @@ pub struct PdfDocumentModel {
     pub pictures: Vec<PdfPictureModel>,
     pub outline: Vec<String>,
     pub encrypted: bool,
+    /// True when the catalog has `/Perms` (DocMDP) or an AcroForm signature field.
+    #[serde(default)]
+    pub signed: bool,
     #[serde(default)]
     pub metadata: PdfMetadata,
 }

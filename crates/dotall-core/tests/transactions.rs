@@ -469,6 +469,62 @@ fn recover_completes_a_replace_durable_before_commit_marker() {
     );
 }
 
+#[test]
+fn apply_recovers_a_replace_durable_journal_without_an_explicit_recover_call() {
+    let mut fixture = Fixture::new();
+    let hash = fixture.source_hash();
+    fixture
+        .engine
+        .edit("sample.stub", &request(hash, "updated", tx(1)))
+        .expect("stage");
+    fixture
+        .engine
+        .simulate_interruption_after_replace("sample.stub", tx(1))
+        .expect("replace source before commit marker");
+
+    assert_eq!(fs::read(fixture.source()).expect("source"), b"updated");
+    let applied = fixture
+        .engine
+        .apply("sample.stub", tx(1))
+        .expect("apply should recover the journal then complete");
+    assert_eq!(applied.version, 1);
+    assert_eq!(
+        fixture
+            .engine
+            .history("sample.stub")
+            .expect("history")
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn inspect_recovers_a_replace_durable_journal_without_an_explicit_recover_call() {
+    let mut fixture = Fixture::new();
+    let hash = fixture.source_hash();
+    fixture
+        .engine
+        .edit("sample.stub", &request(hash, "updated", tx(1)))
+        .expect("stage");
+    fixture
+        .engine
+        .simulate_interruption_after_replace("sample.stub", tx(1))
+        .expect("replace source before commit marker");
+
+    fixture
+        .engine
+        .inspect("sample.stub")
+        .expect("inspect should recover the journal");
+    assert_eq!(
+        fixture
+            .engine
+            .history("sample.stub")
+            .expect("history")
+            .len(),
+        1
+    );
+}
+
 struct Fixture {
     _workspace: tempfile::TempDir,
     root: std::path::PathBuf,
@@ -621,7 +677,13 @@ impl FormatHandler for StubFormat {
     }
 
     fn inspect(&self, _model: &ArtifactEnvelope) -> Result<Inspection> {
-        unreachable!("transactions only")
+        Ok(Inspection {
+            format_id: "stub".into(),
+            summary: serde_json::json!({}),
+            capabilities: vec![Capability::Inspect],
+            edit_capabilities: Vec::new(),
+            suggested_reads: Vec::new(),
+        })
     }
 
     fn read(&self, _model: &ArtifactEnvelope, _request: &ReadRequest) -> Result<ReadResponse> {

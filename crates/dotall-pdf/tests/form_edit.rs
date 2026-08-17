@@ -4,8 +4,8 @@ use std::sync::Arc;
 use dotall_core::registry::{FormatHandler, FormatRegistry};
 use dotall_core::{Actor, ActorKind, DotallStore, EditRequest, Engine, SemanticOperation};
 use dotall_pdf::{
-    PdfFormat, demo_form_pdf, minimal_checkbox_pdf, minimal_form_pdf, minimal_radio_pdf,
-    parse_pdf_bytes,
+    PdfFormat, catalog_perms_pdf, demo_form_pdf, minimal_checkbox_pdf, minimal_form_pdf,
+    minimal_radio_pdf, parse_pdf_bytes,
 };
 use tempfile::tempdir;
 
@@ -130,6 +130,32 @@ fn set_form_field_updates_value() {
     let patched = handler.apply_edit(&path, &edit).expect("apply");
     let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
     assert_eq!(after.fields[0].value, "Grace");
+}
+
+#[test]
+fn catalog_perms_rejects_form_edits_and_surfaces_has_signature() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("certified.pdf");
+    fs::write(&path, catalog_perms_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert_eq!(inspection.summary["has_signature"], true);
+
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Name", "value": "Grace" }),
+            }],
+        )
+        .expect_err("certified PDF must reject edits");
+    assert!(
+        error.to_string().contains("cannot edit signed PDF"),
+        "{error}"
+    );
 }
 
 #[test]

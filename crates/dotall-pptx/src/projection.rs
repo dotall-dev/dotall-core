@@ -41,7 +41,8 @@ fn render_slide(slide: &SlideModel) -> String {
 }
 
 fn budget(content: String, max_tokens: usize, offset: usize) -> ReadResponse {
-    let (sliced, truncated, continuation) = apply_budget(&content, max_tokens, offset);
+    let (sliced, truncated, continuation) = apply_budget(&content, max_tokens, offset)
+        .unwrap_or_else(|_| (content.clone(), false, None));
     ReadResponse {
         content: sliced,
         estimated_tokens: (content.len() / 4).max(1),

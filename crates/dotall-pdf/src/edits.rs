@@ -23,7 +23,7 @@ pub fn validate(
     if model.encrypted {
         return Err(format_error("cannot edit encrypted PDF"));
     }
-    if model.fields.iter().any(|field| field.field_type == "sig") {
+    if model.signed || model.fields.iter().any(|field| field.field_type == "sig") {
         return Err(format_error("cannot edit signed PDF"));
     }
     let operation = &operations[0];

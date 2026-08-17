@@ -52,3 +52,32 @@ fn status_outside_workspace_has_actionable_error() {
         .failure()
         .stderr(predicate::str::contains("dotall init"));
 }
+
+#[test]
+fn unknown_convenience_op_points_at_ops_json() {
+    let temp = tempdir().expect("tempdir");
+    Command::cargo_bin("dotall")
+        .expect("binary")
+        .args(["init", temp.path().to_str().expect("UTF-8 path")])
+        .assert()
+        .success();
+    let file = temp.path().join("deck.pptx");
+    std::fs::write(&file, b"not-a-real-pptx").expect("file");
+
+    Command::cargo_bin("dotall")
+        .expect("binary")
+        .args([
+            "edit",
+            file.to_str().expect("UTF-8"),
+            "--op",
+            "set_shape_text",
+            "--sheet",
+            "unused",
+            "--address",
+            "A1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--ops-json"))
+        .stderr(predicate::str::contains("xlsx").not());
+}

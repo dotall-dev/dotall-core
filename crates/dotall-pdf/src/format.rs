@@ -81,7 +81,8 @@ impl FormatHandler for PdfFormat {
                 "pictures": document.pictures.iter().map(picture_summary).collect::<Vec<_>>(),
                 "charts": serde_json::Value::Array(Vec::new()),
                 "encrypted": document.encrypted,
-                "has_signature": document.fields.iter().any(|field| field.field_type == "sig"),
+                "has_signature": document.signed
+                    || document.fields.iter().any(|field| field.field_type == "sig"),
                 "metadata": metadata_summary(&document.metadata),
             }),
             capabilities: capabilities(),

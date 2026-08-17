@@ -12,8 +12,8 @@ pub mod text;
 pub const FORMAT_ID: &str = "pdf";
 
 pub use fixture::{
-    demo_form_pdf, demo_q3_intake_pdf, minimal_checkbox_pdf, minimal_form_pdf, minimal_radio_pdf,
-    minimal_stamp_annot_pdf, minimal_text_annot_pdf,
+    catalog_perms_pdf, demo_form_pdf, demo_q3_intake_pdf, minimal_checkbox_pdf, minimal_form_pdf,
+    minimal_radio_pdf, minimal_stamp_annot_pdf, minimal_text_annot_pdf,
 };
 pub use format::PdfFormat;
 pub use model::{

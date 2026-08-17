@@ -292,6 +292,7 @@ impl DotallServer {
                     .collect::<Vec<_>>();
                 json_result(json!({
                     "format_id": inspection.inspection.format_id,
+                    "source_hash": inspection.source_hash,
                     "selectors": selectors,
                     "edit_capabilities": inspection.inspection.edit_capabilities,
                     "suggested_reads": inspection.inspection.suggested_reads,

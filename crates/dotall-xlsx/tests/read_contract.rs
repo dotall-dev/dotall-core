@@ -1,5 +1,10 @@
+use std::sync::Arc;
+
 use dotall_core::DotallError;
-use dotall_core::registry::{DetectionProbe, FormatHandler, ReadRequest, ReadSelector};
+use dotall_core::registry::{
+    DetectionProbe, FormatHandler, FormatRegistry, ReadRequest, ReadSelector,
+};
+use dotall_core::{DotallStore, Engine};
 use dotall_xlsx::{
     CellModel, CellValue, PreservationStatus, SCHEMA_ID, SCHEMA_VERSION, SheetDimensions,
     SheetModel, UnmodeledMap, WorkbookModel, XlsxFormat, parse_workbook,
@@ -79,6 +84,36 @@ fn workbook_fixture(path: &std::path::Path) {
     worksheet.write_number(1, 1, 100.0).expect("value");
     worksheet.write_formula(2, 1, "=B2*1.1").expect("formula");
     workbook.save(path).expect("workbook fixture");
+}
+
+#[test]
+fn engine_applies_token_budget_to_xlsx_full_read() {
+    let workspace = tempdir().expect("workspace");
+    let path = workspace.path().join("book.xlsx");
+    workbook_fixture(&path);
+
+    let store = DotallStore::init(workspace.path()).expect("store");
+    let mut registry = FormatRegistry::default();
+    registry.register(Arc::new(XlsxFormat));
+    let mut engine = Engine::new(store, registry);
+
+    let result = engine
+        .read(
+            "book.xlsx",
+            &ReadRequest {
+                selector: None,
+                max_tokens: 1,
+                continuation: None,
+            },
+        )
+        .expect("engine read");
+
+    assert!(
+        result.response.truncated,
+        "Engine must truncate XLSX full reads even when the handler reports truncated=false"
+    );
+    assert!(result.response.continuation.is_some());
+    assert!(result.response.content.chars().count() <= 4);
 }
 
 #[test]

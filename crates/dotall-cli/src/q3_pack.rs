@@ -75,3 +75,24 @@ fn write_q3_financials(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     workbook.save(path)?;
     Ok(())
 }
+
+/// `generate_demos` overwrites authored `demo/` files only when `--force` is passed.
+pub fn allows_authored_overwrite<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .any(|argument| argument.as_ref() == "--force")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::allows_authored_overwrite;
+
+    #[test]
+    fn authored_overwrite_requires_force_flag() {
+        assert!(!allows_authored_overwrite(["generate_demos"]));
+        assert!(allows_authored_overwrite(["generate_demos", "--force"]));
+    }
+}

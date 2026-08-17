@@ -51,6 +51,12 @@ async fn capabilities_returns_xlsx_selectors_and_edit_examples() {
             .iter()
             .any(|capability| capability["operation"] == "set_cell_value")
     );
+    assert!(
+        result.data["source_hash"]
+            .as_str()
+            .is_some_and(|h| !h.is_empty()),
+        "capabilities must return source_hash for edit guards"
+    );
 }
 
 #[tokio::test]

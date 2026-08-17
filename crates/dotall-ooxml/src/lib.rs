@@ -5,5 +5,8 @@
 mod probe;
 mod snapshot;
 
-pub use probe::{has_zip_magic, zip_contains_entry};
+pub use probe::{
+    PackageEvidence, has_zip_magic, score_office_package, zip_contains_entry,
+    zip_path_contains_entry,
+};
 pub use snapshot::{decode_package, encode_package};

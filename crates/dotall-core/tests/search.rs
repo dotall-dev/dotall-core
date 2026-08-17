@@ -229,11 +229,10 @@ fn model_payload_string_walk_finds_ten_percent_outside_named_ranges() {
         "expected model string walk hit for 10%, got: {results:?}"
     );
     assert!(
-        results
-            .hits
-            .iter()
-            .any(|h| h.snippet.contains("10%") && h.selector_kind.is_none()),
-        "expected a non-selector hit with 10% snippet, got: {results:?}"
+        results.hits.iter().any(|h| h.snippet.contains("10%")
+            && h.selector_kind.as_deref() == Some("range")
+            && h.selector.as_deref() == Some("Inputs!A1:A1")),
+        "expected a range selector for the matching cell, got: {results:?}"
     );
 }
 
@@ -355,4 +354,117 @@ fn stale_object_is_not_indexed() {
     .expect("search");
     assert!(results.hits.is_empty(), "stale cache must not be served");
     assert_eq!(results.not_indexed, vec!["book.xlsx".to_string()]);
+}
+
+#[test]
+fn pptx_shape_text_hit_uses_slide_selector() {
+    let (_temp, store) = init_book();
+    store
+        .write_model(
+            "book.xlsx",
+            &ArtifactEnvelope {
+                format_id: "pptx".into(),
+                schema_id: "pptx.presentation".into(),
+                schema_version: 1,
+                payload: serde_json::json!({
+                    "slides": [{
+                        "name": "KPI",
+                        "index": 2,
+                        "shapes": [{
+                            "name": "RateCallout",
+                            "text": "Commission 10%"
+                        }]
+                    }]
+                }),
+            },
+        )
+        .expect("model");
+
+    let results = search_store(
+        &store,
+        &SearchRequest {
+            query: "10%".into(),
+            glob: None,
+        },
+    )
+    .expect("search");
+    let hit = results
+        .hits
+        .iter()
+        .find(|h| h.selector_kind.as_deref() == Some("slide"))
+        .expect("slide selector");
+    assert_eq!(hit.selector.as_deref(), Some("KPI"));
+    assert!(hit.snippet.contains("10%"));
+}
+
+#[test]
+fn docx_paragraph_hit_uses_paragraphs_selector() {
+    let (_temp, store) = init_book();
+    store
+        .write_model(
+            "book.xlsx",
+            &ArtifactEnvelope {
+                format_id: "docx".into(),
+                schema_id: "docx.document".into(),
+                schema_version: 1,
+                payload: serde_json::json!({
+                    "paragraphs": [{
+                        "index": 4,
+                        "text": "Q3 commission rate: 10%."
+                    }]
+                }),
+            },
+        )
+        .expect("model");
+
+    let results = search_store(
+        &store,
+        &SearchRequest {
+            query: "10%".into(),
+            glob: None,
+        },
+    )
+    .expect("search");
+    let hit = results
+        .hits
+        .iter()
+        .find(|h| h.selector_kind.as_deref() == Some("paragraphs"))
+        .expect("paragraph selector");
+    assert_eq!(hit.selector.as_deref(), Some("4"));
+}
+
+#[test]
+fn pdf_field_hit_uses_field_selector() {
+    let (_temp, store) = init_book();
+    store
+        .write_model(
+            "book.xlsx",
+            &ArtifactEnvelope {
+                format_id: "pdf".into(),
+                schema_id: "pdf.document".into(),
+                schema_version: 1,
+                payload: serde_json::json!({
+                    "fields": [{
+                        "name": "Rate",
+                        "value": "10%"
+                    }]
+                }),
+            },
+        )
+        .expect("model");
+
+    let results = search_store(
+        &store,
+        &SearchRequest {
+            query: "Rate".into(),
+            glob: None,
+        },
+    )
+    .expect("search");
+    let hit = results
+        .hits
+        .iter()
+        .find(|h| h.selector_kind.as_deref() == Some("field"))
+        .expect("field selector");
+    assert_eq!(hit.selector.as_deref(), Some("Rate"));
 }

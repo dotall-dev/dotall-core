@@ -4,7 +4,7 @@
 //! concurrent writers on the same tracked object.
 
 use std::fs::{File, OpenOptions};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use fs2::FileExt;
 
@@ -15,7 +15,6 @@ use crate::error::{DotallError, Result};
 /// Lock file path: `<object>/state/edits/.apply.lock`.
 pub struct ApplyLock {
     file: File,
-    path: PathBuf,
 }
 
 impl ApplyLock {
@@ -34,16 +33,12 @@ impl ApplyLock {
             .map_err(|_| DotallError::LockBusy {
                 path: path.to_path_buf(),
             })?;
-        Ok(Self {
-            file,
-            path: path.to_path_buf(),
-        })
+        Ok(Self { file })
     }
 }
 
 impl Drop for ApplyLock {
     fn drop(&mut self) {
         let _ = self.file.unlock();
-        let _ = std::fs::remove_file(&self.path);
     }
 }

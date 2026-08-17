@@ -5,6 +5,19 @@
 # .all/ agent cache (regenerable)
 .all/
 
+# Smoke output from generate_demos without --force
+demo/generated/
+
+# Node (Remotion / any JS tooling)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm
+demo/investor-video/out/
+demo/investor-video/.remotion/
+
 # IDE
 .idea/
 .vscode/

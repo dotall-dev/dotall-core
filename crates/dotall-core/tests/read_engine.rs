@@ -15,7 +15,7 @@ use tempfile::tempdir;
 fn budget_truncation_provides_a_lossless_continuation() {
     let content = "row one\nrow two\nrow three\n";
 
-    let (first, truncated, cursor) = apply_budget(content, 3, 0);
+    let (first, truncated, cursor) = apply_budget(content, 3, 0).expect("first");
     let (second, second_truncated, second_cursor) = apply_budget(
         content,
         20,
@@ -24,7 +24,8 @@ fn budget_truncation_provides_a_lossless_continuation() {
             .expect("continuation")
             .parse()
             .expect("numeric cursor"),
-    );
+    )
+    .expect("second");
 
     assert!(truncated);
     assert!(!second_truncated);
@@ -36,7 +37,7 @@ fn budget_truncation_provides_a_lossless_continuation() {
 fn budget_cursor_remains_valid_for_unicode_content() {
     let content = "ééééé";
 
-    let (first, truncated, cursor) = apply_budget(content, 1, 0);
+    let (first, truncated, cursor) = apply_budget(content, 1, 0).expect("first");
     let (second, _, _) = apply_budget(
         content,
         20,
@@ -45,7 +46,8 @@ fn budget_cursor_remains_valid_for_unicode_content() {
             .expect("continuation")
             .parse()
             .expect("numeric cursor"),
-    );
+    )
+    .expect("second");
 
     assert!(truncated);
     assert_eq!(first.chars().count(), 4);

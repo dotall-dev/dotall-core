@@ -122,5 +122,5 @@ XLSX engine, CLI-first, pure Rust. See `docs/specs/xlsx-engine-v0.md`.
 ## Non-goals (v0)
 
 No formula evaluation engine · no global cache · no `watch` daemon · no multi-agent
-conflict handling · no branching history · no DOCX/PDF yet · no Python/JS SDK yet ·
+conflict handling · no branching history · no Python/JS SDK yet ·
 no editing of charts/pivots (preserve, don't mutate).

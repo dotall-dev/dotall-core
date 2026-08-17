@@ -128,7 +128,7 @@ fn inspect_advertises_all_merge_two_edit_capabilities() {
         "unmerge_cells",
     ] {
         assert!(
-            operations.iter().any(|advertised| *advertised == operation),
+            operations.contains(&operation),
             "inspect must advertise {operation}; got {operations:?}"
         );
     }

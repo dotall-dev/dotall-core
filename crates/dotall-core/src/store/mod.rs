@@ -87,11 +87,21 @@ impl DotallStore {
         let (key, source) = resolve_source(&self.workspace, relative_path.as_ref())?;
         let fingerprint = fingerprint(&source)?;
         let format_id = format_id.into();
-        let version_count = self
+        let disk_version_count = load_manifest(&self.workspace)
+            .ok()
+            .and_then(|manifest| {
+                manifest
+                    .objects
+                    .get(&key)
+                    .map(|object| object.version_count)
+            })
+            .unwrap_or(0);
+        let memory_version_count = self
             .manifest
             .objects
             .get(&key)
             .map_or(0, |object| object.version_count);
+        let version_count = memory_version_count.max(disk_version_count);
 
         let tracked = TrackedObject {
             format_id: format_id.clone(),
@@ -134,6 +144,54 @@ impl DotallStore {
         write_json(&self.workspace.manifest_path(), &next_manifest)?;
         self.manifest = next_manifest;
         Ok(())
+    }
+
+    /// Persist fingerprints after a metadata-only change so the next status
+    /// check can use the mtime/size fast path instead of rehashing.
+    pub fn refresh_fresh_fingerprints(&mut self) -> Result<Vec<ObjectStatus>> {
+        let mut next_manifest = self.manifest.clone();
+        let mut wrote = false;
+        let mut statuses = Vec::new();
+
+        for (path, object) in &self.manifest.objects {
+            let source = self.workspace.root().join(path);
+            let (state, updated) = if !source.is_file() {
+                (ObjectState::Missing, None)
+            } else {
+                match check_freshness(&source, &object.fingerprint)? {
+                    Freshness::FreshFastPath => (ObjectState::FreshFastPath, None),
+                    Freshness::FreshAfterHash(fingerprint) => {
+                        (ObjectState::FreshAfterHash, Some(fingerprint))
+                    }
+                    Freshness::Stale(_) => (ObjectState::Stale, None),
+                }
+            };
+            if let Some(fingerprint) = updated {
+                if let Some(tracked) = next_manifest.objects.get_mut(path) {
+                    tracked.fingerprint = fingerprint.clone();
+                }
+                write_json(
+                    &self.workspace.objects_dir().join(path).join("meta.json"),
+                    &ObjectMeta {
+                        schema_version: MANIFEST_SCHEMA_VERSION,
+                        format_id: object.format_id.clone(),
+                        fingerprint,
+                    },
+                )?;
+                wrote = true;
+            }
+            statuses.push(ObjectStatus {
+                path: path.clone(),
+                format_id: object.format_id.clone(),
+                state,
+            });
+        }
+
+        if wrote {
+            write_json(&self.workspace.manifest_path(), &next_manifest)?;
+            self.manifest = next_manifest;
+        }
+        Ok(statuses)
     }
 
     pub fn status(&self) -> Result<Vec<ObjectStatus>> {

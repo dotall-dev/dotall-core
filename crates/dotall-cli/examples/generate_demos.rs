@@ -4,6 +4,7 @@
 //! cargo run -p dotall-cli --example generate_demos
 //! ```
 
+use std::env;
 use std::fs;
 use std::path::PathBuf;
 
@@ -12,6 +13,24 @@ use rust_xlsxwriter::{DocProperties, ExcelDateTime, Format, Workbook};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let demo = demo_dir()?;
     fs::create_dir_all(&demo)?;
+
+    let force = dotall_cli::q3_pack::allows_authored_overwrite(env::args());
+    if !force {
+        let generated = demo.join("generated");
+        fs::create_dir_all(&generated)?;
+        write_financials(&generated.join("financials.xlsx"))?;
+        fs::write(generated.join("deck.pptx"), dotall_pptx::demo_deck_pptx())?;
+        fs::write(generated.join("memo.docx"), dotall_docx::demo_memo_docx())?;
+        fs::write(generated.join("form.pdf"), dotall_pdf::demo_form_pdf())?;
+        let q3 = generated.join("q3-pack");
+        dotall_cli::q3_pack::write_q3_pack(&q3)?;
+        eprintln!(
+            "Refusing to overwrite authored demo/ and demo/q3-pack/. Wrote smoke fixtures to {}.",
+            generated.display()
+        );
+        eprintln!("Pass --force to replace the committed demo files.");
+        return Ok(());
+    }
 
     write_financials(&demo.join("financials.xlsx"))?;
     fs::write(demo.join("deck.pptx"), dotall_pptx::demo_deck_pptx())?;
