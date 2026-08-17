@@ -279,5 +279,4 @@ Same bar as format families + format-parity:
 | `docs/superpowers/specs/2026-08-15-office-pdf-format-families-design.md` | Crate layout, `FormatHandler`, surgical ZIP, PDF form-fill v0. Atlas **extends** inspect/edit; it does not replace the families contract. |
 | `docs/specs/core-format-architecture.md` | Plug-and-play handlers; still no universal model. |
 
-Implementation plans for Waves 23–25 are a **follow-up** (writing-plans), not
-this spec PR.
+Implementation plan for Waves 23–25: `docs/superpowers/plans/2026-08-17-office-parity-atlas.md`.
