@@ -40,8 +40,9 @@ pub fn validate(
         "delete_slide" => validate_delete_slide(model, operation),
         "move_slide" => validate_move_slide(model, operation),
         "add_textbox" => validate_add_textbox(model, operation),
+        "delete_shape" => validate_delete_shape(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, add_slide, delete_slide, move_slide, or add_textbox"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, add_slide, delete_slide, move_slide, add_textbox, or delete_shape"
         ))),
     }
 }
@@ -314,6 +315,46 @@ fn validate_move_slide(
     })
 }
 
+fn validate_delete_shape(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let shape_ref = required_str(&operation.payload, "shape")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| shape.name == shape_ref || shape.element_id == shape_ref)
+        .ok_or_else(|| format_error(format!("shape `{shape_ref}` was not found")))?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "delete_shape".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "shape": shape.name,
+                "part_name": slide.part_name,
+                "element_id": shape.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, shape.name),
+            element_id: shape.element_id.clone(),
+            change: "delete_shape".into(),
+            before: Some(shape.text.clone()),
+            after: None,
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_add_textbox(
     model: &PresentationModel,
     operation: &SemanticOperation,
@@ -462,6 +503,19 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 replacements: BTreeMap::from([(
                     part_name.to_owned(),
                     patch_add_textbox(&original, name, text)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
+        "delete_shape" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_delete_shape(&original, shape)?,
                 )]),
                 additions: BTreeMap::new(),
                 removals: BTreeSet::new(),
@@ -623,6 +677,27 @@ fn delete_slide_patch(package: &[u8], part_name: &str) -> Result<PackagePatch> {
         additions: BTreeMap::new(),
         removals,
     })
+}
+
+pub fn patch_delete_shape(xml: &[u8], shape: &str) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let needle = format!("name=\"{shape}\"");
+    let name_at = source
+        .find(&needle)
+        .ok_or_else(|| format_error(format!("shape `{shape}` was not found in slide XML")))?;
+    let sp_start = source[..name_at]
+        .rfind("<p:sp")
+        .ok_or_else(|| format_error("shape is missing a p:sp wrapper"))?;
+    let after_open = &source[sp_start + "<p:sp".len()..];
+    if after_open.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return Err(format_error("shape name matched a non-p:sp element"));
+    }
+    let rel_end = source[name_at..]
+        .find("</p:sp>")
+        .ok_or_else(|| format_error("shape is missing a closing p:sp"))?;
+    let sp_end = name_at + rel_end + "</p:sp>".len();
+    Ok(format!("{}{}", &source[..sp_start], &source[sp_end..]).into_bytes())
 }
 
 pub fn patch_add_textbox(xml: &[u8], name: &str, text: &str) -> Result<Vec<u8>> {

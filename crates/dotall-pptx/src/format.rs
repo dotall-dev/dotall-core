@@ -297,5 +297,15 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Patches only the target slide part. Optional `name` defaults to TextBox N; rejects duplicate names. Other slides and media stay byte-identical.".into(),
         },
+        EditCapability {
+            operation: "delete_shape".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Remove a text shape (p:sp) from a slide by name or element_id.".into(),
+            example: json!({
+                "kind": "delete_shape",
+                "payload": { "slide": "Slide 1", "shape": "Callout" }
+            }),
+            safety: "Patches only the target slide part by removing the matching p:sp. Tables (graphicFrame) are not deleted via this op. Other slides and media stay byte-identical.".into(),
+        },
     ]
 }

@@ -119,6 +119,12 @@ Add a simple text box on a slide:
 { "kind": "add_textbox", "payload": { "slide": "Slide 1", "name": "Callout", "text": "Agent note" } }
 ```
 
+Delete a shape by slide + name:
+
+```json
+{ "kind": "delete_shape", "payload": { "slide": "Slide 1", "shape": "Callout" } }
+```
+
 Speaker notes (existing notes slide part only):
 
 ```json
@@ -131,6 +137,7 @@ Speaker notes (existing notes slide part only):
 Omit `after` on `add_slide` to append at the end. `delete_slide` rejects the sole remaining slide.
 `move_slide` uses a 0-based `to_index` (final position); rejects no-ops and single-slide decks.
 Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
+`delete_shape` removes a `p:sp` by name or element_id; rejects missing shapes (tables use graphicFrame and are not deleted here).
 
 Safety:
 
@@ -140,6 +147,7 @@ Safety:
 - `add_slide` / `delete_slide`: surgically update `presentation.xml`, `presentation.xml.rels`, and `[Content_Types].xml`; duplicate a blank slide template or remove the target slide part. Untouched slide/media parts stay byte-identical.
 - `move_slide`: reorders only `p:sldId` entries in `ppt/presentation.xml`. Slide parts, notes, rels, and Content_Types stay byte-identical.
 - `add_textbox`: inserts a `p:sp` text box (`txBox="1"`) into the target slide’s `spTree`; other parts stay byte-identical.
+- `delete_shape`: removes the matching `p:sp` from the target slide part; other parts stay byte-identical.
 - Text ops patch only the target slide part; media and other slides stay byte-identical.
 
 ### 4. Apply, history, revert

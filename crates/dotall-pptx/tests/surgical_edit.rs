@@ -473,6 +473,76 @@ fn add_textbox_rejects_missing_slide() {
     );
 }
 
+#[test]
+fn delete_shape_removes_shape_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_with_table();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let before_model = parse_presentation_bytes(&before).expect("parse bytes");
+    let before_count = before_model.slides[0].shapes.len();
+    assert!(before_count >= 1, "fixture needs a shape to delete");
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "delete_shape".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.slides[0].shapes.len(), before_count - 1);
+    assert!(
+        after.slides[0]
+            .shapes
+            .iter()
+            .all(|shape| shape.name != "Title"),
+        "Title should be removed"
+    );
+    assert_eq!(after.slides[0].tables.len(), before_model.slides[0].tables.len());
+    assert_eq!(after.slides[1].shapes[0].text, "Other");
+    assert_eq!(edit.semantic_diff[0].change, "delete_shape");
+    assert_eq!(edit.semantic_diff[0].target, "Slide 1!Title");
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn delete_shape_rejects_missing_shape() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "delete_shape".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "MissingBox",
+                }),
+            }],
+        )
+        .expect_err("missing shape");
+    let message = error.to_string();
+    assert!(
+        message.contains("not found") || message.contains("MissingBox"),
+        "unexpected error: {message}"
+    );
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);
