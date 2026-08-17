@@ -17,15 +17,24 @@ const HYPERLINK_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 const NUMBERING_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
+const COMMENTS_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
 const DOCUMENT_RELS_NAME: &str = "word/_rels/document.xml.rels";
 const NUMBERING_PART: &str = "word/numbering.xml";
+const COMMENTS_PART: &str = "word/comments.xml";
 const CONTENT_TYPES_NAME: &str = "[Content_Types].xml";
 const NUMBERING_OVERRIDE: &str = concat!(
     r#"<Override PartName="/word/numbering.xml" ContentType=""#,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
     r#""/>"#
 );
+const COMMENTS_OVERRIDE: &str = concat!(
+    r#"<Override PartName="/word/comments.xml" ContentType=""#,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+    r#""/>"#
+);
 const MINIMAL_BULLET_NUMBERING: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="&#8226;"/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+const EMPTY_COMMENTS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"></w:comments>"#;
 const R_NAMESPACE: &str =
     r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
 const EMPTY_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#;
@@ -58,6 +67,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_cell_shading" => validate_set_cell_shading(model, operation),
         "replace_paragraph_text" => validate_replace_paragraph_text(model, operation),
         "replace_across_paragraphs" => validate_replace_across_paragraphs(model, operation),
+        "insert_comment" => validate_insert_comment(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -65,7 +75,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_paragraph_bullet, set_cell_shading, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_paragraph_bullet, set_cell_shading, insert_comment, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -522,6 +532,50 @@ fn validate_set_paragraph_bullet(
             change: "set_paragraph_bullet".into(),
             before: None,
             after: Some(if bullet { "true" } else { "false" }.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_insert_comment(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let text = required_str(&operation.payload, "text")?;
+    let author = operation
+        .payload
+        .get("author")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Dotall");
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_comment".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "text": text,
+                "author": author,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "insert_comment".into(),
+            before: None,
+            after: Some(text.to_owned()),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -1216,6 +1270,21 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let bullet = required_bool(&operation.payload, "bullet")?;
             apply_paragraph_bullet(package, index, bullet)
         }
+        "insert_comment" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let text = required_str(&operation.payload, "text")?;
+            let author = operation
+                .payload
+                .get("author")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("Dotall");
+            apply_insert_comment(package, index, text, author)
+        }
         "set_cell_shading" => {
             let index = operation
                 .payload
@@ -1575,6 +1644,125 @@ fn apply_paragraph_bullet(package: &[u8], index: u32, bullet: bool) -> Result<Pa
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes,
     })
+}
+
+fn apply_insert_comment(
+    package: &[u8],
+    index: u32,
+    text: &str,
+    author: &str,
+) -> Result<PatchedOutput> {
+    let comments_existed = has_entry(package, COMMENTS_PART)?;
+    let comments_xml = if comments_existed {
+        entry_bytes(package, COMMENTS_PART)?
+    } else {
+        EMPTY_COMMENTS.to_vec()
+    };
+    let (comment_id, patched_comments) = append_comment_entry(&comments_xml, text, author)?;
+    let document = entry_bytes(package, "word/document.xml")?;
+    let patched_document = patch_paragraph_comment_markers(&document, index, comment_id)?;
+
+    let mut replacements = BTreeMap::from([
+        ("word/document.xml".to_owned(), patched_document),
+        (COMMENTS_PART.to_owned(), patched_comments),
+    ]);
+    if !comments_existed {
+        ensure_comments_package_links(package, &mut replacements)?;
+    }
+    let bytes = rebuild_package(package, &replacements)?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn append_comment_entry(xml: &[u8], text: &str, author: &str) -> Result<(u32, Vec<u8>)> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("comments XML is not UTF-8: {error}")))?;
+    let used = named_attribute_numbers(source, "w:comment", "w:id")?;
+    let comment_id = lowest_unused_number(&used);
+    let date = "2024-01-15T12:00:00Z";
+    let insertion = format!(
+        r#"<w:comment w:id="{comment_id}" w:author="{}" w:date="{date}"><w:p><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p></w:comment>"#,
+        xml_escape_attr(author),
+        xml_escape(text)
+    );
+    Ok((
+        comment_id,
+        insert_before_close(xml, "w:comments", &insertion)?,
+    ))
+}
+
+fn patch_paragraph_comment_markers(xml: &[u8], index: u32, comment_id: u32) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let close = paragraph
+        .rfind("</w:p>")
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    let markers = format!(r#"<w:commentRangeStart w:id="{comment_id}"/>"#);
+    let trailer = format!(
+        r#"<w:commentRangeEnd w:id="{comment_id}"/><w:r><w:commentReference w:id="{comment_id}"/></w:r>"#
+    );
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    // Insert range start immediately after the opening <w:p ...> tag.
+    let gt = paragraph
+        .find('>')
+        .ok_or_else(|| format_error("unterminated w:p open tag"))?;
+    output.push_str(&paragraph[..=gt]);
+    output.push_str(&markers);
+    output.push_str(&paragraph[gt + 1..close]);
+    output.push_str(&trailer);
+    output.push_str(&paragraph[close..]);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
+fn ensure_comments_package_links(
+    package: &[u8],
+    replacements: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    let rels_exist = has_entry(package, DOCUMENT_RELS_NAME)?;
+    let rels_xml = if rels_exist {
+        entry_bytes(package, DOCUMENT_RELS_NAME)?
+    } else {
+        EMPTY_RELATIONSHIPS.to_vec()
+    };
+    if !relationship_has_type(&rels_xml, COMMENTS_REL_TYPE)? {
+        let used = relationship_id_numbers(&rels_xml)?;
+        let rid = format!("rId{}", lowest_unused_number(&used));
+        replacements.insert(
+            DOCUMENT_RELS_NAME.to_owned(),
+            insert_before_close(
+                &rels_xml,
+                "Relationships",
+                &format!(
+                    r#"<Relationship Id="{rid}" Type="{COMMENTS_REL_TYPE}" Target="comments.xml"/>"#
+                ),
+            )?,
+        );
+    }
+    let content_types = entry_bytes(package, CONTENT_TYPES_NAME)?;
+    if !content_types_has_part(&content_types, "/word/comments.xml")? {
+        replacements.insert(
+            CONTENT_TYPES_NAME.to_owned(),
+            insert_before_close(&content_types, "Types", COMMENTS_OVERRIDE)?,
+        );
+    }
+    Ok(())
 }
 
 fn ensure_bullet_numbering(package: &[u8]) -> Result<(u32, Option<Vec<u8>>)> {

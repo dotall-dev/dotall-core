@@ -102,6 +102,19 @@ impl FormatHandler for DocxFormat {
                 })
             })
             .collect::<Vec<_>>();
+        let comments = document
+            .comments
+            .iter()
+            .map(|comment| {
+                json!({
+                    "element_id": comment.element_id,
+                    "paragraph": comment.paragraph,
+                    "index": comment.index,
+                    "author": comment.author,
+                    "text": comment.text,
+                })
+            })
+            .collect::<Vec<_>>();
         Ok(Inspection {
             format_id: FORMAT_ID.into(),
             summary: json!({
@@ -113,6 +126,8 @@ impl FormatHandler for DocxFormat {
                 "footers": footers,
                 "table_count": document.table_count,
                 "skipped_tables": document.skipped_tables,
+                "comments": comments,
+                "charts": [],
             }),
             capabilities: capabilities(),
             edit_capabilities: edit_capabilities(),
@@ -557,6 +572,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety:
                 "Rejects empty find and no-match. Skips non-editable paragraphs (tracked changes / SDT / fields) without failing when others match. Patches only word/document.xml."
+                    .into(),
+        },
+        EditCapability {
+            operation: "insert_comment".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Insert a new Word comment anchored to a body/table paragraph (append-only)."
+                    .into(),
+            example: json!({
+                "kind": "insert_comment",
+                "payload": { "index": 1, "text": "Confirm owners", "author": "Dotall" }
+            }),
+            safety:
+                "Appends a new w:comment and range markers; never rewrites existing comments.xml entries. Creates word/comments.xml plus document.xml.rels and [Content_Types].xml when missing. Rejects set_comment / delete_comment / replace_comment."
                     .into(),
         },
         EditCapability {

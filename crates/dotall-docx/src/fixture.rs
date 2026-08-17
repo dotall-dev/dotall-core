@@ -35,6 +35,16 @@ pub fn demo_memo_docx() -> Vec<u8> {
     package(DEMO_MEMO, false, Some(DEMO_HEADER), None)
 }
 
+/// Minimal body with one Word comment anchored to paragraph index 1 (`Beta`).
+pub fn docx_with_comment() -> Vec<u8> {
+    comment_package(DOCUMENT_WITH_COMMENT, COMMENTS_ONE, false)
+}
+
+/// Same as [`docx_with_comment`] plus a media blob for surgical identity checks.
+pub fn docx_with_comment_and_media() -> Vec<u8> {
+    comment_package(DOCUMENT_WITH_COMMENT, COMMENTS_ONE, true)
+}
+
 /// Heavy Q3 memo: 24 decoy channel-mix paragraphs plus one live commission-rate line.
 pub fn demo_q3_memo_docx() -> Vec<u8> {
     let mut body = String::from(
@@ -47,6 +57,34 @@ pub fn demo_q3_memo_docx() -> Vec<u8> {
         r#"<w:p><w:r><w:t>Q3 commission rate: 10%.</w:t></w:r></w:p></w:body></w:document>"#,
     );
     package(body.as_bytes(), false, None, None)
+}
+
+fn comment_package(document: &[u8], comments: &[u8], include_media: bool) -> Vec<u8> {
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default();
+    add(
+        &mut writer,
+        "[Content_Types].xml",
+        CONTENT_TYPES_WITH_COMMENTS,
+        options,
+    );
+    add(&mut writer, "_rels/.rels", ROOT_RELS, options);
+    add(&mut writer, "word/document.xml", document, options);
+    add(&mut writer, "word/styles.xml", STYLES, options);
+    add(
+        &mut writer,
+        "word/_rels/document.xml.rels",
+        DOCUMENT_RELS_COMMENTS,
+        options,
+    );
+    add(&mut writer, "word/comments.xml", comments, options);
+    if include_media {
+        let stored =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let media = (0u8..=255).cycle().take(64 * 1024).collect::<Vec<_>>();
+        add(&mut writer, "word/media/image1.bin", &media, stored);
+    }
+    writer.finish().expect("finish docx").into_inner()
 }
 
 fn package(
@@ -103,6 +141,8 @@ fn add(
 
 const CONTENT_TYPES: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"#;
 
+const CONTENT_TYPES_WITH_COMMENTS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/></Types>"#;
+
 const CONTENT_TYPES_WITH_HEADER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/></Types>"#;
 
 const CONTENT_TYPES_WITH_FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>"#;
@@ -112,6 +152,8 @@ const CONTENT_TYPES_WITH_HEADER_FOOTER: &[u8] = br#"<?xml version="1.0" encoding
 const ROOT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"#;
 
 const DOCUMENT_RELS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/></Relationships>"#;
+
+const DOCUMENT_RELS_COMMENTS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="comments.xml"/></Relationships>"#;
 
 const DOCUMENT_RELS_FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>"#;
 
@@ -126,6 +168,11 @@ const DEMO_HEADER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="
 const FOOTER: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>FooterOnly</w:t></w:r></w:p></w:ftr>"#;
 
 const DOCUMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p><w:p><w:r><w:t>Beta</w:t></w:r></w:p></w:body></w:document>"#;
+
+/// Paragraph 1 (`Beta`) carries comment range markers for w:id="0".
+const DOCUMENT_WITH_COMMENT: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Alpha</w:t></w:r></w:p><w:p><w:commentRangeStart w:id="0"/><w:r><w:t>Beta</w:t></w:r><w:commentRangeEnd w:id="0"/><w:r><w:commentReference w:id="0"/></w:r></w:p></w:body></w:document>"#;
+
+const COMMENTS_ONE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:comment w:id="0" w:author="Ada" w:date="2024-01-15T12:00:00Z"><w:p><w:r><w:t>Confirm owners</w:t></w:r></w:p></w:comment></w:comments>"#;
 
 const DOCUMENT_WITH_INS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Alpha</w:t></w:r></w:p><w:p><w:ins w:id="0"><w:r><w:t>Beta</w:t></w:r></w:ins></w:p></w:body></w:document>"#;
 

@@ -24,7 +24,9 @@ Dotall patches only the target story part for paragraph edits (`word/document.xm
 `word/header*.xml`, or `word/footer*.xml`). Hyperlink edits also patch
 `word/_rels/document.xml.rels`. Bullet edits may also create/patch `word/numbering.xml`,
 `word/_rels/document.xml.rels`, and `[Content_Types].xml` when numbering is missing.
-Untouched ZIP parts stay byte-identical.
+Comment inserts may create/patch `word/comments.xml`, `word/document.xml`,
+`word/_rels/document.xml.rels`, and `[Content_Types].xml`. Untouched ZIP parts stay
+byte-identical.
 
 ## Prerequisites
 
@@ -236,6 +238,19 @@ Set or clear a bullet on a body/table paragraph (`w:numPr` + `word/numbering.xml
 ```
 
 `element_id` (or `paragraph` as an index alias) is also accepted instead of `index`. `true` ensures a bullet numbering definition exists and sets `w:pPr/w:numPr` with `w:ilvl val="0"` and a matching `w:numId`. `false` removes `w:numPr` from that paragraph only and leaves `numbering.xml`. If `word/numbering.xml` is missing, Dotall creates it plus a numbering Relationship in `word/_rels/document.xml.rels` and an Override in `[Content_Types].xml`. Other ZIP parts stay byte-identical except those created/patched parts.
+
+Insert a **new** Word comment anchored to a body/table paragraph (append-only). Existing `word/comments.xml` entries are never rewritten:
+
+```json
+{
+  "kind": "insert_comment",
+  "payload": { "index": 1, "text": "Confirm owners", "author": "Dotall" }
+}
+```
+
+`element_id` is also accepted instead of `index`. `author` is optional and defaults to `"Dotall"`. Allocates the next unused `w:id`, appends a `w:comment`, and adds `w:commentRangeStart` / `w:commentRangeEnd` / `w:commentReference` on the target paragraph. Creates `word/comments.xml` plus a comments Relationship and Content_Types Override when missing. Rejected: `set_comment`, `delete_comment`, `replace_comment`.
+
+Inspect lists `comments[]` as `{ element_id, paragraph, index, author, text }` (`paragraph` is the anchored paragraph `element_id`; `index` is that paragraph’s document-order index). `charts[]` is omitted or `[]` on typical memos (read-only inventory if present; never mutate charts).
 
 Set or clear table-cell fill (`w:tcPr`/`w:shd` `w:fill`) on the cell that contains a body/table paragraph (`#RRGGBB` / `RRGGBB`; `null` clears). Rejects paragraphs that are not inside a table cell:
 

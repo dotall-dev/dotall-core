@@ -1,7 +1,7 @@
 use std::fs;
 
 use dotall_core::registry::{FormatHandler, ReadRequest, ReadSelector};
-use dotall_docx::{DocxFormat, minimal_docx, table_docx};
+use dotall_docx::{DocxFormat, docx_with_comment, minimal_docx, table_docx};
 use tempfile::tempdir;
 
 fn write_fixture(name: &str, bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -119,4 +119,61 @@ fn inspect_and_read_include_header_paragraphs() {
 
     assert!(response.content.contains("header1"));
     assert!(response.content.contains("HeaderOnly"));
+}
+
+#[test]
+fn inspect_lists_comments_with_paragraph_element_id() {
+    let (_directory, path) = write_fixture("commented.docx", &docx_with_comment());
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let paragraph_id = model.payload["paragraphs"][1]["element_id"]
+        .as_str()
+        .expect("paragraph element_id");
+
+    let comments = inspection.summary["comments"]
+        .as_array()
+        .expect("comments array");
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0]["author"], "Ada");
+    assert_eq!(comments[0]["text"], "Confirm owners");
+    assert_eq!(comments[0]["index"], 1);
+    assert_eq!(comments[0]["paragraph"], paragraph_id);
+    let element_id = comments[0]["element_id"]
+        .as_str()
+        .expect("comment element_id");
+    assert!(
+        element_id.starts_with("cm_"),
+        "expected opaque cm_ id, got {element_id}"
+    );
+}
+
+#[test]
+fn inspect_omits_or_empties_comments_and_charts_when_absent() {
+    let (_directory, path) = write_fixture("memo.docx", &minimal_docx());
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+
+    let comments_empty = match inspection.summary.get("comments") {
+        None => true,
+        Some(value) => value.as_array().is_some_and(|items| items.is_empty()),
+    };
+    assert!(
+        comments_empty,
+        "expected omitted or empty comments, got {:?}",
+        inspection.summary.get("comments")
+    );
+
+    let charts_empty = match inspection.summary.get("charts") {
+        None => true,
+        Some(value) => value.as_array().is_some_and(|items| items.is_empty()),
+    };
+    assert!(
+        charts_empty,
+        "expected omitted or empty charts, got {:?}",
+        inspection.summary.get("charts")
+    );
 }

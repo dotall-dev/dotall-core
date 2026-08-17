@@ -19,6 +19,20 @@ pub struct DocumentModel {
     /// Number of top-level `w:tbl` elements in `word/document.xml`.
     #[serde(default)]
     pub table_count: u32,
+    /// Comments from `word/comments.xml`, anchored to body paragraphs.
+    #[serde(default)]
+    pub comments: Vec<CommentModel>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CommentModel {
+    pub element_id: String,
+    /// Anchored paragraph `element_id`.
+    pub paragraph: String,
+    /// Document-order paragraph index.
+    pub index: u32,
+    pub author: String,
+    pub text: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
