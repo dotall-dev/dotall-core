@@ -505,6 +505,103 @@ fn capabilities_advertise_set_form_fields() {
 }
 
 #[test]
+fn set_form_field_readonly_toggles_ff_and_blocks_value_edits() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["read_only"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_readonly".into(),
+                payload: serde_json::json!({ "name": "Name", "readonly": true }),
+            }],
+        )
+        .expect("validate readonly");
+    let patched = handler.apply_edit(&path, &edit).expect("apply readonly");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.read_only);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_readonly");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["read_only"], true);
+
+    let blocked = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Name", "value": "Blocked" }),
+            }],
+        )
+        .expect_err("read-only blocks value edits");
+    assert!(
+        blocked.to_string().to_lowercase().contains("read-only")
+            || blocked.to_string().to_lowercase().contains("readonly"),
+        "{blocked}"
+    );
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_readonly".into(),
+                payload: serde_json::json!({ "name": "Name", "readonly": false }),
+            }],
+        )
+        .expect("validate clear readonly");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let final_doc = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_doc
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.read_only);
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_readonly() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_readonly"),
+        "capabilities must advertise set_form_field_readonly"
+    );
+}
+
+#[test]
 fn set_form_fields_rejects_empty_map() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("form.pdf");

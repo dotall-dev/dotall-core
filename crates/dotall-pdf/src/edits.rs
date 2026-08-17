@@ -30,10 +30,11 @@ pub fn validate(
         "clear_form_field" => validate_clear_form_field(model, operation),
         "clear_all_form_fields" => validate_clear_all_form_fields(model, operation),
         "set_form_fields" => validate_set_form_fields(model, operation),
+        "set_form_field_readonly" => validate_set_form_field_readonly(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_document_metadata, or clear_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_document_metadata, or clear_document_metadata"
         ))),
     }
 }
@@ -268,6 +269,47 @@ fn validate_set_form_fields(
     })
 }
 
+fn validate_set_form_field_readonly(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let name = required_str(&operation.payload, "name")?;
+    let readonly = required_bool(&operation.payload, "readonly")?;
+    let field = model
+        .fields
+        .iter()
+        .find(|field| field.name == name)
+        .ok_or_else(|| format_error(format!("field `{name}` was not found")))?;
+    if field.field_type == "sig" {
+        return Err(format_error("cannot edit signature fields"));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_form_field_readonly".into(),
+            payload: serde_json::json!({
+                "name": field.name,
+                "readonly": readonly,
+                "element_id": field.element_id,
+                "field_type": field.field_type,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("field:{}", field.name),
+            element_id: field.element_id.clone(),
+            change: "set_form_field_readonly".into(),
+            before: Some(if field.read_only { "true" } else { "false" }.into()),
+            after: Some(if readonly { "true" } else { "false" }.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_document_metadata(
     model: &PdfDocumentModel,
     operation: &SemanticOperation,
@@ -431,6 +473,15 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
         }
         "clear_document_metadata" => {
             clear_info_metadata(&mut document)?;
+        }
+        "set_form_field_readonly" => {
+            let name = required_str(&operation.payload, "name")?;
+            let readonly = operation
+                .payload
+                .get("readonly")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`readonly` boolean is required"))?;
+            set_field_readonly(&mut document, name, readonly)?;
         }
         other => {
             return Err(format_error(format!(
@@ -599,6 +650,47 @@ fn set_field_value(
     Ok(())
 }
 
+const FIELD_FLAG_READONLY: i64 = 1;
+
+fn set_field_readonly(document: &mut Document, name: &str, readonly: bool) -> Result<()> {
+    let mut target = None;
+    for (id, object) in &document.objects {
+        let Object::Dictionary(dict) = object else {
+            continue;
+        };
+        let Ok(Object::String(bytes, _)) = dict.get(b"T") else {
+            continue;
+        };
+        if String::from_utf8_lossy(bytes) == name {
+            target = Some(*id);
+            break;
+        }
+    }
+    let id = target.ok_or_else(|| format_error(format!("field `{name}` was not found")))?;
+    let object = document
+        .get_object_mut(id)
+        .map_err(|error| format_error(format!("cannot update field: {error}")))?;
+    let Object::Dictionary(dict) = object else {
+        return Err(format_error("field is not a dictionary"));
+    };
+    let flags = dict
+        .get(b"Ff")
+        .ok()
+        .and_then(|object| object.as_i64().ok())
+        .unwrap_or(0);
+    let updated = if readonly {
+        flags | FIELD_FLAG_READONLY
+    } else {
+        flags & !FIELD_FLAG_READONLY
+    };
+    if updated == 0 {
+        dict.remove(b"Ff");
+    } else {
+        dict.set("Ff", Object::Integer(updated));
+    }
+    Ok(())
+}
+
 fn kid_object_ids(document: &Document, field_id: ObjectId) -> Result<Vec<ObjectId>> {
     let object = document
         .get_object(field_id)
@@ -707,6 +799,13 @@ fn required_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<&'a str
         .get(key)
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| format_error(format!("`{key}` is required")))
+}
+
+fn required_bool(payload: &serde_json::Value, key: &str) -> Result<bool> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| format_error(format!("`{key}` boolean is required")))
 }
 
 fn optional_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option<&'a str>> {

@@ -17,7 +17,7 @@ operators.
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -34,6 +34,7 @@ Inspect `metadata` for `/Info` Title / Author / Subject / Creator / Producer whe
 Checkbox and radio fields (`btn`) may include `export_values` (e.g. `Yes`, `Off`,
 or radio states `Low` / `Medium` / `High`) from `/AP /N` across widgets.
 Choice fields (`ch`) expose `options` from `/Opt` on inspect and field read.
+Inspect surfaces `read_only` per field from `/Ff` bit 1.
 
 ### Edit
 
@@ -99,6 +100,15 @@ Set multiple fields in one transaction (name→value map; same rules as `set_for
       "Agree": "On"
     }
   }
+}
+```
+
+Lock or unlock a field (`/Ff` ReadOnly bit):
+
+```json
+{
+  "kind": "set_form_field_readonly",
+  "payload": { "name": "Name", "readonly": true }
 }
 ```
 

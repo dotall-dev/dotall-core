@@ -158,6 +158,7 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         "name": field.name,
         "field_type": field.field_type,
         "value": field.value,
+        "read_only": field.read_only,
     });
     if !field.export_values.is_empty() {
         summary["export_values"] = json!(field.export_values);
@@ -263,6 +264,16 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "fields": { "Name": "Ada", "Agree": "On" } }
             }),
             safety: "Validates each field like set_form_field (including Btn export values). Rejects empty maps, missing names, encrypted/signed PDFs, and read-only fields.".into(),
+        },
+        EditCapability {
+            operation: "set_form_field_readonly".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear the AcroForm field ReadOnly flag (/Ff bit 1).".into(),
+            example: json!({
+                "kind": "set_form_field_readonly",
+                "payload": { "name": "Name", "readonly": true }
+            }),
+            safety: "Toggles /Ff ReadOnly on the named field. Inspect surfaces read_only. Value edits reject read-only fields. Rejects encrypted and signed PDFs.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),
