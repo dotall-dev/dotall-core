@@ -29,10 +29,11 @@ pub fn validate(
         "set_form_field" => validate_set_form_field(model, operation),
         "clear_form_field" => validate_clear_form_field(model, operation),
         "clear_all_form_fields" => validate_clear_all_form_fields(model, operation),
+        "set_form_fields" => validate_set_form_fields(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_document_metadata, or clear_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_document_metadata, or clear_document_metadata"
         ))),
     }
 }
@@ -196,6 +197,77 @@ fn validate_clear_all_form_fields(
     })
 }
 
+fn validate_set_form_fields(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let fields_map = operation
+        .payload
+        .get("fields")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| format_error("set_form_fields requires a `fields` object"))?;
+    if fields_map.is_empty() {
+        return Err(format_error("set_form_fields requires at least one field"));
+    }
+
+    let mut fields = Vec::new();
+    let mut before_parts = Vec::new();
+    let mut after_parts = Vec::new();
+    for (name, raw_value) in fields_map {
+        let value = raw_value.as_str().ok_or_else(|| {
+            format_error(format!(
+                "set_form_fields value for `{name}` must be a string"
+            ))
+        })?;
+        let field = model
+            .fields
+            .iter()
+            .find(|field| field.name == *name)
+            .ok_or_else(|| format_error(format!("field `{name}` was not found")))?;
+        if field.read_only {
+            return Err(format_error(format!("field `{name}` is read-only")));
+        }
+        let resolved = match field.field_type.as_str() {
+            "tx" | "ch" => value.to_owned(),
+            "btn" => resolve_btn_value(field, value)?,
+            other => {
+                return Err(format_error(format!(
+                    "field type `{other}` is not supported in v0"
+                )));
+            }
+        };
+        before_parts.push(format!("{}={}", field.name, field.value));
+        after_parts.push(format!("{}={resolved}", field.name));
+        fields.push(serde_json::json!({
+            "name": field.name,
+            "value": resolved,
+            "element_id": field.element_id,
+            "field_type": field.field_type,
+        }));
+    }
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_form_fields".into(),
+            payload: serde_json::json!({ "fields": fields }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: "document:/AcroForm".into(),
+            element_id: model.document_id.clone(),
+            change: "set_form_fields".into(),
+            before: Some(before_parts.join("; ")),
+            after: Some(after_parts.join("; ")),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_document_metadata(
     model: &PdfDocumentModel,
     operation: &SemanticOperation,
@@ -324,21 +396,25 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             set_field_value(&mut document, name, value, field_type)?;
             set_need_appearances(&mut document)?;
         }
-        "clear_all_form_fields" => {
+        "clear_all_form_fields" | "set_form_fields" => {
             let fields = operation
                 .payload
                 .get("fields")
                 .and_then(serde_json::Value::as_array)
-                .ok_or_else(|| format_error("clear_all_form_fields requires `fields`"))?;
+                .ok_or_else(|| format_error(format!("{} requires `fields`", operation.kind)))?;
             for field in fields {
                 let name = field
                     .get("name")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| format_error("clear_all_form_fields field missing name"))?;
+                    .ok_or_else(|| {
+                        format_error(format!("{} field missing name", operation.kind))
+                    })?;
                 let value = field
                     .get("value")
                     .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| format_error("clear_all_form_fields field missing value"))?;
+                    .ok_or_else(|| {
+                        format_error(format!("{} field missing value", operation.kind))
+                    })?;
                 let field_type = field
                     .get("field_type")
                     .and_then(serde_json::Value::as_str)

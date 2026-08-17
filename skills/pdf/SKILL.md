@@ -17,7 +17,7 @@ operators.
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
+  → dotall_edit set_form_field | set_form_fields | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -85,6 +85,20 @@ Clear every non-read-only AcroForm field in one transaction:
 {
   "kind": "clear_all_form_fields",
   "payload": {}
+}
+```
+
+Set multiple fields in one transaction (name→value map; same rules as `set_form_field`):
+
+```json
+{
+  "kind": "set_form_fields",
+  "payload": {
+    "fields": {
+      "Name": "Ada Lovelace",
+      "Agree": "On"
+    }
+  }
 }
 ```
 

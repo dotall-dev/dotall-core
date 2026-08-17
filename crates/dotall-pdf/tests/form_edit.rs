@@ -449,6 +449,85 @@ fn capabilities_advertise_clear_all_form_fields() {
 }
 
 #[test]
+fn set_form_fields_sets_multiple_fields_in_one_op() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_fields".into(),
+                payload: serde_json::json!({
+                    "fields": {
+                        "Name": "Grace Hopper",
+                        "Agree": "On"
+                    }
+                }),
+            }],
+        )
+        .expect("validate set_form_fields");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    let agree = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Agree")
+        .expect("Agree");
+    assert_eq!(name.value, "Grace Hopper");
+    assert_eq!(agree.value, "Yes");
+    assert_eq!(edit.semantic_diff[0].change, "set_form_fields");
+}
+
+#[test]
+fn capabilities_advertise_set_form_fields() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_fields"),
+        "capabilities must advertise set_form_fields"
+    );
+}
+
+#[test]
+fn set_form_fields_rejects_empty_map() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_fields".into(),
+                payload: serde_json::json!({ "fields": {} }),
+            }],
+        )
+        .expect_err("empty fields");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("field") || message.contains("empty") || message.contains("required"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn revert_after_form_fill_restores_original_bytes() {
     let workspace = tempdir().expect("workspace");
     let source = workspace.path().join("form.pdf");

@@ -254,6 +254,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Applies clear_form_field semantics to each editable field. Skips read-only fields. Rejects encrypted and signed PDFs.".into(),
         },
         EditCapability {
+            operation: "set_form_fields".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set multiple AcroForm fields in one transaction via a name→value map."
+                .into(),
+            example: json!({
+                "kind": "set_form_fields",
+                "payload": { "fields": { "Name": "Ada", "Agree": "On" } }
+            }),
+            safety: "Validates each field like set_form_field (including Btn export values). Rejects empty maps, missing names, encrypted/signed PDFs, and read-only fields.".into(),
+        },
+        EditCapability {
             operation: "set_document_metadata".into(),
             schema_version: SCHEMA_VERSION,
             description: "Set PDF /Info Title, Author, and/or Subject.".into(),
