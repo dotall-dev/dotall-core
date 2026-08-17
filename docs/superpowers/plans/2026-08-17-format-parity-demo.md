@@ -414,6 +414,19 @@ After Wave 11 integrates (set_print_area, set_shape_font_size, set_paragraph_fon
 
 Each task ends with the standing demo gate.
 
+## Wave 13 — font color run props + companion slices (parallel)
+
+After Wave 12 integrates (set_print_titles, set_shape_font_name, set_paragraph_font_name, set_form_field_multiline):
+
+1. **XLSX:** `set_page_orientation` — set worksheet print orientation via surgical `pageSetup` (`orientation` = `portrait` | `landscape`); inspect surfaces `page_orientation` when present
+2. **PPTX:** `set_shape_font_color` — set/clear solid sRGB text color on shape runs (`a:solidFill`/`a:srgbClr val` inside `a:rPr` from `#RRGGBB` / `RRGGBB`; null clears); content-on-slide companion to font name/size
+3. **DOCX:** `set_paragraph_font_color` — set/clear `w:color` on runs (`w:val` hex from `#RRGGBB` / `RRGGBB`; null clears); content-in-document companion to font name/size
+4. **PDF:** `set_form_field_password` — set/clear AcroForm text-field Password (`/Ff` bit 14); pairs with multiline/readonly/required; reject non-`tx` fields
+
+**Deferred:** highlight/fill, replace-across-shapes/paragraphs; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
