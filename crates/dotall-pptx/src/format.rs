@@ -463,5 +463,21 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Rejects empty find and no-match. Replaces all occurrences in the shape text model, then surgically patches the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
+        EditCapability {
+            operation: "replace_across_shapes".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Find/replace a substring across all text-frame shapes on one slide (first-run rewrite like replace_shape_text)."
+                    .into(),
+            example: json!({
+                "kind": "replace_across_shapes",
+                "payload": {
+                    "slide": "Slide 1",
+                    "find": "Q3",
+                    "replace": "Q4"
+                }
+            }),
+            safety: "Rejects empty find and no-match on the slide. Applies replace_shape_text's first-run rewrite to every matching text-frame shape in one surgical patch of the target slide part. Skips graphicFrame/tables/SmartArt/charts.".into(),
+        },
     ]
 }

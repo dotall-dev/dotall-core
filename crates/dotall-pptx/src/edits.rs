@@ -59,8 +59,9 @@ pub fn validate(
         "set_shape_caps" => validate_set_shape_caps(model, operation),
         "set_shape_hyperlink" => validate_set_shape_hyperlink(model, operation),
         "replace_shape_text" => validate_replace_shape_text(model, operation),
+        "replace_across_shapes" => validate_replace_across_shapes(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_hyperlink, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, replace_across_shapes, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_hyperlink, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -156,6 +157,74 @@ fn validate_replace_shape_text(
             before: Some(shape.text.clone()),
             after: Some(after_text),
         }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_replace_across_shapes(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let find = required_str_allow_empty(&operation.payload, "find")?;
+    let replace = required_str_allow_empty(&operation.payload, "replace")?;
+    if find.is_empty() {
+        return Err(format_error(
+            "replace_across_shapes requires a non-empty `find` string",
+        ));
+    }
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    // Text-frame shapes only (`slide.shapes`). Tables / graphicFrame / SmartArt / charts
+    // are not in this list and are skipped rather than failing the op.
+    let matches: Vec<_> = slide
+        .shapes
+        .iter()
+        .filter(|shape| shape.text.contains(find))
+        .collect();
+    if matches.is_empty() {
+        return Err(format_error(format!(
+            "no match for `find` string on any text-frame shape on slide `{slide_ref}`"
+        )));
+    }
+    let replacements: Vec<serde_json::Value> = matches
+        .iter()
+        .map(|shape| {
+            serde_json::json!({
+                "shape": shape.name,
+                "text": shape.text.replace(find, replace),
+                "element_id": shape.element_id,
+            })
+        })
+        .collect();
+    let semantic_diff = matches
+        .iter()
+        .map(|shape| SemanticChange {
+            target: format!("{}!{}", slide.name, shape.name),
+            element_id: shape.element_id.clone(),
+            change: "replace_across_shapes".into(),
+            before: Some(shape.text.clone()),
+            after: Some(shape.text.replace(find, replace)),
+        })
+        .collect();
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "replace_across_shapes".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "find": find,
+                "replace": replace,
+                "part_name": slide.part_name,
+                "replacements": replacements,
+            }),
+        }],
+        semantic_diff,
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
             notes: Vec::new(),
@@ -967,6 +1036,30 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                     part_name.to_owned(),
                     patch_shape_text(&original, shape, text)?,
                 )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
+        "replace_across_shapes" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let replacements = operation
+                .payload
+                .get("replacements")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| format_error("`replacements` is required"))?;
+            let original = entry_bytes(package, part_name)?;
+            let mut patched = original;
+            for item in replacements {
+                let shape = required_str(item, "shape")?;
+                let text = required_str_allow_empty(item, "text")?;
+                match patch_shape_text(&patched, shape, text) {
+                    Ok(next) => patched = next,
+                    Err(error) if is_non_text_shape_error(&error) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            PackagePatch {
+                replacements: BTreeMap::from([(part_name.to_owned(), patched)]),
                 additions: BTreeMap::new(),
                 removals: BTreeSet::new(),
             }
@@ -3016,6 +3109,20 @@ fn required_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<&'a str
         .and_then(serde_json::Value::as_str)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| format_error(format!("`{key}` is required")))
+}
+
+fn required_str_allow_empty<'a>(payload: &'a serde_json::Value, key: &str) -> Result<&'a str> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format_error(format!("`{key}` is required")))
+}
+
+fn is_non_text_shape_error(error: &DotallError) -> bool {
+    matches!(
+        error,
+        DotallError::Format { message, .. } if message.contains("cannot edit non-text shape")
+    )
 }
 
 fn required_u32(payload: &serde_json::Value, key: &str) -> Result<u32> {

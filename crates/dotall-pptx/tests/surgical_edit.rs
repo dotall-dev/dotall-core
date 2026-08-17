@@ -5,7 +5,8 @@ use std::io::{Cursor, Read};
 use dotall_core::SemanticOperation;
 use dotall_core::registry::FormatHandler;
 use dotall_pptx::{
-    PptxFormat, minimal_pptx, parse_presentation_bytes, pptx_with_notes, pptx_with_table,
+    PptxFormat, minimal_pptx, parse_presentation_bytes, pptx_two_text_shapes, pptx_with_notes,
+    pptx_with_table,
 };
 use tempfile::tempdir;
 use zip::ZipArchive;
@@ -1918,5 +1919,126 @@ fn capabilities_advertise_replace_shape_text() {
             .iter()
             .any(|cap| cap.operation == "replace_shape_text"),
         "capabilities must advertise replace_shape_text"
+    );
+}
+
+#[test]
+fn replace_across_shapes_updates_matching_text_frames_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_two_text_shapes();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_across_shapes".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "find": "Q3",
+                    "replace": "Q4",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+
+    let texts: Vec<&str> = after.slides[0]
+        .shapes
+        .iter()
+        .map(|shape| shape.text.as_str())
+        .collect();
+    assert!(
+        texts.contains(&"Q4 Review"),
+        "Title should update: {texts:?}"
+    );
+    assert!(
+        texts.contains(&"Q4 Highlights"),
+        "Body should update: {texts:?}"
+    );
+    assert_eq!(after.slides[1].shapes[0].text, "Other");
+    assert!(
+        edit.semantic_diff
+            .iter()
+            .all(|change| change.change == "replace_across_shapes"),
+        "semantic diff should name replace_across_shapes"
+    );
+    assert_eq!(edit.semantic_diff.len(), 2);
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn replace_across_shapes_rejects_empty_find() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_two_text_shapes()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let empty = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_across_shapes".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "find": "",
+                    "replace": "Q4",
+                }),
+            }],
+        )
+        .expect_err("empty find");
+    assert!(
+        empty.to_string().to_lowercase().contains("find"),
+        "unexpected: {empty}"
+    );
+}
+
+#[test]
+fn replace_across_shapes_rejects_no_match() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_two_text_shapes()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let missing = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_across_shapes".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "find": "zzz",
+                    "replace": "x",
+                }),
+            }],
+        )
+        .expect_err("no match");
+    let message = missing.to_string().to_lowercase();
+    assert!(
+        message.contains("no match") || message.contains("not found") || message.contains("match"),
+        "unexpected: {missing}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_replace_across_shapes() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "replace_across_shapes"),
+        "capabilities must advertise replace_across_shapes"
     );
 }
