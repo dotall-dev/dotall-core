@@ -369,6 +369,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_italic".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear italic (w:i) on all runs in a body/table paragraph.".into(),
+            example: json!({
+                "kind": "set_paragraph_italic",
+                "payload": { "index": 1, "italic": true }
+            }),
+            safety:
+                "Upserts w:i inside each run's w:rPr (or paragraph-mark rPr when empty). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

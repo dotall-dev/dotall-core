@@ -125,6 +125,15 @@ Set or clear bold on all runs in a body/table paragraph (`w:b`):
 }
 ```
 
+Set or clear italic on all runs in a body/table paragraph (`w:i`):
+
+```json
+{
+  "kind": "set_paragraph_italic",
+  "payload": { "index": 1, "italic": true }
+}
+```
+
 Header / footer:
 
 ```json
