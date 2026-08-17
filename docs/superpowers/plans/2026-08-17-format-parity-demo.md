@@ -531,6 +531,19 @@ After Wave 20 integrates (set_sheet_zoom, replace_across_shapes, replace_across_
 
 Each task ends with the standing demo gate.
 
+## Wave 22 — table-cell run props + companion slices (parallel)
+
+After Wave 21 integrates (set_show_gridlines, set_shape_bullet, set_paragraph_bullet, set_form_field_combo):
+
+1. **XLSX:** `set_right_to_left` — set/clear worksheet sheet-view RTL via surgical `sheetView` `rightToLeft` (`rtl` boolean; `true` writes `rightToLeft="1"`; `false` removes the attribute); inspect surfaces `right_to_left` when true. Must preserve freeze panes, `zoomScale`, `showGridLines`, and other `sheetView` attributes (clone `set_show_gridlines` / `set_sheet_zoom`).
+2. **PPTX:** `set_table_cell_bold` — set/clear bold on a slide table cell’s text runs (`a:rPr b` inside the target `a:tc`); payload `slide`, `table`, `row`, `col`, `bold` boolean; content-on-slide companion to `set_table_cell_text` + `set_shape_bold`. Only the target slide part changes. Reject out-of-range cells.
+3. **DOCX:** `set_cell_shading` — set/clear table-cell fill (`w:tcPr`/`w:shd` `w:fill` from `#RRGGBB` / `RRGGBB`; `null` clears) on the `w:tc` that contains a body/table paragraph (payload paragraph `index`/`element_id` + `color`); reject if the paragraph is not inside a table cell. Content-in-document companion. Only `word/document.xml` changes.
+4. **PDF:** `set_form_field_edit` — set/clear AcroForm choice-field Edit (`/Ff` bit 18 = 262144, combo can type); `ch` only; inspect surfaces `edit`. Reject non-`ch` fields.
+
+**Deferred:** further table-cell run props (italic/color inside pptx cells); further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
