@@ -86,6 +86,16 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"freeze_panes","payload":{"sheet":"Inputs","cell":"B2"}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 6: define_name (workbook.xml only; worksheets stay byte-identical)
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"define_name","payload":{"name":"Rate","formula":"Inputs!$B$3"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL read demo/financials.xlsx --selector-kind named_ranges
+# expect Rate → Inputs!$B$3
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"define_name","payload":{"name":"Rate","formula":"Inputs!$B$2"}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -141,9 +151,16 @@ $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"add_textbox","payload":{"slide":"Slide 2","name":"Callout","text":"Agent follow-up"}}]'
 $DOTALL apply demo/deck.pptx --all
 $DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 2'
+
+# Wave 6 — delete the Callout text box (p:sp only; tables stay)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"delete_shape","payload":{"slide":"Slide 2","shape":"Callout"}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 2'
+# expect Callout gone; Title / Metrics remain
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` patches only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` patch only the target slide part.
 
 ---
 
@@ -196,6 +213,13 @@ $DOTALL edit demo/memo.docx --ops-json \
 $DOTALL apply demo/memo.docx --all
 $DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:5'
 # expect no "Action: confirm owners…" paragraph; table cells resume at index 3.
+
+# Wave 6 — set paragraph style (w:pStyle only; styles.xml untouched)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_style","payload":{"index":2,"style_id":"Heading1"}}]'
+$DOTALL apply demo/memo.docx --all
+$DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:3'
+# expect index 2 style_id Heading1
 ```
 
 ---
@@ -246,6 +270,24 @@ $DOTALL edit demo/form.pdf --ops-json \
 $DOTALL apply demo/form.pdf --all
 $DOTALL read demo/form.pdf --selector-kind field --selector Priority
 # expect value High
+
+# Wave 6 — clear_form_field (blank Tx/Ch, Off for Btn)
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"clear_form_field","payload":{"name":"Name"}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL read demo/form.pdf --selector-kind field --selector Name
+# expect empty value
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"clear_form_field","payload":{"name":"Agree"}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"clear_form_field","payload":{"name":"Department"}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"clear_form_field","payload":{"name":"Priority"}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL read demo/form.pdf --selector-kind field --selector Priority
+# expect value Off
 ```
 
 ---
