@@ -466,6 +466,19 @@ After Wave 15 integrates (set_print_scale, replace_shape_text, replace_paragraph
 
 Each task ends with the standing demo gate.
 
+## Wave 17 — superscript/subscript (content-first) + companion slices (parallel)
+
+After Wave 16 integrates (set_fit_to_page, set_shape_strikethrough, set_paragraph_strikethrough, set_form_field_do_not_scroll):
+
+1. **XLSX:** `set_center_on_page` — set/clear worksheet print centering via surgical `printOptions` `horizontalCentered`/`verticalCentered` (`horizontal`/`vertical` booleans; both false clears); inspect surfaces `center_on_page` when present
+2. **PPTX:** `set_shape_vert_align` — set/clear superscript/subscript on shape text runs (`a:rPr baseline="30000"` / `baseline="-25000"`; null clears attribute); content-on-slide companion to strikethrough (`vert_align`: `superscript` | `subscript` | null)
+3. **DOCX:** `set_paragraph_vert_align` — set/clear `w:vertAlign` on runs (`w:val="superscript"` / `subscript`; null clears); content-in-document companion
+4. **PDF:** `set_form_field_do_not_spell_check` — set/clear AcroForm text-field DoNotSpellCheck (`/Ff` bit 23); pairs with do_not_scroll/comb; reject non-`tx` fields; inspect surfaces `do_not_spell_check`
+
+**Deferred:** hyperlinks, richer table cell content, list/bullet text, document-/slide-wide replace-across; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
