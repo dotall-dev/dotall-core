@@ -134,6 +134,16 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"set_auto_filter","payload":{"sheet":"Revenue","range":null}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 11: set_print_area on Revenue, then clear
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_print_area","payload":{"sheet":"Revenue","range":"A1:B5"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect sheets[].print_area A1:B5 for Revenue
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_print_area","payload":{"sheet":"Revenue","range":null}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -221,9 +231,14 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_shape_underline","payload":{"slide":"Slide 2","shape":"Title","underline":true}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 11 — font size on Title (content-on-slide companion to bold/italic/underline)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_shape_font_size","payload":{"slide":"Slide 2","shape":"Title","size_pt":28}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` patch only the target slide part.
 
 ---
 
@@ -302,6 +317,11 @@ $DOTALL apply demo/memo.docx --all
 # Wave 10 — paragraph underline (w:u on runs)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_underline","payload":{"index":2,"underline":true}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 11 — paragraph font size (w:sz / w:szCs from size_pt)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_font_size","payload":{"index":2,"size_pt":14}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
@@ -405,6 +425,16 @@ $DOTALL inspect demo/form.pdf
 # expect fields[].read_only true for Name
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field_readonly","payload":{"name":"Name","readonly":false}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 11 — mark Name required (Ff Required), then clear
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_required","payload":{"name":"Name","required":true}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect fields[].required true for Name
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_required","payload":{"name":"Name","required":false}}]'
 $DOTALL apply demo/form.pdf --all
 ```
 
