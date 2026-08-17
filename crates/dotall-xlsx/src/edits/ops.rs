@@ -125,6 +125,13 @@ pub enum XlsxEditOp {
         /// Print scale percent 10–400.
         scale: u32,
     },
+    SetFitToPage {
+        sheet: String,
+        /// Pages wide; `None` with height `None` clears fit-to-page.
+        width: Option<u32>,
+        /// Pages tall; `None` with width `None` clears fit-to-page.
+        height: Option<u32>,
+    },
     SetPageMargins {
         sheet: String,
         margins: crate::model::PageMargins,

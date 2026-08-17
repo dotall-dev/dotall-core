@@ -85,6 +85,7 @@ impl FormatHandler for XlsxFormat {
                     "print_titles": sheet.print_titles,
                     "page_orientation": sheet.page_orientation,
                     "print_scale": sheet.print_scale,
+                    "fit_to_page": sheet.fit_to_page,
                     "page_margins": sheet.page_margins,
                 })
             })
@@ -630,6 +631,19 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "scale": 75 }
             }),
             safety: "Surgically patches only the target worksheet pageSetup scale attribute. Inspect surfaces print_scale. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_fit_to_page".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description:
+                "Set or clear worksheet fit-to-page via pageSetup fitToWidth/Height and pageSetUpPr."
+                    .into(),
+            example: json!({
+                "kind": "set_fit_to_page",
+                "payload": { "sheet": "Revenue", "width": 1, "height": 1 }
+            }),
+            safety: "Surgically patches only the target worksheet sheetPr/pageSetUpPr and pageSetup fit attrs. Pass null width and height to clear. Inspect surfaces fit_to_page. Other sheets stay byte-identical."
                 .into(),
         },
         EditCapability {

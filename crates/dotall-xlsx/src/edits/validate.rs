@@ -100,6 +100,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_fit_to_page"))
+    {
+        return validate_set_fit_to_page_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "set_page_margins"))
     {
         return validate_set_page_margins_operations(model, operations);
@@ -217,6 +223,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_print_scale"))
     {
         return validate_set_print_scale_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_fit_to_page"))
+    {
+        return validate_set_fit_to_page_operations(model, operations);
     }
     if operations
         .iter()
@@ -1351,6 +1363,101 @@ fn validate_set_print_scale_operations(
     })
 }
 
+fn validate_set_fit_to_page_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_fit_to_page edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_fit_to_page" {
+        return Err(format_error("unsupported set_fit_to_page edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_fit_to_page requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.fit_to_page.clone();
+    let width = optional_fit_dim(&operation.payload, "width")?;
+    let height = optional_fit_dim(&operation.payload, "height")?;
+    match (width, height) {
+        (Some(_), Some(_)) | (None, None) => {}
+        _ => {
+            return Err(format_error(
+                "set_fit_to_page requires both `width` and `height`, or both null to clear",
+            ));
+        }
+    }
+
+    let after = match (width, height) {
+        (Some(w), Some(h)) => format!("{w}x{h}"),
+        (None, None) => "cleared".into(),
+        _ => unreachable!(),
+    };
+    let before_text = match before {
+        Some(fit) => format!(
+            "{}x{}",
+            fit.width
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".into()),
+            fit.height
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".into())
+        ),
+        None => "unset".into(),
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_fit_to_page".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "width": width,
+                "height": height,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!fit_to_page"),
+            element_id: format!("fit_to_page:{canonical_sheet}"),
+            change: "set_fit_to_page".into(),
+            before: Some(before_text),
+            after: Some(after),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn optional_fit_dim(payload: &Value, field: &str) -> Result<Option<u32>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .or_else(|| value.as_f64().map(|f| f as u64))
+            .and_then(|v| u32::try_from(v).ok())
+            .map(Some)
+            .ok_or_else(|| {
+                format_error(format!(
+                    "set_fit_to_page `{field}` must be a non-negative integer when present"
+                ))
+            }),
+    }
+}
+
 fn validate_set_page_margins_operations(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
@@ -2165,6 +2272,7 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::SetPrintTitles { .. }
             | XlsxEditOp::SetPageOrientation { .. }
                 | XlsxEditOp::SetPrintScale { .. }
+ | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetPageMargins { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
@@ -2285,6 +2393,7 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetPrintTitles { .. }
         | XlsxEditOp::SetPageOrientation { .. }
         | XlsxEditOp::SetPrintScale { .. }
+        | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetPageMargins { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
@@ -2363,6 +2472,7 @@ mod tests {
             print_titles: None,
             page_orientation: None,
             print_scale: None,
+            fit_to_page: None,
             page_margins: None,
             cells,
         }

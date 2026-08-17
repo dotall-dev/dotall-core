@@ -146,6 +146,11 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 scale: required_print_scale(operation)?,
             }),
+            "set_fit_to_page" => Ok(XlsxEditOp::SetFitToPage {
+                sheet: required_string(operation, "sheet")?,
+                width: optional_u32(operation, "width")?,
+                height: optional_u32(operation, "height")?,
+            }),
             "set_page_margins" => Ok(XlsxEditOp::SetPageMargins {
                 sheet: required_string(operation, "sheet")?,
                 margins: required_page_margins(operation)?,
@@ -261,6 +266,25 @@ fn required_positive_u32(
                 "validated edit operation requires positive `{field}`"
             ))
         })
+}
+
+fn optional_u32(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<Option<u32>> {
+    match operation.payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .or_else(|| value.as_f64().map(|f| f as u64))
+            .and_then(|v| u32::try_from(v).ok())
+            .map(Some)
+            .ok_or_else(|| {
+                invalid_operation(format!(
+                    "validated edit operation requires non-negative integer `{field}` when present"
+                ))
+            }),
+    }
 }
 
 fn required_positive_f64(

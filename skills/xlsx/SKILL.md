@@ -218,6 +218,14 @@ Set worksheet print scale (`pageSetup` `scale` percent 10–400):
 
 Inspect surfaces `print_scale` per sheet when present. Other worksheets stay byte-identical.
 
+Set or clear worksheet fit-to-page (`pageSetup` `fitToWidth`/`fitToHeight` + `pageSetUpPr`; both null clears):
+
+```json
+{ "kind": "set_fit_to_page", "payload": { "sheet": "Revenue", "width": 1, "height": 1 } }
+```
+
+Inspect surfaces `fit_to_page` per sheet when present. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

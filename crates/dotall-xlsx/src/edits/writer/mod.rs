@@ -1,5 +1,6 @@
 mod auto_filter;
 mod dimensions;
+mod fit_to_page;
 mod freeze_panes;
 mod merges;
 mod package;

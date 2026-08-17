@@ -41,10 +41,22 @@ pub struct SheetModel {
     /// Print scale percent (10–400) from `pageSetup/@scale`. Absent when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub print_scale: Option<u32>,
+    /// Fit-to-page widths/heights from `pageSetup` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_to_page: Option<FitToPage>,
     /// Print page margins in inches. Absent when no `pageMargins` element.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_margins: Option<PageMargins>,
     pub cells: Vec<CellModel>,
+}
+
+/// Worksheet fit-to-page (`pageSetup` fitToWidth / fitToHeight).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct FitToPage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
 }
 
 /// Worksheet print margins (`pageMargins`) in inches.

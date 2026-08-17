@@ -39,6 +39,7 @@ pub(super) fn patch(
             | XlsxEditOp::SetPrintTitles { .. }
             | XlsxEditOp::SetPageOrientation { .. }
             | XlsxEditOp::SetPrintScale { .. }
+            | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetPageMargins { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
@@ -154,6 +155,7 @@ pub(super) fn patch(
                 | XlsxEditOp::SetPrintTitles { .. }
                 | XlsxEditOp::SetPageOrientation { .. }
                 | XlsxEditOp::SetPrintScale { .. }
+                | XlsxEditOp::SetFitToPage { .. }
                 | XlsxEditOp::SetPageMargins { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
@@ -192,6 +194,7 @@ pub(super) fn patch(
             | XlsxEditOp::SetPrintTitles { .. }
             | XlsxEditOp::SetPageOrientation { .. }
             | XlsxEditOp::SetPrintScale { .. }
+            | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetPageMargins { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
@@ -330,6 +333,7 @@ fn render_new_cell(
         | XlsxEditOp::SetPrintTitles { .. }
         | XlsxEditOp::SetPageOrientation { .. }
         | XlsxEditOp::SetPrintScale { .. }
+        | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetPageMargins { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
@@ -513,6 +517,7 @@ fn render_cell_parts(
         | XlsxEditOp::SetPrintTitles { .. }
         | XlsxEditOp::SetPageOrientation { .. }
         | XlsxEditOp::SetPrintScale { .. }
+        | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetPageMargins { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
