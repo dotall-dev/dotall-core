@@ -29,8 +29,9 @@ pub fn validate(
         "set_form_field" => validate_set_form_field(model, operation),
         "clear_form_field" => validate_clear_form_field(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
+        "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, or set_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, set_document_metadata, or clear_document_metadata"
         ))),
     }
 }
@@ -215,6 +216,38 @@ fn validate_set_document_metadata(
     })
 }
 
+fn validate_clear_document_metadata(
+    model: &PdfDocumentModel,
+    _operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let before = format!(
+        "title={}; author={}; subject={}",
+        model.metadata.title.as_deref().unwrap_or(""),
+        model.metadata.author.as_deref().unwrap_or(""),
+        model.metadata.subject.as_deref().unwrap_or("")
+    );
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "clear_document_metadata".into(),
+            payload: serde_json::json!({}),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: "document:/Info".into(),
+            element_id: model.document_id.clone(),
+            change: "clear_document_metadata".into(),
+            before: Some(before),
+            after: Some("title=; author=; subject=".into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 pub fn apply(source: &std::path::Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
         path: source.to_path_buf(),
@@ -247,6 +280,9 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let author = optional_str(&operation.payload, "author")?;
             let subject = optional_str(&operation.payload, "subject")?;
             set_info_metadata(&mut document, title, author, subject)?;
+        }
+        "clear_document_metadata" => {
+            clear_info_metadata(&mut document)?;
         }
         other => {
             return Err(format_error(format!(
@@ -286,6 +322,22 @@ fn set_info_metadata(
     if let Some(subject) = subject {
         dict.set("Subject", Object::string_literal(subject));
     }
+    Ok(())
+}
+
+fn clear_info_metadata(document: &mut Document) -> Result<()> {
+    let Ok(info_id) = ensure_info_dict(document) else {
+        return Ok(());
+    };
+    let object = document
+        .get_object_mut(info_id)
+        .map_err(|error| format_error(format!("cannot update Info: {error}")))?;
+    let Object::Dictionary(dict) = object else {
+        return Err(format_error("Info is not a dictionary"));
+    };
+    let _ = dict.remove(b"Title");
+    let _ = dict.remove(b"Author");
+    let _ = dict.remove(b"Subject");
     Ok(())
 }
 

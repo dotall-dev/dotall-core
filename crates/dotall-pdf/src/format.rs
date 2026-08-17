@@ -257,5 +257,15 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Patches trailer /Info only. Omit keys you want to leave unchanged. Rejects encrypted and signed PDFs.".into(),
         },
+        EditCapability {
+            operation: "clear_document_metadata".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Clear PDF /Info Title, Author, and Subject.".into(),
+            example: json!({
+                "kind": "clear_document_metadata",
+                "payload": {}
+            }),
+            safety: "Removes Title/Author/Subject from trailer /Info. Leaves Creator/Producer untouched. Rejects encrypted and signed PDFs.".into(),
+        },
     ]
 }

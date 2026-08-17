@@ -92,6 +92,15 @@ Document `/Info` (Title / Author / Subject — omit keys to leave unchanged):
 }
 ```
 
+Clear `/Info` Title, Author, and Subject (Creator/Producer left untouched):
+
+```json
+{
+  "kind": "clear_document_metadata",
+  "payload": {}
+}
+```
+
 Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios
 without an export value, empty metadata payloads.
 

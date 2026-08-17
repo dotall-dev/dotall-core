@@ -341,6 +341,53 @@ fn set_document_metadata_requires_at_least_one_field() {
 }
 
 #[test]
+fn clear_document_metadata_clears_title_author_subject() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(model.payload["metadata"]["title"], "Vendor Intake Form");
+    assert_eq!(model.payload["metadata"]["author"], "Dotall Demo");
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_document_metadata".into(),
+                payload: serde_json::json!({}),
+            }],
+        )
+        .expect("validate clear metadata");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    assert!(after.metadata.title.is_none() || after.metadata.title.as_deref() == Some(""));
+    assert!(after.metadata.author.is_none() || after.metadata.author.as_deref() == Some(""));
+    assert!(after.metadata.subject.is_none() || after.metadata.subject.as_deref() == Some(""));
+    // Creator / Producer stay when we only clear Title/Author/Subject.
+    assert_eq!(after.metadata.creator.as_deref(), Some("dotall-pdf"));
+    assert_eq!(edit.semantic_diff[0].change, "clear_document_metadata");
+}
+
+#[test]
+fn capabilities_advertise_clear_document_metadata() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "clear_document_metadata"),
+        "capabilities must advertise clear_document_metadata"
+    );
+}
+
+#[test]
 fn revert_after_form_fill_restores_original_bytes() {
     let workspace = tempdir().expect("workspace");
     let source = workspace.path().join("form.pdf");
