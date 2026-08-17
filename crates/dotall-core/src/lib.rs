@@ -3,6 +3,7 @@ mod fingerprint;
 pub mod history;
 mod manifest;
 pub mod orchestrate;
+mod search;
 mod status;
 mod store;
 mod workspace;
@@ -26,6 +27,7 @@ pub use registry::{
     Actor, ActorKind, ArtifactEnvelope, ArtifactSchema, DependencyImpact, EncodedSnapshot,
     PatchedOutput, ReadResponse, SemanticChange, SemanticOperation, SnapshotPart, ValidatedEdit,
 };
+pub use search::{SearchHit, SearchRequest, SearchResults, search_store};
 pub use status::{ObjectState, ObjectStatus};
 pub use store::DotallStore;
 pub use workspace::Workspace;

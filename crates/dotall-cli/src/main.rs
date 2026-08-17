@@ -732,6 +732,7 @@ fn render_error(error: &DotallError, json: bool) {
         DotallError::Format { format_id, .. } if format_id == "dotall-cli" => {
             "Rebuild with --features xlsx, pptx, docx, and/or pdf."
         }
+        DotallError::InvalidArgument { .. } => "Fix the argument and retry.",
         _ => "Inspect the path and retry the operation.",
     };
     if json {
