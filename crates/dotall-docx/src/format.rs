@@ -490,6 +490,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_hyperlink".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear an external hyperlink wrapping a body/table paragraph's runs (w:hyperlink r:id plus document.xml.rels)."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_hyperlink",
+                "payload": { "index": 0, "url": "https://example.com" }
+            }),
+            safety:
+                "Wraps existing runs in w:hyperlink r:id (or updates the wrapper) and writes an External hyperlink Relationship (http/https/mailto; empty rejected, null clears both). Patches only word/document.xml and word/_rels/document.xml.rels. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "replace_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

@@ -1327,6 +1327,203 @@ fn capabilities_advertise_set_paragraph_caps() {
 }
 
 #[test]
+fn capabilities_advertise_set_paragraph_hyperlink() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_paragraph_hyperlink"),
+        "capabilities must advertise set_paragraph_hyperlink"
+    );
+}
+
+#[test]
+fn set_paragraph_hyperlink_wraps_runs_and_adds_rel_leaving_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    let before = fixture::table_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_hyperlink".into(),
+                payload: serde_json::json!({
+                    "index": 0,
+                    "url": "https://example.com",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let entries = zip_entries(&patched.bytes);
+    let document_xml =
+        String::from_utf8(entries["word/document.xml"].clone()).expect("document xml");
+    let rels = String::from_utf8(entries["word/_rels/document.xml.rels"].clone()).expect("rels");
+    assert!(
+        document_xml.contains(r#"<w:hyperlink r:id=""#),
+        "expected w:hyperlink wrapping runs, got: {document_xml}"
+    );
+    assert!(
+        document_xml.contains("<w:r><w:t>Intro</w:t></w:r>"),
+        "inner runs must remain inside the hyperlink: {document_xml}"
+    );
+    let rid_start = document_xml
+        .find(r#"<w:hyperlink r:id=""#)
+        .expect("hyperlink r:id")
+        + r#"<w:hyperlink r:id=""#.len();
+    let rid_end = document_xml[rid_start..].find('"').expect("rid close") + rid_start;
+    let rid = &document_xml[rid_start..rid_end];
+    assert!(
+        rels.contains(&format!(
+            r#"Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External""#
+        )),
+        "expected hyperlink Relationship for {rid}, got: {rels}"
+    );
+    assert!(
+        rels.contains("relationships/header"),
+        "existing header relationship must remain: {rels}"
+    );
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.paragraphs[0].text, "Intro");
+    assert_eq!(edit.semantic_diff[0].change, "set_paragraph_hyperlink");
+    assert_eq!(
+        edit.semantic_diff[0].after.as_deref(),
+        Some("https://example.com")
+    );
+    assert_untouched_entries_identical(
+        &before,
+        &patched.bytes,
+        &["word/document.xml", "word/_rels/document.xml.rels"],
+    );
+}
+
+#[test]
+fn set_paragraph_hyperlink_null_clears() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    fs::write(&path, fixture::table_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_hyperlink".into(),
+                payload: serde_json::json!({
+                    "index": 1,
+                    "url": "https://example.com",
+                }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_hyperlink".into(),
+                payload: serde_json::json!({
+                    "index": 1,
+                    "url": null,
+                }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let entries = zip_entries(&cleared.bytes);
+    let document_xml =
+        String::from_utf8(entries["word/document.xml"].clone()).expect("document xml");
+    let rels = String::from_utf8(entries["word/_rels/document.xml.rels"].clone()).expect("rels");
+    assert!(
+        !document_xml.contains("w:hyperlink"),
+        "expected w:hyperlink unwrapped, got: {document_xml}"
+    );
+    assert!(
+        document_xml.contains("<w:r><w:t>CellA</w:t></w:r>"),
+        "inner runs must remain after unwrap: {document_xml}"
+    );
+    assert!(
+        !rels.contains("relationships/hyperlink"),
+        "expected hyperlink Relationship removed, got: {rels}"
+    );
+    assert!(
+        rels.contains("relationships/header"),
+        "existing header relationship must remain: {rels}"
+    );
+    let after = parse_document_bytes(&cleared.bytes).expect("reparse");
+    assert_eq!(after.paragraphs[1].text, "CellA");
+    assert_eq!(clear.semantic_diff[0].after.as_deref(), Some("cleared"));
+}
+
+#[test]
+fn set_paragraph_hyperlink_rejects_bad_url_and_missing_paragraph() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    for url in [
+        "javascript:alert(1)",
+        "file:///tmp/x",
+        "ftp://example.com",
+        "",
+    ] {
+        let error = handler
+            .validate_edit(
+                &model,
+                &[SemanticOperation {
+                    kind: "set_paragraph_hyperlink".into(),
+                    payload: serde_json::json!({
+                        "index": 0,
+                        "url": url,
+                    }),
+                }],
+            )
+            .expect_err("bad url");
+        let message = error.to_string().to_lowercase();
+        assert!(
+            message.contains("url")
+                || message.contains("http")
+                || message.contains("mailto")
+                || message.contains("empty"),
+            "unexpected error for `{url}`: {error}"
+        );
+    }
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_hyperlink".into(),
+                payload: serde_json::json!({
+                    "index": 99,
+                    "url": "https://example.com",
+                }),
+            }],
+        )
+        .expect_err("missing paragraph");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("not found") || message.contains("missing"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn set_paragraph_underline_sets_wu_and_leaves_other_parts_byte_identical() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("memo.docx");

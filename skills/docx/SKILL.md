@@ -21,7 +21,8 @@ For `.docx` files in an initialized Dotall workspace:
 - **Do not** hardcode operations — discover them per file.
 
 Dotall patches only the target story part for paragraph edits (`word/document.xml`,
-`word/header*.xml`, or `word/footer*.xml`). Untouched ZIP parts stay byte-identical.
+`word/header*.xml`, or `word/footer*.xml`). Hyperlink edits also patch
+`word/_rels/document.xml.rels`. Untouched ZIP parts stay byte-identical.
 
 ## Prerequisites
 
@@ -211,6 +212,17 @@ Set or clear small-caps/all-caps on all runs in a body/table paragraph (`w:small
   "payload": { "index": 1, "caps": "small" }
 }
 ```
+
+Set or clear an external hyperlink wrapping a body/table paragraph’s runs (`w:hyperlink` + `word/_rels/document.xml.rels`; `http://` / `https://` / `mailto:`; `null` clears; empty string rejected):
+
+```json
+{
+  "kind": "set_paragraph_hyperlink",
+  "payload": { "index": 0, "url": "https://example.com" }
+}
+```
+
+`element_id` is also accepted instead of `index`. Setting wraps existing runs in one `w:hyperlink r:id` (or updates the existing wrapper and Target). Clearing unwraps inner `w:r` and removes the matching hyperlink Relationship. Patches `word/document.xml` and `word/_rels/document.xml.rels` only.
 
 Find/replace a substring inside one body/table paragraph (rejects empty `find` / no match; first-run rewrite like `set_paragraph_text`):
 

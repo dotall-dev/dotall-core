@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Write};
 
 use dotall_core::{
@@ -13,6 +13,12 @@ use crate::FORMAT_ID;
 use crate::model::{DocumentModel, HeaderFooterParagraphModel, SCHEMA_ID, SCHEMA_VERSION};
 
 const UNSAFE_MARKERS: [&str; 5] = ["<w:del", "<w:ins", "<w:sdt", "<w:fldChar", "<w:instrText"];
+const HYPERLINK_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+const DOCUMENT_RELS_NAME: &str = "word/_rels/document.xml.rels";
+const R_NAMESPACE: &str =
+    r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+const EMPTY_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#;
 
 pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Result<ValidatedEdit> {
     if operations.len() != 1 {
@@ -37,6 +43,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_strikethrough" => validate_set_paragraph_strikethrough(model, operation),
         "set_paragraph_vert_align" => validate_set_paragraph_vert_align(model, operation),
         "set_paragraph_caps" => validate_set_paragraph_caps(model, operation),
+        "set_paragraph_hyperlink" => validate_set_paragraph_hyperlink(model, operation),
         "replace_paragraph_text" => validate_replace_paragraph_text(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
@@ -45,7 +52,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -401,6 +408,46 @@ fn validate_set_paragraph_caps(
             change: "set_paragraph_caps".into(),
             before: None,
             after: Some(match caps {
+                Some(value) => value.to_owned(),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_paragraph_hyperlink(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_hyperlink_paragraph(model, &operation.payload)?;
+    let url = optional_hyperlink_url(&operation.payload, "url")?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_hyperlink".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "url": url,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_hyperlink".into(),
+            before: None,
+            after: Some(match url {
                 Some(value) => value.to_owned(),
                 None => "cleared".into(),
             }),
@@ -971,6 +1018,15 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 bytes,
             })
         }
+        "set_paragraph_hyperlink" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let url = optional_hyperlink_url(&operation.payload, "url")?;
+            apply_paragraph_hyperlink(package, index, url)
+        }
         "set_header_paragraph_text" | "set_footer_paragraph_text" => {
             let part = required_str(&operation.payload, "part")?;
             let index = operation
@@ -1234,6 +1290,337 @@ pub fn patch_paragraph_caps(xml: &[u8], index: u32, caps: Option<&str>) -> Resul
             patch_paragraph_named_run_prop(&cleared, index, "w:caps", None)
         }
     }
+}
+
+fn apply_paragraph_hyperlink(
+    package: &[u8],
+    index: u32,
+    url: Option<&str>,
+) -> Result<PatchedOutput> {
+    let original = entry_bytes(package, "word/document.xml")?;
+    let rels_exist = has_entry(package, DOCUMENT_RELS_NAME)?;
+    let rels_xml = if rels_exist {
+        entry_bytes(package, DOCUMENT_RELS_NAME)?
+    } else {
+        EMPTY_RELATIONSHIPS.to_vec()
+    };
+    let existing_rid = existing_paragraph_hyperlink_rid(&original, index)?;
+
+    let (patched_xml, patched_rels, write_rels) = match url {
+        Some(url) => {
+            let rid = match existing_rid {
+                Some(rid) => rid,
+                None => {
+                    let used = relationship_id_numbers(&rels_xml)?;
+                    format!("rId{}", lowest_unused_number(&used))
+                }
+            };
+            let patched_xml = patch_paragraph_hyperlink(&original, index, Some(&rid))?;
+            let patched_rels = upsert_hyperlink_relationship(&rels_xml, &rid, url)?;
+            (patched_xml, patched_rels, true)
+        }
+        None => {
+            let patched_xml = patch_paragraph_hyperlink(&original, index, None)?;
+            let patched_rels = if let Some(rid) = existing_rid {
+                remove_relationship(&rels_xml, &rid)?
+            } else {
+                rels_xml
+            };
+            (patched_xml, patched_rels, rels_exist)
+        }
+    };
+
+    let mut replacements = BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]);
+    if write_rels {
+        replacements.insert(DOCUMENT_RELS_NAME.to_owned(), patched_rels);
+    }
+    let bytes = rebuild_package(package, &replacements)?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_paragraph_hyperlink(xml: &[u8], index: u32, rid: Option<&str>) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let patched_paragraph = match rid {
+        Some(rid) => wrap_or_update_hyperlink(paragraph, rid)?,
+        None => unwrap_hyperlinks(paragraph)?,
+    };
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&patched_paragraph);
+    output.push_str(&source[span.1..]);
+    let with_ns = match rid {
+        Some(_) => ensure_r_namespace(&output),
+        None => output,
+    };
+    Ok(with_ns.into_bytes())
+}
+
+fn wrap_or_update_hyperlink(paragraph: &str, rid: &str) -> Result<String> {
+    if find_named_open(paragraph, "w:hyperlink").is_some() {
+        return update_hyperlink_rid(paragraph, rid);
+    }
+    let (content_start, content_end) = paragraph_content_span(paragraph)?;
+    Ok(format!(
+        r#"{}<w:hyperlink r:id="{rid}">{}</w:hyperlink>{}"#,
+        &paragraph[..content_start],
+        &paragraph[content_start..content_end],
+        &paragraph[content_end..]
+    ))
+}
+
+fn update_hyperlink_rid(paragraph: &str, rid: &str) -> Result<String> {
+    let start = find_named_open(paragraph, "w:hyperlink")
+        .ok_or_else(|| format_error("paragraph is missing w:hyperlink"))?;
+    let open_end = paragraph[start..]
+        .find('>')
+        .map(|offset| start + offset + 1)
+        .ok_or_else(|| format_error("unterminated w:hyperlink"))?;
+    let patched_open = upsert_rid_attr(&paragraph[start..open_end], rid);
+    Ok(format!(
+        "{}{}{}",
+        &paragraph[..start],
+        patched_open,
+        &paragraph[open_end..]
+    ))
+}
+
+fn unwrap_hyperlinks(paragraph: &str) -> Result<String> {
+    let mut current = paragraph.to_owned();
+    while let Some(start) = find_named_open(&current, "w:hyperlink") {
+        let end = element_end(&current, start, "w:hyperlink")?;
+        let inner = hyperlink_inner(&current[start..end])?;
+        current = format!("{}{}{}", &current[..start], inner, &current[end..]);
+    }
+    Ok(current)
+}
+
+fn hyperlink_inner(element: &str) -> Result<&str> {
+    let open_end = element
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:hyperlink"))?;
+    if element[..open_end].ends_with("/>") {
+        return Ok("");
+    }
+    let close = "</w:hyperlink>";
+    let inner_end = element
+        .len()
+        .checked_sub(close.len())
+        .filter(|end| *end >= open_end)
+        .ok_or_else(|| format_error("unterminated w:hyperlink"))?;
+    Ok(&element[open_end..inner_end])
+}
+
+fn paragraph_content_span(paragraph: &str) -> Result<(usize, usize)> {
+    let open_end = paragraph
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    if paragraph[..open_end].ends_with("/>") {
+        return Err(format_error("cannot hyperlink a self-closing paragraph"));
+    }
+    let content_start = match extract_p_pr(&paragraph[open_end..]) {
+        Some(p_pr) => open_end + p_pr.len(),
+        None => open_end,
+    };
+    let content_end = paragraph
+        .rfind("</w:p>")
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    Ok((content_start, content_end))
+}
+
+fn upsert_rid_attr(open_tag: &str, rid: &str) -> String {
+    let needle = r#"r:id=""#;
+    if let Some(at) = open_tag.find(needle) {
+        let value_start = at + needle.len();
+        if let Some(rel) = open_tag[value_start..].find('"') {
+            let value_end = value_start + rel;
+            return format!(
+                "{}{rid}{}",
+                &open_tag[..value_start],
+                &open_tag[value_end..]
+            );
+        }
+    }
+    if let Some(stripped) = open_tag.strip_suffix("/>") {
+        format!(r#"{stripped} r:id="{rid}"/>"#)
+    } else if let Some(stripped) = open_tag.strip_suffix('>') {
+        format!(r#"{stripped} r:id="{rid}">"#)
+    } else {
+        format!(r#"{open_tag} r:id="{rid}""#)
+    }
+}
+
+fn ensure_r_namespace(xml: &str) -> String {
+    if xml.contains("xmlns:r=") {
+        return xml.to_owned();
+    }
+    let Some(start) = xml.find("<w:document") else {
+        return xml.to_owned();
+    };
+    let Some(rel) = xml[start..].find('>') else {
+        return xml.to_owned();
+    };
+    let gt = start + rel;
+    if xml[..gt].ends_with('/') {
+        format!("{} {R_NAMESPACE}/>{}", &xml[..gt - 1], &xml[gt + 1..])
+    } else {
+        format!("{} {R_NAMESPACE}>{}", &xml[..gt], &xml[gt + 1..])
+    }
+}
+
+fn existing_paragraph_hyperlink_rid(xml: &[u8], index: u32) -> Result<Option<String>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    let Some(start) = find_named_open(paragraph, "w:hyperlink") else {
+        return Ok(None);
+    };
+    let open_end = paragraph[start..]
+        .find('>')
+        .map(|offset| start + offset + 1)
+        .ok_or_else(|| format_error("unterminated w:hyperlink"))?;
+    Ok(tag_attribute(&paragraph[start..open_end], "r:id"))
+}
+
+fn upsert_hyperlink_relationship(xml: &[u8], rid: &str, url: &str) -> Result<Vec<u8>> {
+    let without = remove_relationship(xml, rid)?;
+    insert_before_close(
+        &without,
+        "Relationships",
+        &hyperlink_relationship_tag(rid, url),
+    )
+}
+
+fn hyperlink_relationship_tag(rid: &str, url: &str) -> String {
+    format!(
+        r#"<Relationship Id="{rid}" Type="{HYPERLINK_REL_TYPE}" Target="{}" TargetMode="External"/>"#,
+        xml_escape_attr(url)
+    )
+}
+
+fn insert_before_close(xml: &[u8], element: &str, insertion: &str) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("XML is not UTF-8: {error}")))?;
+    let closing = format!("</{element}>");
+    let position = text
+        .rfind(&closing)
+        .ok_or_else(|| format_error(format!("XML is missing closing `{element}`")))?;
+    Ok(format!("{}{}{}", &text[..position], insertion, &text[position..]).into_bytes())
+}
+
+fn remove_relationship(xml: &[u8], id: &str) -> Result<Vec<u8>> {
+    remove_matching_tag(xml, "Relationship", |tag| {
+        tag_attribute(tag, "Id").as_deref() == Some(id)
+    })
+}
+
+fn remove_matching_tag(
+    xml: &[u8],
+    tag_name: &str,
+    matches: impl Fn(&str) -> bool,
+) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("XML is not UTF-8: {error}")))?;
+    let needle = format!("<{tag_name}");
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find(&needle) {
+        let start = cursor + offset;
+        let after_name = &text[start + needle.len()..];
+        if after_name.starts_with(|character: char| character.is_ascii_alphabetic()) {
+            output.push_str(&text[cursor..start + needle.len()]);
+            cursor = start + needle.len();
+            continue;
+        }
+        let end = text[start..]
+            .find('>')
+            .map(|rel| start + rel + 1)
+            .ok_or_else(|| format_error(format!("unterminated `{tag_name}`")))?;
+        let tag = &text[start..end];
+        let self_closing = tag.ends_with("/>");
+        let span_end = if self_closing {
+            end
+        } else {
+            let close = format!("</{tag_name}>");
+            text[end..]
+                .find(&close)
+                .map(|rel| end + rel + close.len())
+                .ok_or_else(|| format_error(format!("missing close for `{tag_name}`")))?
+        };
+        if matches(tag) {
+            output.push_str(&text[cursor..start]);
+            cursor = span_end;
+        } else {
+            output.push_str(&text[cursor..span_end]);
+            cursor = span_end;
+        }
+    }
+    output.push_str(&text[cursor..]);
+    Ok(output.into_bytes())
+}
+
+fn relationship_id_numbers(xml: &[u8]) -> Result<BTreeSet<u32>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("relationships XML is not UTF-8: {error}")))?;
+    let mut numbers = BTreeSet::new();
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find("<Relationship") {
+        let start = cursor + rel;
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| format_error("unterminated Relationship"))?;
+        if let Some(id) = tag_attribute(&text[start..end], "Id")
+            && let Some(number) = id.strip_prefix("rId").and_then(|value| value.parse().ok())
+        {
+            numbers.insert(number);
+        }
+        cursor = end;
+    }
+    Ok(numbers)
+}
+
+fn lowest_unused_number(used: &BTreeSet<u32>) -> u32 {
+    let mut number = 1;
+    while used.contains(&number) {
+        number += 1;
+    }
+    number
+}
+
+fn tag_attribute(tag: &str, attribute: &str) -> Option<String> {
+    let needle = format!("{attribute}=\"");
+    let start = tag.find(&needle)? + needle.len();
+    let end = tag[start..].find('"')? + start;
+    Some(tag[start..end].to_owned())
+}
+
+fn has_entry(package: &[u8], name: &str) -> Result<bool> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| format_error(format!("invalid DOCX package: {error}")))?;
+    Ok(archive.by_name(name).is_ok())
 }
 
 pub fn patch_paragraph_font_size(xml: &[u8], index: u32, size_pt: Option<f64>) -> Result<Vec<u8>> {
@@ -2220,6 +2607,29 @@ fn resolve_body_paragraph<'a>(
         .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))
 }
 
+fn resolve_hyperlink_paragraph<'a>(
+    model: &'a DocumentModel,
+    payload: &serde_json::Value,
+) -> Result<&'a crate::model::ParagraphModel> {
+    if payload
+        .get("element_id")
+        .and_then(serde_json::Value::as_str)
+        .is_some()
+        || payload
+            .get("index")
+            .and_then(serde_json::Value::as_u64)
+            .is_some()
+    {
+        return resolve_body_paragraph(model, payload);
+    }
+    if payload.get("paragraph").is_some() {
+        let mut aliased = payload.clone();
+        aliased["index"] = payload["paragraph"].clone();
+        return resolve_body_paragraph(model, &aliased);
+    }
+    resolve_body_paragraph(model, payload)
+}
+
 fn resolve_header_footer_paragraph<'a>(
     model: &'a DocumentModel,
     payload: &serde_json::Value,
@@ -2448,11 +2858,13 @@ fn rebuild_package(original: &[u8], replacements: &BTreeMap<String, Vec<u8>>) ->
     let mut archive = ZipArchive::new(Cursor::new(original))
         .map_err(|error| format_error(format!("invalid DOCX package: {error}")))?;
     let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    let mut seen = BTreeSet::new();
     for index in 0..archive.len() {
         let entry = archive
             .by_index(index)
             .map_err(|error| format_error(format!("cannot read ZIP entry: {error}")))?;
         let name = entry.name().to_owned();
+        seen.insert(name.clone());
         if let Some(replacement) = replacements.get(&name) {
             let options = SimpleFileOptions::default()
                 .compression_method(entry.compression())
@@ -2468,6 +2880,17 @@ fn rebuild_package(original: &[u8], replacements: &BTreeMap<String, Vec<u8>>) ->
                 .raw_copy_file(entry)
                 .map_err(|error| format_error(format!("cannot copy ZIP entry: {error}")))?;
         }
+    }
+    for (name, replacement) in replacements {
+        if seen.contains(name) {
+            continue;
+        }
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .map_err(|error| format_error(format!("cannot start added ZIP entry: {error}")))?;
+        writer
+            .write_all(replacement)
+            .map_err(|error| format_error(format!("cannot write added ZIP entry: {error}")))?;
     }
     writer
         .finish()
@@ -2536,6 +2959,39 @@ fn optional_caps<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option
             }
         }
     }
+}
+
+fn optional_hyperlink_url<'a>(
+    payload: &'a serde_json::Value,
+    key: &str,
+) -> Result<Option<&'a str>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => {
+            let text = value
+                .as_str()
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| format_error(format!("`{key}` must be a non-empty string")))?;
+            if is_allowed_external_url(text) {
+                Ok(Some(text))
+            } else {
+                Err(format_error(format!(
+                    "`{key}` must start with http://, https://, or mailto:"
+                )))
+            }
+        }
+    }
+}
+
+fn is_allowed_external_url(url: &str) -> bool {
+    starts_with_ignore_ascii_case(url, "http://")
+        || starts_with_ignore_ascii_case(url, "https://")
+        || starts_with_ignore_ascii_case(url, "mailto:")
+}
+
+fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
+    haystack.len() >= prefix.len()
+        && haystack.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
 fn optional_srgb_color(payload: &serde_json::Value, key: &str) -> Result<Option<String>> {
