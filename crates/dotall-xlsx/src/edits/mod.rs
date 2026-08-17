@@ -191,6 +191,13 @@ pub(crate) fn parse_validated_operations(
                 author: optional_string(operation, "author")?
                     .unwrap_or_else(|| "Dotall".to_owned()),
             }),
+            "insert_picture" => Ok(XlsxEditOp::InsertPicture {
+                sheet: required_string(operation, "sheet")?,
+                from_cell: required_string(operation, "from_cell")?,
+                bytes: decode_bytes_base64(operation)?,
+                content_type: optional_string(operation, "content_type")?
+                    .unwrap_or_else(|| "image/png".to_owned()),
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
@@ -392,6 +399,25 @@ fn optional_nullable_string(
             "validated edit operation requires `{field}` to be a string or null when present"
         ))),
     }
+}
+
+fn decode_bytes_base64(operation: &dotall_core::SemanticOperation) -> dotall_core::Result<Vec<u8>> {
+    use base64::Engine;
+    let encoded = operation
+        .payload
+        .get("bytes_base64")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            invalid_operation("validated insert_picture requires non-empty `bytes_base64`")
+        })?;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| {
+            invalid_operation(format!(
+                "validated insert_picture has invalid base64: {error}"
+            ))
+        })
 }
 
 fn invalid_operation(message: impl Into<String>) -> dotall_core::DotallError {

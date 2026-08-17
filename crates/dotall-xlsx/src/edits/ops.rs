@@ -175,6 +175,12 @@ pub enum XlsxEditOp {
         /// Defaults to `"Dotall"` when the agent omits `author`.
         author: String,
     },
+    InsertPicture {
+        sheet: String,
+        from_cell: String,
+        bytes: Vec<u8>,
+        content_type: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -24,6 +24,7 @@ use super::merges;
 use super::page_margins;
 use super::page_orientation;
 use super::paper_size;
+use super::pictures;
 use super::print_scale;
 use super::right_to_left;
 use super::shared_strings;
@@ -103,6 +104,28 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     ] = operations.as_slice()
     {
         let patch = comments::insert_comment(&original, sheet, address, text, author)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [
+        XlsxEditOp::InsertPicture {
+            sheet,
+            from_cell,
+            bytes: image_bytes,
+            content_type,
+        },
+    ] = operations.as_slice()
+    {
+        let patch =
+            pictures::insert_picture(&original, sheet, from_cell, image_bytes, content_type)?;
         let bytes = rebuild_package(
             &original,
             &patch.replacements,
@@ -364,6 +387,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetShowGridlines { .. }
                 | XlsxEditOp::SetRightToLeft { .. }
                 | XlsxEditOp::InsertComment { .. }
+                | XlsxEditOp::InsertPicture { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -409,7 +433,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
             | XlsxEditOp::SetRightToLeft { .. }
-            | XlsxEditOp::InsertComment { .. } => {
+            | XlsxEditOp::InsertComment { .. }
+            | XlsxEditOp::InsertPicture { .. } => {
                 unreachable!("structural operations return above")
             }
         };

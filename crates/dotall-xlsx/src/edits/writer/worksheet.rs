@@ -47,7 +47,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
             | XlsxEditOp::SetRightToLeft { .. }
-            | XlsxEditOp::InsertComment { .. } => {
+            | XlsxEditOp::InsertComment { .. }
+            | XlsxEditOp::InsertPicture { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -170,7 +171,8 @@ pub(super) fn patch(
                 | XlsxEditOp::SetSheetZoom { .. }
                 | XlsxEditOp::SetShowGridlines { .. }
                 | XlsxEditOp::SetRightToLeft { .. }
-                | XlsxEditOp::InsertComment { .. } => {
+                | XlsxEditOp::InsertComment { .. }
+                | XlsxEditOp::InsertPicture { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -216,7 +218,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
             | XlsxEditOp::SetRightToLeft { .. }
-            | XlsxEditOp::InsertComment { .. } => {
+            | XlsxEditOp::InsertComment { .. }
+            | XlsxEditOp::InsertPicture { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -362,7 +365,8 @@ fn render_new_cell(
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
         | XlsxEditOp::SetRightToLeft { .. }
-        | XlsxEditOp::InsertComment { .. } => {
+        | XlsxEditOp::InsertComment { .. }
+        | XlsxEditOp::InsertPicture { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -553,7 +557,8 @@ fn render_cell_parts(
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
         | XlsxEditOp::SetRightToLeft { .. }
-        | XlsxEditOp::InsertComment { .. } => {
+        | XlsxEditOp::InsertComment { .. }
+        | XlsxEditOp::InsertPicture { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

@@ -39,6 +39,11 @@ pub fn chart_id(part_path: &str, schema_version: u32) -> String {
     opaque_id("ch", schema_version, &[part_path])
 }
 
+/// Returns a deterministic opaque identifier for a worksheet picture.
+pub fn picture_id(sheet_name: &str, media_path: &str, schema_version: u32) -> String {
+    opaque_id("pic", schema_version, &[sheet_name, media_path])
+}
+
 fn opaque_id(prefix: &str, schema_version: u32, components: &[&str]) -> String {
     let mut hasher = Hasher::new();
     hasher.update(b"xlsx.workbook");

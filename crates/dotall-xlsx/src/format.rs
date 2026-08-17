@@ -143,6 +143,13 @@ impl FormatHandler for XlsxFormat {
                     "sheet": chart.sheet,
                     "title": chart.title,
                 })).collect::<Vec<_>>(),
+                "pictures": workbook.pictures.iter().map(|picture| json!({
+                    "element_id": picture.element_id,
+                    "sheet": picture.sheet,
+                    "name": picture.name,
+                    "content_type": picture.content_type,
+                    "from_cell": picture.from_cell,
+                })).collect::<Vec<_>>(),
                 "preserved": ["charts", "pivots", "vba", "other_ooxml_parts"],
                 "structure": structure,
             }),
@@ -773,6 +780,23 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 }
             }),
             safety: "Insert-only. Rejects cells that already have a comment (no set/delete/replace). Writes legacy comments*.xml + vmlDrawing + worksheet legacyDrawing/rels. Charts remain preserve-only — never mutate chart parts."
+                .into(),
+        },
+        EditCapability {
+            operation: "insert_picture".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Insert a PNG or JPEG picture anchored at a worksheet cell (oneCellAnchor)."
+                .into(),
+            example: json!({
+                "kind": "insert_picture",
+                "payload": {
+                    "sheet": "Inputs",
+                    "from_cell": "A1",
+                    "bytes_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQI12P4z8AAAAMBAQAY3Y20AAAAAElFTkSuQmCC",
+                    "content_type": "image/png"
+                }
+            }),
+            safety: "Insert-only. Rejects replace/delete/set_picture. Adds xl/media + drawing oneCellAnchor; existing xl/media/* bytes stay identical. Coexists with legacyDrawing comments. content_type defaults to image/png; only image/png and image/jpeg allowed."
                 .into(),
         },
     ]

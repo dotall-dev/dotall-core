@@ -89,6 +89,7 @@ fn ignores_external_workbook_formula_references() {
         style_table: Vec::new(),
         comments: Vec::new(),
         charts: Vec::new(),
+        pictures: Vec::new(),
         unmodeled: UnmodeledMap {
             charts: PreservationStatus::Preserved,
             pivots: PreservationStatus::Preserved,
@@ -122,6 +123,7 @@ fn resolves_sheet_references_case_insensitively() {
         style_table: Vec::new(),
         comments: Vec::new(),
         charts: Vec::new(),
+        pictures: Vec::new(),
         unmodeled: UnmodeledMap {
             charts: PreservationStatus::Preserved,
             pivots: PreservationStatus::Preserved,
@@ -246,6 +248,7 @@ fn workbook_fixture() -> WorkbookModel {
         style_table: Vec::new(),
         comments: Vec::new(),
         charts: Vec::new(),
+        pictures: Vec::new(),
         unmodeled: UnmodeledMap {
             charts: PreservationStatus::Preserved,
             pivots: PreservationStatus::Preserved,

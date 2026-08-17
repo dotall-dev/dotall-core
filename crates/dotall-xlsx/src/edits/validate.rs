@@ -71,6 +71,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "insert_picture"))
+    {
+        return validate_insert_picture_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "set_tab_color"))
     {
         return validate_set_tab_color_operations(model, operations);
@@ -237,6 +243,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "insert_comment"))
     {
         return validate_insert_comment_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "insert_picture"))
+    {
+        return validate_insert_picture_operations(model, operations);
     }
     if operations
         .iter()
@@ -964,7 +976,13 @@ fn reject_unsupported_comment_or_chart_ops(operations: &[SemanticOperation]) -> 
         let kind = operation.kind.as_str();
         if matches!(
             kind,
-            "set_comment" | "delete_comment" | "replace_comment" | "update_comment"
+            "set_comment"
+                | "delete_comment"
+                | "replace_comment"
+                | "update_comment"
+                | "set_picture"
+                | "delete_picture"
+                | "replace_picture"
         ) {
             return Err(unsupported_edit_capability(kind));
         }
@@ -981,6 +999,7 @@ fn unsupported_edit_capability(kind: &str) -> DotallError {
         capability: kind.into(),
         available: vec![
             "insert_comment".into(),
+            "insert_picture".into(),
             "set_cell_value".into(),
             "set_cell_formula".into(),
             "set_range".into(),
@@ -1084,6 +1103,102 @@ fn validate_insert_comment_operations(
             change: "insert_comment".into(),
             before: None,
             after: Some(text),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_insert_picture_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    use base64::Engine;
+
+    if operations.len() != 1 {
+        return Err(format_error(
+            "insert_picture edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "insert_picture" {
+        return Err(format_error("unsupported insert_picture edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("insert_picture requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let from_cell_raw = operation
+        .payload
+        .get("from_cell")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .ok_or_else(|| format_error("insert_picture requires a non-empty `from_cell` field"))?;
+    let from_cell = format_address(parse_address(from_cell_raw)?);
+    let content_type = match operation.payload.get("content_type") {
+        None | Some(Value::Null) => "image/png".to_owned(),
+        Some(Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed != "image/png" && trimmed != "image/jpeg" {
+                return Err(format_error(
+                    "insert_picture `content_type` must be image/png or image/jpeg",
+                ));
+            }
+            trimmed.to_owned()
+        }
+        _ => {
+            return Err(format_error(
+                "insert_picture `content_type` must be a string when present",
+            ));
+        }
+    };
+    let encoded = operation
+        .payload
+        .get("bytes_base64")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format_error("insert_picture requires a non-empty `bytes_base64` field"))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| format_error(format!("insert_picture invalid base64: {error}")))?;
+    if bytes.is_empty() {
+        return Err(format_error("insert_picture rejects empty image bytes"));
+    }
+
+    let element_id = ids::picture_id(
+        &canonical_sheet,
+        &format!("pending:{from_cell}"),
+        MODEL_SCHEMA_VERSION,
+    );
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_picture".into(),
+            payload: serde_json::json!({
+                "sheet": &canonical_sheet,
+                "from_cell": &from_cell,
+                "bytes_base64": encoded,
+                "content_type": &content_type,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!{from_cell}"),
+            element_id,
+            change: "insert_picture".into(),
+            before: None,
+            after: Some(content_type),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -2888,7 +3003,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
         | XlsxEditOp::SetRightToLeft { .. }
-        | XlsxEditOp::InsertComment { .. } => {
+        | XlsxEditOp::InsertComment { .. }
+                | XlsxEditOp::InsertPicture { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -3016,9 +3132,10 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
         | XlsxEditOp::SetRightToLeft { .. }
-        | XlsxEditOp::InsertComment { .. } => {
+        | XlsxEditOp::InsertComment { .. }
+        | XlsxEditOp::InsertPicture { .. } => {
             unreachable!(
-                "sheet, merge, dimension, freeze, define_name, and insert_comment edits are validated separately"
+                "sheet, merge, dimension, freeze, define_name, insert_comment, and insert_picture edits are validated separately"
             )
         }
     }
@@ -3073,6 +3190,7 @@ mod tests {
             style_table: Vec::new(),
             comments: Vec::new(),
             charts: Vec::new(),
+            pictures: Vec::new(),
             unmodeled: UnmodeledMap {
                 charts: PreservationStatus::Preserved,
                 pivots: PreservationStatus::Preserved,

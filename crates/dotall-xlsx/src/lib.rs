@@ -14,8 +14,8 @@ pub const FORMAT_ID: &str = "xlsx";
 
 pub use format::XlsxFormat;
 pub use model::{
-    CellModel, CellValue, ChartModel, CommentModel, NamedRange, PreservationStatus, PrintTitles,
-    SCHEMA_ID, SCHEMA_VERSION, SheetDimensions, SheetModel, StyleEntry, UnmodeledMap,
+    CellModel, CellValue, ChartModel, CommentModel, NamedRange, PictureModel, PreservationStatus,
+    PrintTitles, SCHEMA_ID, SCHEMA_VERSION, SheetDimensions, SheetModel, StyleEntry, UnmodeledMap,
     WorkbookModel,
 };
 pub use parser::parse_workbook;

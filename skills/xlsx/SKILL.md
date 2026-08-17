@@ -78,6 +78,8 @@ From the response, capture:
   (empty/`[]` when none).
 - Inspect `summary.charts[]` — preserve-only `{ element_id, sheet, title }` (title may be
   `""`). Never mutate charts.
+- Inspect `summary.pictures[]` — `{ element_id, sheet, name, content_type, from_cell? }`
+  (empty/`[]` when none). Insert-only via `insert_picture`.
 
 Never assume an operation exists because another `.xlsx` supported it — always
 re-check after external edits or a failed apply.
@@ -306,6 +308,25 @@ Inspect surfaces `summary.comments[]` (`element_id`, `sheet`, `cell`, `author`, 
 and `summary.charts[]` (`element_id`, `sheet`, `title`). `summary.preserved` still lists
 `charts` — inspect does not mean mutate.
 
+Insert a PNG/JPEG picture at a worksheet cell (`content_type` optional; defaults to
+`image/png`). Adds `xl/media/*` + drawing `oneCellAnchor`; existing media bytes stay
+identical. Do **not** attempt `replace_picture` / `delete_picture` / `set_picture`.
+
+```json
+{
+  "kind": "insert_picture",
+  "payload": {
+    "sheet": "Inputs",
+    "from_cell": "A1",
+    "bytes_base64": "<standard base64 of raw image bytes>",
+    "content_type": "image/png"
+  }
+}
+```
+
+Inspect surfaces `summary.pictures[]` (`element_id`, `sheet`, `name`, `content_type`,
+`from_cell`).
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.
@@ -340,7 +361,7 @@ Use **`dotall_discard`** to drop a staged transaction without touching source by
 | **Capability-driven ops** | Unsupported `kind` values return structured errors listing available operations. |
 | **Structural rejects** | Row/column/sheet ops validate impact first (formula rewrites, chart/table/name references). Rejection is intentional — do not bypass with raw file edits. |
 | **No formula evaluation** | Dotall stores and patches formulas; it does not compute results. |
-| **Charts/pivots preserved, not edited** | Inspect `summary.charts[]` only. Do not attempt chart or pivot mutation; preserve them by using Dotall edits only. Comments are **insert-only** (`insert_comment`); never set/delete/replace existing notes. |
+| **Charts/pivots preserved, not edited** | Inspect `summary.charts[]` only. Do not attempt chart or pivot mutation; preserve them by using Dotall edits only. Comments are **insert-only** (`insert_comment`); never set/delete/replace existing notes. Pictures are **insert-only** (`insert_picture`); never replace/delete existing media. |
 
 When a structural edit is rejected, read the error, inspect dependents with
 `dotall_deps`, adjust the plan, or choose a narrower cell-level edit.

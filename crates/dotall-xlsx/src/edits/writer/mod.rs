@@ -10,6 +10,7 @@ mod package;
 mod page_margins;
 mod page_orientation;
 mod paper_size;
+mod pictures;
 mod print_scale;
 mod right_to_left;
 mod shared_strings;

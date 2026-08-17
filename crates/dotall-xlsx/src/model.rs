@@ -16,7 +16,21 @@ pub struct WorkbookModel {
     /// Chart inspect entries (`xl/charts/chart*.xml`). Empty when none. Preserve-only.
     #[serde(default)]
     pub charts: Vec<ChartModel>,
+    /// Floating pictures from worksheet drawings (`xl/media/*`). Empty when none.
+    #[serde(default)]
+    pub pictures: Vec<PictureModel>,
     pub unmodeled: UnmodeledMap,
+}
+
+/// A worksheet drawing picture for inspect / insert-only editing.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct PictureModel {
+    pub element_id: String,
+    pub sheet: String,
+    pub name: String,
+    pub content_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_cell: Option<String>,
 }
 
 /// A legacy Excel Note (comment) for inspect / insert-only editing.

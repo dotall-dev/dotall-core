@@ -141,6 +141,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_show_gridlines",
             "set_right_to_left",
             "insert_comment",
+            "insert_picture",
         ]
     );
     assert_eq!(
@@ -637,6 +638,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
             style_table: Vec::new(),
             comments: Vec::new(),
             charts: Vec::new(),
+            pictures: Vec::new(),
             unmodeled: UnmodeledMap {
                 charts: PreservationStatus::Preserved,
                 pivots: PreservationStatus::Preserved,

@@ -13,8 +13,8 @@ use crate::FORMAT_ID;
 use crate::ids;
 use crate::model::{
     CellModel, CellValue, CenterOnPage, ChartModel, CommentModel, FitToPage, HeaderFooter,
-    NamedRange, PageMargins, SCHEMA_VERSION, SheetDimensions, SheetModel, StyleEntry, UnmodeledMap,
-    WorkbookModel, column_name,
+    NamedRange, PageMargins, PictureModel, SCHEMA_VERSION, SheetDimensions, SheetModel, StyleEntry,
+    UnmodeledMap, WorkbookModel, column_name,
 };
 
 /// Parsed `xl/styles.xml` cellXfs + number-format resolution.
@@ -129,6 +129,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
 
     let comments = parse_comments(&source_bytes, source, &sheets)?;
     let charts = parse_charts(&source_bytes, source, &sheets)?;
+    let pictures = parse_pictures(&source_bytes, source, &sheets)?;
 
     Ok(WorkbookModel {
         workbook_id: ids::workbook_id(&source_hash, SCHEMA_VERSION),
@@ -137,6 +138,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
         style_table,
         comments,
         charts,
+        pictures,
         unmodeled: UnmodeledMap::default(),
     })
 }
@@ -1569,6 +1571,226 @@ fn parse_charts(package: &[u8], source: &Path, _sheets: &[SheetModel]) -> Result
     Ok(charts)
 }
 
+fn parse_pictures(
+    package: &[u8],
+    source: &Path,
+    _sheets: &[SheetModel],
+) -> Result<Vec<PictureModel>> {
+    let content_types = parse_content_types(package, source)?;
+    let workbook = entry_bytes(package, "xl/workbook.xml", source)?;
+    let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels", source)?;
+    let relationship_targets = parse_relationships(&relationships, source)?;
+    let workbook_sheets = parse_workbook_sheets(&workbook, source)?;
+
+    let mut pictures = Vec::new();
+    for (sheet_name, relationship_id) in workbook_sheets {
+        let Some(target) = relationship_targets.get(&relationship_id) else {
+            continue;
+        };
+        let worksheet_path = normalize_relationship_target(target);
+        let rels_path = worksheet_rels_path(&worksheet_path);
+        let Ok(rels_bytes) = entry_bytes(package, &rels_path, source) else {
+            continue;
+        };
+        let sheet_rels = parse_relationship_records(&rels_bytes, source)?;
+        for rel in sheet_rels {
+            if !rel.kind.ends_with("/drawing") {
+                continue;
+            }
+            let drawing_path = resolve_relationship_target(&worksheet_path, &rel.target);
+            let Ok(drawing_xml) = entry_bytes(package, &drawing_path, source) else {
+                continue;
+            };
+            let drawing_rels_path = worksheet_rels_path(&drawing_path);
+            let Ok(drawing_rels) = entry_bytes(package, &drawing_rels_path, source) else {
+                continue;
+            };
+            let mut image_by_rid = BTreeMap::new();
+            for drawing_rel in parse_relationship_records(&drawing_rels, source)? {
+                if !drawing_rel.kind.ends_with("/image") {
+                    continue;
+                }
+                let media_path = resolve_relationship_target(&drawing_path, &drawing_rel.target);
+                image_by_rid.insert(drawing_rel.id, media_path);
+            }
+            let parsed =
+                parse_drawing_pictures(&drawing_xml, &sheet_name, &image_by_rid, &content_types)?;
+            pictures.extend(parsed);
+        }
+    }
+    pictures.sort_by(|left, right| left.element_id.cmp(&right.element_id));
+    Ok(pictures)
+}
+
+fn parse_content_types(package: &[u8], source: &Path) -> Result<ContentTypesIndex> {
+    let xml = entry_bytes(package, "[Content_Types].xml", source)?;
+    let text = std::str::from_utf8(&xml)
+        .map_err(|error| format_error(source, format!("content types are not UTF-8: {error}")))?;
+    let mut defaults = BTreeMap::new();
+    let mut overrides = BTreeMap::new();
+
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..].find("<Default ") {
+        let start = cursor + relative;
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset)
+            .ok_or_else(|| format_error(source, "unterminated Default content type"))?;
+        let tag = &text[start..=end];
+        if let (Some(extension), Some(content_type)) =
+            (xml_attr(tag, "Extension"), xml_attr(tag, "ContentType"))
+        {
+            defaults.insert(extension.to_ascii_lowercase(), content_type);
+        }
+        cursor = end + 1;
+    }
+
+    cursor = 0;
+    while let Some(relative) = text[cursor..].find("<Override ") {
+        let start = cursor + relative;
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset)
+            .ok_or_else(|| format_error(source, "unterminated Override content type"))?;
+        let tag = &text[start..=end];
+        if let (Some(part_name), Some(content_type)) =
+            (xml_attr(tag, "PartName"), xml_attr(tag, "ContentType"))
+        {
+            let normalized = part_name.trim_start_matches('/').to_owned();
+            overrides.insert(normalized, content_type);
+        }
+        cursor = end + 1;
+    }
+
+    Ok(ContentTypesIndex {
+        defaults,
+        overrides,
+    })
+}
+
+#[derive(Clone, Debug, Default)]
+struct ContentTypesIndex {
+    defaults: BTreeMap<String, String>,
+    overrides: BTreeMap<String, String>,
+}
+
+impl ContentTypesIndex {
+    fn content_type_for(&self, part_path: &str) -> String {
+        if let Some(value) = self.overrides.get(part_path) {
+            return value.clone();
+        }
+        let extension = part_path
+            .rsplit_once('.')
+            .map(|(_, extension)| extension.to_ascii_lowercase())
+            .unwrap_or_default();
+        self.defaults
+            .get(&extension)
+            .cloned()
+            .unwrap_or_else(|| "application/octet-stream".to_owned())
+    }
+}
+
+fn xml_attr(tag: &str, attribute: &str) -> Option<String> {
+    let needle = format!("{attribute}=\"");
+    let start = tag.find(&needle)? + needle.len();
+    let end = tag[start..].find('"')? + start;
+    Some(tag[start..end].to_owned())
+}
+
+fn parse_drawing_pictures(
+    xml: &[u8],
+    sheet_name: &str,
+    image_by_rid: &BTreeMap<String, String>,
+    content_types: &ContentTypesIndex,
+) -> Result<Vec<PictureModel>> {
+    let text = match std::str::from_utf8(xml) {
+        Ok(value) => value,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut pictures = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..]
+        .find("<xdr:twoCellAnchor")
+        .or_else(|| text[cursor..].find("<xdr:oneCellAnchor"))
+    {
+        let start = cursor + relative;
+        let is_two = text[start..].starts_with("<xdr:twoCellAnchor");
+        let close = if is_two {
+            "</xdr:twoCellAnchor>"
+        } else {
+            "</xdr:oneCellAnchor>"
+        };
+        let Some(end_rel) = text[start..].find(close) else {
+            break;
+        };
+        let end = start + end_rel + close.len();
+        let anchor = &text[start..end];
+        cursor = end;
+
+        if !anchor.contains("<xdr:pic") && !anchor.contains("<xdr:pic>") {
+            // Still allow pic without checking both; continue if no blip.
+        }
+        let Some(embed) = blip_embed_id(anchor) else {
+            continue;
+        };
+        let Some(media_path) = image_by_rid.get(&embed) else {
+            continue;
+        };
+        let name = cnvpr_name(anchor).unwrap_or_else(|| {
+            media_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(media_path)
+                .to_owned()
+        });
+        let from_cell = anchor_from_cell(anchor);
+        pictures.push(PictureModel {
+            element_id: ids::picture_id(sheet_name, media_path, SCHEMA_VERSION),
+            sheet: sheet_name.to_owned(),
+            name,
+            content_type: content_types.content_type_for(media_path),
+            from_cell,
+        });
+    }
+    Ok(pictures)
+}
+
+fn blip_embed_id(anchor: &str) -> Option<String> {
+    let markers = ["r:embed=\"", "embed=\""];
+    for marker in markers {
+        if let Some(start) = anchor.find(marker) {
+            let value_start = start + marker.len();
+            let value_end = anchor[value_start..].find('"')? + value_start;
+            return Some(anchor[value_start..value_end].to_owned());
+        }
+    }
+    None
+}
+
+fn cnvpr_name(anchor: &str) -> Option<String> {
+    let start = anchor.find("<xdr:cNvPr ")?;
+    let end = anchor[start..].find('>')? + start;
+    let tag = &anchor[start..=end];
+    xml_attr(tag, "name")
+}
+
+fn anchor_from_cell(anchor: &str) -> Option<String> {
+    let from_start = anchor.find("<xdr:from>")?;
+    let from_end = anchor[from_start..].find("</xdr:from>")? + from_start;
+    let from = &anchor[from_start..from_end];
+    let col = xml_element_u32(from, "xdr:col")?;
+    let row = xml_element_u32(from, "xdr:row")?;
+    Some(format!("{}{}", column_name(col as usize), row + 1))
+}
+
+fn xml_element_u32(source: &str, local: &str) -> Option<u32> {
+    let open = format!("<{local}>");
+    let close = format!("</{local}>");
+    let start = source.find(&open)? + open.len();
+    let end = source[start..].find(&close)? + start;
+    source[start..end].trim().parse().ok()
+}
+
 fn chart_sheet_map(package: &[u8], source: &Path) -> Result<BTreeMap<String, String>> {
     let workbook = entry_bytes(package, "xl/workbook.xml", source)?;
     let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels", source)?;
@@ -1635,6 +1857,7 @@ fn worksheet_rels_path(part_path: &str) -> String {
 
 #[derive(Clone, Debug)]
 struct RelationshipRecord {
+    id: String,
     kind: String,
     target: String,
 }
@@ -1651,10 +1874,15 @@ fn parse_relationship_records(xml: &[u8], source: &Path) -> Result<Vec<Relations
             Event::Empty(element) | Event::Start(element)
                 if local_name(element.name().as_ref()) == b"Relationship" =>
             {
+                let mut id = None;
                 let mut kind = None;
                 let mut target = None;
                 for attribute in element.attributes().flatten() {
                     match local_name(attribute.key.as_ref()) {
+                        b"Id" => {
+                            id =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
                         b"Type" => {
                             kind =
                                 Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
@@ -1666,8 +1894,8 @@ fn parse_relationship_records(xml: &[u8], source: &Path) -> Result<Vec<Relations
                         _ => {}
                     }
                 }
-                if let (Some(kind), Some(target)) = (kind, target) {
-                    relationships.push(RelationshipRecord { kind, target });
+                if let (Some(id), Some(kind), Some(target)) = (id, kind, target) {
+                    relationships.push(RelationshipRecord { id, kind, target });
                 }
             }
             Event::Eof => break,

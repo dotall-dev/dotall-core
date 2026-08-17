@@ -273,6 +273,7 @@ fn source_aware_validation_rejects_before_structural_edit_is_staged() {
             style_table: Vec::new(),
             comments: Vec::new(),
             charts: Vec::new(),
+            pictures: Vec::new(),
             unmodeled: UnmodeledMap {
                 charts: PreservationStatus::Preserved,
                 pivots: PreservationStatus::Preserved,

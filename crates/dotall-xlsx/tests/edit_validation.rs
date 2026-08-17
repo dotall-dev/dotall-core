@@ -112,6 +112,7 @@ fn workbook_fixture() -> WorkbookModel {
         style_table: Vec::new(),
         comments: Vec::new(),
         charts: Vec::new(),
+        pictures: Vec::new(),
         unmodeled: UnmodeledMap {
             charts: PreservationStatus::Preserved,
             pivots: PreservationStatus::Preserved,
