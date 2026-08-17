@@ -152,6 +152,15 @@ Set or clear font size on all runs in a body/table paragraph (`w:sz` / `w:szCs` 
 }
 ```
 
+Set or clear font name on all runs in a body/table paragraph (`w:rFonts`; `null` clears):
+
+```json
+{
+  "kind": "set_paragraph_font_name",
+  "payload": { "index": 1, "font": "Arial" }
+}
+```
+
 Header / footer:
 
 ```json

@@ -144,6 +144,16 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"set_print_area","payload":{"sheet":"Revenue","range":null}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 12: set_print_titles (repeat row 1 + col A), then clear
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_print_titles","payload":{"sheet":"Revenue","rows":"1:1","cols":"A:A"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect sheets[].print_titles rows=1:1 cols=A:A for Revenue
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_print_titles","payload":{"sheet":"Revenue","rows":null,"cols":null}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -236,9 +246,14 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_shape_font_size","payload":{"slide":"Slide 2","shape":"Title","size_pt":28}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 12 — font name on Title (content-on-slide companion to font size)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_shape_font_name","payload":{"slide":"Slide 2","shape":"Title","font":"Arial"}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` patch only the target slide part.
 
 ---
 
@@ -322,6 +337,11 @@ $DOTALL apply demo/memo.docx --all
 # Wave 11 — paragraph font size (w:sz / w:szCs from size_pt)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_font_size","payload":{"index":2,"size_pt":14}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 12 — paragraph font name (w:rFonts)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_font_name","payload":{"index":2,"font":"Arial"}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
@@ -435,6 +455,16 @@ $DOTALL inspect demo/form.pdf
 # expect fields[].required true for Name
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field_required","payload":{"name":"Name","required":false}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 12 — mark Name multiline (Ff Multiline), then clear
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_multiline","payload":{"name":"Name","multiline":true}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect fields[].multiline true for Name
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_multiline","payload":{"name":"Name","multiline":false}}]'
 $DOTALL apply demo/form.pdf --all
 ```
 

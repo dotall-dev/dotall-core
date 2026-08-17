@@ -175,6 +175,14 @@ Set or clear a worksheet print area (`_xlnm.Print_Area`; `null` clears):
 
 Inspect surfaces `print_area` per sheet when present. Worksheets stay byte-identical.
 
+Set or clear print titles / repeat rows+cols (`_xlnm.Print_Titles`; both `null` clears):
+
+```json
+{ "kind": "set_print_titles", "payload": { "sheet": "Revenue", "rows": "1:1", "cols": "A:A" } }
+```
+
+Inspect surfaces `print_titles.rows` / `print_titles.cols` per sheet when present. Worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.
