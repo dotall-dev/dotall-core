@@ -44,8 +44,9 @@ pub fn validate(
         "rename_shape" => validate_rename_shape(model, operation),
         "set_shape_bold" => validate_set_shape_bold(model, operation),
         "set_shape_italic" => validate_set_shape_italic(model, operation),
+        "set_shape_underline" => validate_set_shape_underline(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -239,6 +240,13 @@ fn validate_set_shape_italic(
     operation: &SemanticOperation,
 ) -> Result<ValidatedEdit> {
     validate_set_shape_run_bool(model, operation, "set_shape_italic", "italic")
+}
+
+fn validate_set_shape_underline(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    validate_set_shape_run_bool(model, operation, "set_shape_underline", "underline")
 }
 
 fn validate_set_shape_run_bool(
@@ -690,6 +698,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 removals: BTreeSet::new(),
             }
         }
+        "set_shape_underline" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let underline = operation
+                .payload
+                .get("underline")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`underline` boolean is required"))?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_shape_underline(&original, shape, underline)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
         other => {
             return Err(format_error(format!(
                 "cannot apply unsupported pptx edit `{other}`"
@@ -1002,7 +1028,17 @@ pub fn patch_shape_italic(xml: &[u8], shape: &str, italic: bool) -> Result<Vec<u
     patch_shape_run_bool(xml, shape, "i", italic)
 }
 
+pub fn patch_shape_underline(xml: &[u8], shape: &str, underline: bool) -> Result<Vec<u8>> {
+    let value = if underline { "sng" } else { "none" };
+    patch_shape_run_attr(xml, shape, "u", value)
+}
+
 fn patch_shape_run_bool(xml: &[u8], shape: &str, attr: &str, enabled: bool) -> Result<Vec<u8>> {
+    let value = if enabled { "1" } else { "0" };
+    patch_shape_run_attr(xml, shape, attr, value)
+}
+
+fn patch_shape_run_attr(xml: &[u8], shape: &str, attr: &str, value: &str) -> Result<Vec<u8>> {
     let source = std::str::from_utf8(xml)
         .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
     let needle = format!("name=\"{shape}\"");
@@ -1023,7 +1059,7 @@ fn patch_shape_run_bool(xml: &[u8], shape: &str, attr: &str, enabled: bool) -> R
     {
         return Err(format_error("cannot edit non-text shape"));
     }
-    let patched_sp = set_shape_runs_bool(sp, attr, enabled)?;
+    let patched_sp = set_shape_runs_attr(sp, attr, value)?;
     let mut output = String::new();
     output.push_str(&source[..sp_start]);
     output.push_str(&patched_sp);
@@ -1031,7 +1067,7 @@ fn patch_shape_run_bool(xml: &[u8], shape: &str, attr: &str, enabled: bool) -> R
     Ok(output.into_bytes())
 }
 
-fn set_shape_runs_bool(sp: &str, attr: &str, enabled: bool) -> Result<String> {
+fn set_shape_runs_attr(sp: &str, attr: &str, value: &str) -> Result<String> {
     let mut output = String::with_capacity(sp.len() + 32);
     let mut cursor = 0;
     let mut patched_any = false;
@@ -1045,7 +1081,7 @@ fn set_shape_runs_bool(sp: &str, attr: &str, enabled: bool) -> Result<String> {
         }
         let end = element_end_drawing(sp, start, "a:r")?;
         output.push_str(&sp[cursor..start]);
-        output.push_str(&upsert_drawing_run_bool(&sp[start..end], attr, enabled)?);
+        output.push_str(&upsert_drawing_run_attr(&sp[start..end], attr, value)?);
         cursor = end;
         patched_any = true;
     }
@@ -1058,7 +1094,7 @@ fn set_shape_runs_bool(sp: &str, attr: &str, enabled: bool) -> Result<String> {
     Ok(output)
 }
 
-fn upsert_drawing_run_bool(run: &str, attr: &str, enabled: bool) -> Result<String> {
+fn upsert_drawing_run_attr(run: &str, attr: &str, value: &str) -> Result<String> {
     let open_end = run
         .find('>')
         .map(|offset| offset + 1)
@@ -1069,7 +1105,7 @@ fn upsert_drawing_run_bool(run: &str, attr: &str, enabled: bool) -> Result<Strin
     let rest = &run[open_end..];
     if let Some(r_pr_start) = find_tag(rest, 0, "a:rPr") {
         let r_pr_end = element_end_drawing(rest, r_pr_start, "a:rPr")?;
-        let patched = set_rpr_bool_attr(&rest[r_pr_start..r_pr_end], attr, enabled)?;
+        let patched = set_rpr_attr(&rest[r_pr_start..r_pr_end], attr, value)?;
         return Ok(format!(
             "{}{}{}{}",
             &run[..open_end],
@@ -1078,13 +1114,11 @@ fn upsert_drawing_run_bool(run: &str, attr: &str, enabled: bool) -> Result<Strin
             &rest[r_pr_end..]
         ));
     }
-    let value = if enabled { "1" } else { "0" };
     let r_pr = format!(r#"<a:rPr {attr}="{value}"/>"#);
     Ok(format!("{}{}{}", &run[..open_end], r_pr, rest))
 }
 
-fn set_rpr_bool_attr(r_pr: &str, attr: &str, enabled: bool) -> Result<String> {
-    let value = if enabled { "1" } else { "0" };
+fn set_rpr_attr(r_pr: &str, attr: &str, value: &str) -> Result<String> {
     let needle = format!("{attr}=\"");
     if let Some(rel) = r_pr.find(&needle) {
         let value_start = rel + needle.len();

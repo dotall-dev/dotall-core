@@ -338,5 +338,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Upserts a:rPr i on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
+        EditCapability {
+            operation: "set_shape_underline".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear underline on all text runs inside a slide shape (a:rPr u)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_underline",
+                "payload": { "slide": "Slide 1", "shape": "Title", "underline": true }
+            }),
+            safety: "Upserts a:rPr u=\"sng\"/\"none\" on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
     ]
 }

@@ -29,6 +29,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_alignment" => validate_set_paragraph_alignment(model, operation),
         "set_paragraph_bold" => validate_set_paragraph_bold(model, operation),
         "set_paragraph_italic" => validate_set_paragraph_italic(model, operation),
+        "set_paragraph_underline" => validate_set_paragraph_underline(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -36,7 +37,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -250,6 +251,13 @@ fn validate_set_paragraph_italic(
     operation: &SemanticOperation,
 ) -> Result<ValidatedEdit> {
     validate_set_paragraph_run_bool(model, operation, "set_paragraph_italic", "italic")
+}
+
+fn validate_set_paragraph_underline(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    validate_set_paragraph_run_bool(model, operation, "set_paragraph_underline", "underline")
 }
 
 fn validate_set_paragraph_run_bool(
@@ -491,6 +499,28 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 bytes,
             })
         }
+        "set_paragraph_underline" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let underline = operation
+                .payload
+                .get("underline")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`underline` boolean is required"))?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_underline(&original, index, underline)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
         "set_header_paragraph_text" | "set_footer_paragraph_text" => {
             let part = required_str(&operation.payload, "part")?;
             let index = operation
@@ -693,7 +723,20 @@ pub fn patch_paragraph_italic(xml: &[u8], index: u32, italic: bool) -> Result<Ve
     patch_paragraph_run_bool(xml, index, "w:i", italic)
 }
 
+pub fn patch_paragraph_underline(xml: &[u8], index: u32, underline: bool) -> Result<Vec<u8>> {
+    let prop = if underline {
+        r#"<w:u w:val="single"/>"#
+    } else {
+        r#"<w:u w:val="none"/>"#
+    };
+    patch_paragraph_run_prop(xml, index, "w:u", prop)
+}
+
 fn patch_paragraph_run_bool(xml: &[u8], index: u32, tag: &str, enabled: bool) -> Result<Vec<u8>> {
+    patch_paragraph_run_prop(xml, index, tag, &toggle_tag(tag, enabled))
+}
+
+fn patch_paragraph_run_prop(xml: &[u8], index: u32, tag: &str, prop_tag: &str) -> Result<Vec<u8>> {
     let source = std::str::from_utf8(xml)
         .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
     let spans = paragraph_spans(source)?;
@@ -709,7 +752,7 @@ fn patch_paragraph_run_bool(xml: &[u8], index: u32, tag: &str, enabled: bool) ->
             "paragraph contains tracked changes, a content control, or a field",
         ));
     }
-    let patched_paragraph = set_runs_bool(paragraph, tag, enabled)?;
+    let patched_paragraph = set_runs_prop(paragraph, tag, prop_tag)?;
     let mut output = String::new();
     output.push_str(&source[..span.0]);
     output.push_str(&patched_paragraph);
@@ -717,7 +760,7 @@ fn patch_paragraph_run_bool(xml: &[u8], index: u32, tag: &str, enabled: bool) ->
     Ok(output.into_bytes())
 }
 
-fn set_runs_bool(paragraph: &str, tag: &str, enabled: bool) -> Result<String> {
+fn set_runs_prop(paragraph: &str, tag: &str, prop_tag: &str) -> Result<String> {
     let mut output = String::with_capacity(paragraph.len() + 32);
     let mut cursor = 0;
     let mut patched_any = false;
@@ -731,13 +774,13 @@ fn set_runs_bool(paragraph: &str, tag: &str, enabled: bool) -> Result<String> {
         }
         let end = element_end(paragraph, start, "w:r")?;
         output.push_str(&paragraph[cursor..start]);
-        output.push_str(&upsert_run_bool(&paragraph[start..end], tag, enabled)?);
+        output.push_str(&upsert_run_prop(&paragraph[start..end], tag, prop_tag)?);
         cursor = end;
         patched_any = true;
     }
     output.push_str(&paragraph[cursor..]);
     if !patched_any {
-        return upsert_paragraph_mark_bool(paragraph, tag, enabled);
+        return upsert_paragraph_mark_prop(paragraph, tag, prop_tag);
     }
     Ok(output)
 }
@@ -750,7 +793,7 @@ fn toggle_tag(tag: &str, enabled: bool) -> String {
     }
 }
 
-fn upsert_run_bool(run: &str, tag: &str, enabled: bool) -> Result<String> {
+fn upsert_run_prop(run: &str, tag: &str, prop_tag: &str) -> Result<String> {
     let open_end = run
         .find('>')
         .map(|offset| offset + 1)
@@ -759,9 +802,8 @@ fn upsert_run_bool(run: &str, tag: &str, enabled: bool) -> Result<String> {
         return Ok(run.to_owned());
     }
     let rest = &run[open_end..];
-    let prop_tag = toggle_tag(tag, enabled);
     if let Some(r_pr) = extract_named_element(rest, "w:rPr") {
-        let patched_r_pr = upsert_toggle_in_r_pr(r_pr, tag, &prop_tag)?;
+        let patched_r_pr = upsert_toggle_in_r_pr(r_pr, tag, prop_tag)?;
         return Ok(format!(
             "{}{}{}",
             &run[..open_end],
@@ -777,12 +819,11 @@ fn upsert_run_bool(run: &str, tag: &str, enabled: bool) -> Result<String> {
     ))
 }
 
-fn upsert_paragraph_mark_bool(paragraph: &str, tag: &str, enabled: bool) -> Result<String> {
+fn upsert_paragraph_mark_prop(paragraph: &str, tag: &str, prop_tag: &str) -> Result<String> {
     let open_end = paragraph
         .find('>')
         .map(|offset| offset + 1)
         .ok_or_else(|| format_error("unterminated w:p"))?;
-    let prop_tag = toggle_tag(tag, enabled);
     let r_pr_inner = format!("<w:rPr>{prop_tag}</w:rPr>");
     match extract_p_pr(&paragraph[open_end..]) {
         Some(p_pr) => {
@@ -791,7 +832,7 @@ fn upsert_paragraph_mark_bool(paragraph: &str, tag: &str, enabled: bool) -> Resu
                 format!(
                     "{}{}{}",
                     &p_pr[..start],
-                    upsert_toggle_in_r_pr(&p_pr[start..end], tag, &prop_tag)?,
+                    upsert_toggle_in_r_pr(&p_pr[start..end], tag, prop_tag)?,
                     &p_pr[end..]
                 )
             } else {

@@ -134,6 +134,15 @@ Set or clear italic on all runs in a body/table paragraph (`w:i`):
 }
 ```
 
+Set or clear underline on all runs in a body/table paragraph (`w:u`):
+
+```json
+{
+  "kind": "set_paragraph_underline",
+  "payload": { "index": 1, "underline": true }
+}
+```
+
 Header / footer:
 
 ```json

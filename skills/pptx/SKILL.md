@@ -143,6 +143,12 @@ Set or clear italic on shape text runs (`a:rPr i`):
 { "kind": "set_shape_italic", "payload": { "slide": "Slide 1", "shape": "Title", "italic": true } }
 ```
 
+Set or clear underline on shape text runs (`a:rPr u`):
+
+```json
+{ "kind": "set_shape_underline", "payload": { "slide": "Slide 1", "shape": "Title", "underline": true } }
+```
+
 Speaker notes (existing notes slide part only):
 
 ```json
@@ -159,6 +165,7 @@ Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
 `rename_shape` updates `cNvPr` name; rejects empty/duplicate names (including table names on the same slide).
 `set_shape_bold` upserts `a:rPr b` on each text run in the shape; rejects non-text shapes.
 `set_shape_italic` upserts `a:rPr i` on each text run in the shape; rejects non-text shapes.
+`set_shape_underline` upserts `a:rPr u="sng"` / `u="none"` on each text run in the shape; rejects non-text shapes.
 
 Safety:
 
@@ -169,6 +176,7 @@ Safety:
 - `move_slide`: reorders only `p:sldId` entries in `ppt/presentation.xml`. Slide parts, notes, rels, and Content_Types stay byte-identical.
 - `set_shape_bold`: upserts `a:rPr b` on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `set_shape_italic`: upserts `a:rPr i` on runs in the target shape’s `txBody`; other parts stay byte-identical.
+- `set_shape_underline`: upserts `a:rPr u="sng"`/`none` on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `add_textbox`: inserts a `p:sp` text box (`txBox="1"`) into the target slide’s `spTree`; other parts stay byte-identical.
 - `delete_shape`: removes the matching `p:sp` from the target slide part; other parts stay byte-identical.
 - `rename_shape`: rewrites the matching `cNvPr` name attribute on the target slide part; other parts stay byte-identical.
