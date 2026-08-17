@@ -479,6 +479,19 @@ After Wave 16 integrates (set_fit_to_page, set_shape_strikethrough, set_paragrap
 
 Each task ends with the standing demo gate.
 
+## Wave 18 — caps/small-caps (content-first) + companion slices (parallel)
+
+After Wave 17 integrates (set_center_on_page, set_shape_vert_align, set_paragraph_vert_align, set_form_field_do_not_spell_check):
+
+1. **XLSX:** `set_paper_size` — set worksheet print paper size via surgical `pageSetup` `paperSize` (positive integer, e.g. `1` Letter / `9` A4); inspect surfaces `paper_size` when present
+2. **PPTX:** `set_shape_caps` — set/clear capitalization on shape text runs (`a:rPr cap="small"` / `cap="all"`; null clears attribute); content-on-slide companion (`caps`: `small` | `all` | null)
+3. **DOCX:** `set_paragraph_caps` — set/clear `w:smallCaps` / `w:caps` on runs (`caps`: `small` | `all` | null clears both); content-in-document companion
+4. **PDF:** `set_form_field_rich_text` — set/clear AcroForm text-field RichText (`/Ff` bit 26); pairs with do_not_spell_check; reject non-`tx` fields; inspect surfaces `rich_text`
+
+**Deferred:** hyperlinks, richer table cell content, list/bullet text, document-/slide-wide replace-across; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
