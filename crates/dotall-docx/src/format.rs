@@ -408,6 +408,19 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_font_name".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear font name (w:rFonts) on all runs in a body/table paragraph."
+                .into(),
+            example: json!({
+                "kind": "set_paragraph_font_name",
+                "payload": { "index": 1, "font": "Arial" }
+            }),
+            safety:
+                "Upserts w:rFonts ascii/hAnsi/cs from font (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

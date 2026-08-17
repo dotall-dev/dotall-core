@@ -908,6 +908,119 @@ fn set_shape_font_size_rejects_non_positive() {
     );
 }
 
+#[test]
+fn set_shape_font_name_sets_typeface_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = minimal_pptx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_font_name".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "font": "Arial",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let slide_xml = String::from_utf8(zip_entries(&patched.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        slide_xml.contains(r#"typeface="Arial""#) || slide_xml.contains("typeface=\"Arial\""),
+        "expected a:latin typeface=Arial in slide XML, got: {slide_xml}"
+    );
+    assert!(
+        slide_xml.contains("<a:latin") || slide_xml.contains("a:latin"),
+        "expected a:latin element"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "set_shape_font_name");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("Arial"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn set_shape_font_name_clear_removes_typeface() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_font_name".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "font": "Calibri",
+                }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_font_name".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "font": null,
+                }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let slide_xml = String::from_utf8(zip_entries(&cleared.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        !slide_xml.contains("<a:latin") && !slide_xml.contains("typeface=\""),
+        "cleared font name must remove typeface elements"
+    );
+}
+
+#[test]
+fn set_shape_font_name_rejects_empty() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_font_name".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "font": "",
+                }),
+            }],
+        )
+        .expect_err("empty font");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("font") || message.contains("empty") || message.contains("non-empty"),
+        "unexpected error: {error}"
+    );
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);

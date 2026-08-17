@@ -362,5 +362,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Upserts a:rPr sz in hundredths of a point from size_pt (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
+        EditCapability {
+            operation: "set_shape_font_name".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear font name on all text runs inside a slide shape (a:latin typeface)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_font_name",
+                "payload": { "slide": "Slide 1", "shape": "Title", "font": "Arial" }
+            }),
+            safety: "Upserts a:latin/a:ea/a:cs typeface inside each a:rPr (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
     ]
 }
