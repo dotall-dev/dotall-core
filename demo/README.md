@@ -154,6 +154,16 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"set_print_titles","payload":{"sheet":"Revenue","rows":null,"cols":null}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 13: set_page_orientation landscape, then portrait
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_page_orientation","payload":{"sheet":"Revenue","orientation":"landscape"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect sheets[].page_orientation landscape for Revenue
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_page_orientation","payload":{"sheet":"Revenue","orientation":"portrait"}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -251,9 +261,14 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_shape_font_name","payload":{"slide":"Slide 2","shape":"Title","font":"Arial"}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 13 — font color on Title (content-on-slide companion to font name)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_shape_font_color","payload":{"slide":"Slide 2","shape":"Title","color":"#FF0000"}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` patch only the target slide part.
 
 ---
 
@@ -342,6 +357,11 @@ $DOTALL apply demo/memo.docx --all
 # Wave 12 — paragraph font name (w:rFonts)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_font_name","payload":{"index":2,"font":"Arial"}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 13 — paragraph font color (w:color)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_font_color","payload":{"index":2,"color":"#C00000"}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
@@ -465,6 +485,16 @@ $DOTALL inspect demo/form.pdf
 # expect fields[].multiline true for Name
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field_multiline","payload":{"name":"Name","multiline":false}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 13 — mark Name password (Ff Password), then clear
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_password","payload":{"name":"Name","password":true}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect fields[].password true for Name
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_password","payload":{"name":"Name","password":false}}]'
 $DOTALL apply demo/form.pdf --all
 ```
 
