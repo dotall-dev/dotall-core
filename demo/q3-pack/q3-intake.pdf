@@ -28,17 +28,17 @@ endobj
 endobj
 7 0 obj
 <<
-/BBox [ 0 0 250 20 ] /FormType 1 /Length 215 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 6 0 R>> >> /Subtype /Form 
+/BBox [ 0 0 216 20 ] /FormType 1 /Length 215 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 6 0 R>> >> /Subtype /Form 
   /Type /XObject
 >>
 stream
 1 .94902 .8 rg
-0 0 250.0 20.0 re
+0 0 216.0 20.0 re
 f
-.74902 .560784 0 RG 0.7 w 0 0.35 m 250.0 0.35 l s
+.74902 .560784 0 RG 0.7 w 0 0.35 m 216.0 0.35 l s
 /Tx BMC 
 q
-1.4 1.4 247.2 17.2 re
+1.4 1.4 213.2 17.2 re
 W
 n
 0 g
@@ -62,7 +62,7 @@ endobj
 >> /DA (/Helv 10 Tf .14902 .14902 .14902 rg) /DV (Ada Lovelace) /F 4 /FT /Tx 
   /Ff 0 /MK <<
 /BC [ .74902 .560784 0 ] /BG [ 1 .94902 .8 ]
->> /MaxLen 100 /P 38 0 R /Rect [ 208 547 458 567 ] /Subtype /Widget 
+>> /MaxLen 100 /P 38 0 R /Rect [ 208 535 424 555 ] /Subtype /Widget 
   /T (Name) /TU (Name) /Type /Annot /V (Ada Lovelace)
 >>
 endobj
@@ -71,17 +71,17 @@ endobj
 endobj
 10 0 obj
 <<
-/BBox [ 0 0 250 20 ] /FormType 1 /Length 218 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 9 0 R>> >> /Subtype /Form 
+/BBox [ 0 0 216 20 ] /FormType 1 /Length 218 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 9 0 R>> >> /Subtype /Form 
   /Type /XObject
 >>
 stream
 1 .94902 .8 rg
-0 0 250.0 20.0 re
+0 0 216.0 20.0 re
 f
-.74902 .560784 0 RG 0.7 w 0 0.35 m 250.0 0.35 l s
+.74902 .560784 0 RG 0.7 w 0 0.35 m 216.0 0.35 l s
 /Tx BMC 
 q
-1.4 1.4 247.2 17.2 re
+1.4 1.4 213.2 17.2 re
 W
 n
 0 g
@@ -105,7 +105,7 @@ endobj
 >> /DA (/Helv 10 Tf .14902 .14902 .14902 rg) /DV (ada@example.com) /F 4 /FT /Tx 
   /Ff 0 /MK <<
 /BC [ .74902 .560784 0 ] /BG [ 1 .94902 .8 ]
->> /MaxLen 100 /P 38 0 R /Rect [ 208 513 458 533 ] /Subtype /Widget 
+>> /MaxLen 100 /P 38 0 R /Rect [ 208 501 424 521 ] /Subtype /Widget 
   /T (Email) /TU (Email) /Type /Annot /V (ada@example.com)
 >>
 endobj
@@ -199,7 +199,7 @@ endobj
 >> /F 4 /FT /Btn /Ff 2 
   /H /N /MK <<
 /BC [ .74902 .560784 0 ] /BG [ 1 .94902 .8 ] /CA (4)
->> /P 38 0 R /Rect [ 208 468 223 483 ] /Subtype /Widget /T (Agree) 
+>> /P 38 0 R /Rect [ 208 444 223 459 ] /Subtype /Widget /T (Agree) 
   /TU (Agree to terms) /Type /Annot /V /Off
 >>
 endobj
@@ -406,7 +406,7 @@ endobj
 >> /F 4          /H /N 
   /MK <<
 /BC [ .74902 .560784 0 ] /BG [ 1 .94902 .8 ] /CA (l)
->> /P 38 0 R /Parent 19 0 R /Rect [ 208 434 222 448 ] /Subtype /Widget /Type /Annot
+>> /P 38 0 R /Parent 19 0 R /Rect [ 208 410 222 424 ] /Subtype /Widget /Type /Annot
 >>
 endobj
 27 0 obj
@@ -424,7 +424,7 @@ endobj
 >> /F 4          /H /N 
   /MK <<
 /BC [ .74902 .560784 0 ] /BG [ 1 .94902 .8 ] /CA (l)
->> /P 38 0 R /Parent 19 0 R /Rect [ 292 434 306 448 ] /Subtype /Widget /Type /Annot
+>> /P 38 0 R /Parent 19 0 R /Rect [ 292 410 306 424 ] /Subtype /Widget /Type /Annot
 >>
 endobj
 28 0 obj
@@ -442,7 +442,7 @@ endobj
 >> /F 4          /H /N 
   /MK <<
 /BC [ .74902 .560784 0 ] /BG [ 1 .94902 .8 ] /CA (l)
->> /P 38 0 R /Parent 19 0 R /Rect [ 376 434 390 448 ] /Subtype /Widget /Type /Annot
+>> /P 38 0 R /Parent 19 0 R /Rect [ 376 410 390 424 ] /Subtype /Widget /Type /Annot
 >>
 endobj
 29 0 obj
@@ -450,20 +450,20 @@ endobj
 endobj
 30 0 obj
 <<
-/BBox [ 0 0 250 20 ] /FormType 1 /Length 216 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 29 0 R>> >> /Subtype /Form 
+/BBox [ 0 0 216 20 ] /FormType 1 /Length 216 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 29 0 R>> >> /Subtype /Form 
   /Type /XObject
 >>
 stream
 1 .94902 .8 rg
-0 0 250.0 20.0 re
+0 0 216.0 20.0 re
 f
 .74902 .560784 0 RG
 0.7 w
-0.35 0.35 249.3 19.3 re
+0.35 0.35 215.3 19.3 re
 s
 /Tx BMC 
 q
-1.4 1.4 247.2 17.2 re
+1.4 1.4 213.2 17.2 re
 W
 n
 0 g
@@ -487,7 +487,7 @@ endobj
 >> /DA (/Helv 10 Tf .14902 .14902 .14902 rg) /DV (Engineering) /F 4 /FT /Ch 
   /Ff 131072 /I [ 0 ] /MK <<
 /BC [ .74902 .560784 0 ] /BG [ 1 .94902 .8 ]
->> /Opt [ (Engineering) (Sales) (Operations) ] /P 38 0 R /Rect [ 208 399 458 419 ] 
+>> /Opt [ (Engineering) (Sales) (Operations) ] /P 38 0 R /Rect [ 208 375 424 395 ] 
   /Subtype /Widget /T (Department) /TU (Department) /Type /Annot /V (Engineering)
 >>
 endobj
@@ -496,17 +496,17 @@ endobj
 endobj
 33 0 obj
 <<
-/BBox [ 0 0 250 20 ] /FormType 1 /Length 209 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 32 0 R>> >> /Subtype /Form 
+/BBox [ 0 0 216 20 ] /FormType 1 /Length 209 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 32 0 R>> >> /Subtype /Form 
   /Type /XObject
 >>
 stream
 1 .94902 .8 rg
-0 0 250.0 20.0 re
+0 0 216.0 20.0 re
 f
-.74902 .560784 0 RG 0.7 w 0 0.35 m 250.0 0.35 l s
+.74902 .560784 0 RG 0.7 w 0 0.35 m 216.0 0.35 l s
 /Tx BMC 
 q
-1.4 1.4 247.2 17.2 re
+1.4 1.4 213.2 17.2 re
 W
 n
 0 g
@@ -530,7 +530,7 @@ endobj
 >> /DA (/Helv 10 Tf .14902 .14902 .14902 rg) /DV (10%) /F 4 /FT /Tx 
   /Ff 0 /MK <<
 /BC [ .74902 .560784 0 ] /BG [ 1 .94902 .8 ]
->> /MaxLen 100 /P 38 0 R /Rect [ 208 353 458 373 ] /Subtype /Widget 
+>> /MaxLen 100 /P 38 0 R /Rect [ 208 317 424 337 ] /Subtype /Widget 
   /T (Rate) /TU (Commission rate) /Type /Annot /V (10%)
 >>
 endobj
@@ -539,17 +539,17 @@ endobj
 endobj
 36 0 obj
 <<
-/BBox [ 0 0 250 20 ] /FormType 1 /Length 136 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 35 0 R>> >> /Subtype /Form 
+/BBox [ 0 0 216 20 ] /FormType 1 /Length 136 /Matrix [ 1 0 0 1 0 0 ] /Resources << /ProcSet [/PDF /Text] /Font <</Helv 35 0 R>> >> /Subtype /Form 
   /Type /XObject
 >>
 stream
 1 .94902 .8 rg
-0 0 250.0 20.0 re
+0 0 216.0 20.0 re
 f
-.74902 .560784 0 RG 0.7 w 0 0.35 m 250.0 0.35 l s
+.74902 .560784 0 RG 0.7 w 0 0.35 m 216.0 0.35 l s
 /Tx BMC 
 q
-1.4 1.4 247.2 17.2 re
+1.4 1.4 213.2 17.2 re
 W
 n
 0 g
@@ -567,7 +567,7 @@ endobj
 >> /DA (/Helv 10 Tf .14902 .14902 .14902 rg) /DV () /F 4 /FT /Tx 
   /Ff 0 /MK <<
 /BC [ .74902 .560784 0 ] /BG [ 1 .94902 .8 ]
->> /MaxLen 100 /P 38 0 R /Rect [ 208 319 458 339 ] /Subtype /Widget 
+>> /MaxLen 100 /P 38 0 R /Rect [ 208 283 424 303 ] /Subtype /Widget 
   /T (Owner) /TU (Owner) /Type /Annot /V ()
 >>
 endobj
@@ -588,7 +588,7 @@ endobj
 endobj
 40 0 obj
 <<
-/Author (Priya Shah, VP Finance) /CreationDate (D:20260817183446+05'00') /Creator (Northstar Analytics Finance Operations) /Keywords (Q3; vendor; intake; board pack; confidential) /ModDate (D:20260817183446+05'00') /Producer (ReportLab PDF Library - \(opensource\)) 
+/Author (Priya Shah, VP Finance) /CreationDate (D:20260817184357+05'00') /Creator (Northstar Analytics Finance Operations) /Keywords (Q3; vendor; intake; board pack; confidential) /ModDate (D:20260817184357+05'00') /Producer (ReportLab PDF Library - \(opensource\)) 
   /Subject (Q3 board pack - vendor intake routing slip) /Title (Q3 Vendor Intake) /Trapped /False
 >>
 endobj
@@ -599,7 +599,7 @@ endobj
 endobj
 42 0 obj
 <<
-/Length 5398
+/Length 5572
 >>
 stream
 1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
@@ -635,168 +635,178 @@ BT 1 0 0 1 68 608 Tm (Copy the live commission rate from the workbook named rang
 BT 1 0 0 1 68 596 Tm (Do not copy FY2024 promo rates from the appendix tabs.) Tj T* ET
 .121569 .305882 .47451 rg
 BT /F2 8.5 Tf 10.2 TL ET
-BT 1 0 0 1 54 582 Tm (REQUESTER DETAILS) Tj T* ET
+BT 1 0 0 1 54 566 Tm (REQUESTER DETAILS) Tj T* ET
 .839216 .862745 .894118 RG
 .6 w
-n 153.6215 585 m 558 585 l S
+n 153.6215 569 m 558 569 l S
 .090196 .223529 .352941 rg
 BT /F2 9.5 Tf 11.4 TL ET
-BT 1 0 0 1 170.1315 552 Tm (Name) Tj T* ET
+BT 1 0 0 1 170.1315 540 Tm (Name) Tj T* ET
 .34902 .34902 .34902 rg
 BT /F3 8 Tf 9.6 TL ET
-BT 1 0 0 1 468 552 Tm (as it appears on the order form) Tj T* ET
+BT 1 0 0 1 436 540 Tm (as on the order form) Tj T* ET
 q
 1 0 0 1 0 0 cm
 .7 w
 .74902 .560784 0 RG
 1 .94902 .8 rg
-n 208.35 547.35 249.3 19.3 re B*
+n 208.35 535.35 215.3 19.3 re B*
 Q
 .090196 .223529 .352941 rg
 BT /F2 9.5 Tf 11.4 TL ET
-BT 1 0 0 1 170.654 518 Tm (Email) Tj T* ET
+BT 1 0 0 1 170.654 506 Tm (Email) Tj T* ET
 .34902 .34902 .34902 rg
 BT /F3 8 Tf 9.6 TL ET
-BT 1 0 0 1 468 518 Tm (used for approval notifications) Tj T* ET
+BT 1 0 0 1 436 506 Tm (for approval alerts) Tj T* ET
 q
 1 0 0 1 0 0 cm
 .7 w
 .74902 .560784 0 RG
 1 .94902 .8 rg
-n 208.35 513.35 249.3 19.3 re B*
+n 208.35 501.35 215.3 19.3 re B*
 Q
 .121569 .305882 .47451 rg
 BT /F2 8.5 Tf 10.2 TL ET
-BT 1 0 0 1 54 494 Tm (ROUTING) Tj T* ET
+BT 1 0 0 1 54 474 Tm (ROUTING) Tj T* ET
 .839216 .862745 .894118 RG
 .6 w
-n 101.1935 497 m 558 497 l S
+n 101.1935 477 m 558 477 l S
 .090196 .223529 .352941 rg
 BT /F2 9.5 Tf 11.4 TL ET
-BT 1 0 0 1 128.9585 472 Tm (Agree to terms) Tj T* ET
+BT 1 0 0 1 128.9585 448 Tm (Agree to terms) Tj T* ET
 q
 1 0 0 1 0 0 cm
 .7 w
 .74902 .560784 0 RG
 1 .94902 .8 rg
-n 208.35 468.35 14.3 14.3 re B*
+n 208.35 444.35 14.3 14.3 re B*
 Q
 .34902 .34902 .34902 rg
 BT /F1 8.5 Tf 10.2 TL ET
-BT 1 0 0 1 232 472 Tm (I confirm the vendor has passed the security questionnaire.) Tj T* ET
+BT 1 0 0 1 232 448 Tm (I confirm the vendor has passed the security questionnaire.) Tj T* ET
 .090196 .223529 .352941 rg
 BT /F2 9.5 Tf 11.4 TL ET
-BT 1 0 0 1 162.7405 438 Tm (Priority) Tj T* ET
+BT 1 0 0 1 162.7405 414 Tm (Priority) Tj T* ET
 q
 1 0 0 1 0 0 cm
 .7 w
 .74902 .560784 0 RG
 1 .94902 .8 rg
 n
-221.65 441 m
-221.65 444.6727 218.6727 447.65 215 447.65 c
-211.3273 447.65 208.35 444.6727 208.35 441 c
-208.35 437.3273 211.3273 434.35 215 434.35 c
-218.6727 434.35 221.65 437.3273 221.65 441 c
+221.65 417 m
+221.65 420.6727 218.6727 423.65 215 423.65 c
+211.3273 423.65 208.35 420.6727 208.35 417 c
+208.35 413.3273 211.3273 410.35 215 410.35 c
+218.6727 410.35 221.65 413.3273 221.65 417 c
 B*
 Q
 .14902 .14902 .14902 rg
 BT /F1 9 Tf 10.8 TL ET
-BT 1 0 0 1 228 438 Tm (Low) Tj T* ET
+BT 1 0 0 1 228 414 Tm (Low) Tj T* ET
 q
 1 0 0 1 0 0 cm
 .7 w
 .74902 .560784 0 RG
 1 .94902 .8 rg
 n
-305.65 441 m
-305.65 444.6727 302.6727 447.65 299 447.65 c
-295.3273 447.65 292.35 444.6727 292.35 441 c
-292.35 437.3273 295.3273 434.35 299 434.35 c
-302.6727 434.35 305.65 437.3273 305.65 441 c
+305.65 417 m
+305.65 420.6727 302.6727 423.65 299 423.65 c
+295.3273 423.65 292.35 420.6727 292.35 417 c
+292.35 413.3273 295.3273 410.35 299 410.35 c
+302.6727 410.35 305.65 413.3273 305.65 417 c
 B*
 Q
 .14902 .14902 .14902 rg
 BT /F1 9 Tf 10.8 TL ET
-BT 1 0 0 1 312 438 Tm (Medium) Tj T* ET
+BT 1 0 0 1 312 414 Tm (Medium) Tj T* ET
 q
 1 0 0 1 0 0 cm
 .7 w
 .74902 .560784 0 RG
 1 .94902 .8 rg
 n
-389.65 441 m
-389.65 444.6727 386.6727 447.65 383 447.65 c
-379.3273 447.65 376.35 444.6727 376.35 441 c
-376.35 437.3273 379.3273 434.35 383 434.35 c
-386.6727 434.35 389.65 437.3273 389.65 441 c
+389.65 417 m
+389.65 420.6727 386.6727 423.65 383 423.65 c
+379.3273 423.65 376.35 420.6727 376.35 417 c
+376.35 413.3273 379.3273 410.35 383 410.35 c
+386.6727 410.35 389.65 413.3273 389.65 417 c
 B*
 Q
 .14902 .14902 .14902 rg
 BT /F1 9 Tf 10.8 TL ET
-BT 1 0 0 1 396 438 Tm (High) Tj T* ET
+BT 1 0 0 1 396 414 Tm (High) Tj T* ET
 .090196 .223529 .352941 rg
 BT /F2 9.5 Tf 11.4 TL ET
-BT 1 0 0 1 143.218 404 Tm (Department) Tj T* ET
+BT 1 0 0 1 143.218 380 Tm (Department) Tj T* ET
 q
 1 0 0 1 0 0 cm
 .7 w
 .74902 .560784 0 RG
 1 .94902 .8 rg
-n 208.35 399.35 249.3 19.3 re B*
+n 208.35 375.35 215.3 19.3 re B*
 Q
 .121569 .305882 .47451 rg
 BT /F2 8.5 Tf 10.2 TL ET
-BT 1 0 0 1 54 380 Tm (COMMISSION) Tj T* ET
+BT 1 0 0 1 54 348 Tm (COMMISSION) Tj T* ET
 .839216 .862745 .894118 RG
 .6 w
-n 117.726 383 m 558 383 l S
+n 117.726 351 m 558 351 l S
 .090196 .223529 .352941 rg
 BT /F2 9.5 Tf 11.4 TL ET
-BT 1 0 0 1 175.4135 358 Tm (Rate) Tj T* ET
+BT 1 0 0 1 175.4135 322 Tm (Rate) Tj T* ET
 .34902 .34902 .34902 rg
 BT /F3 8 Tf 9.6 TL ET
-BT 1 0 0 1 468 358 Tm (live value from workbook named range Rate) Tj T* ET
+BT 1 0 0 1 436 322 Tm (from named range Rate) Tj T* ET
 q
 1 0 0 1 0 0 cm
 .7 w
 .74902 .560784 0 RG
 1 .94902 .8 rg
-n 208.35 353.35 249.3 19.3 re B*
+n 208.35 317.35 215.3 19.3 re B*
 Q
 .090196 .223529 .352941 rg
 BT /F2 9.5 Tf 11.4 TL ET
-BT 1 0 0 1 166.436 324 Tm (Owner) Tj T* ET
+BT 1 0 0 1 166.436 288 Tm (Owner) Tj T* ET
 .34902 .34902 .34902 rg
 BT /F3 8 Tf 9.6 TL ET
-BT 1 0 0 1 468 324 Tm (accountable finance owner) Tj T* ET
+BT 1 0 0 1 436 288 Tm (accountable owner) Tj T* ET
 q
 1 0 0 1 0 0 cm
 .7 w
 .74902 .560784 0 RG
 1 .94902 .8 rg
-n 208.35 319.35 249.3 19.3 re B*
+n 208.35 283.35 215.3 19.3 re B*
 Q
 .121569 .305882 .47451 rg
 BT /F2 8.5 Tf 10.2 TL ET
-BT 1 0 0 1 54 284 Tm (APPROVAL) Tj T* ET
+BT 1 0 0 1 54 256 Tm (NOTES) Tj T* ET
 .839216 .862745 .894118 RG
 .6 w
-n 109.226 287 m 558 287 l S
+n 91.2825 259 m 558 259 l S
+.839216 .862745 .894118 RG
+.7 w
+n 54 234 m 558 234 l S
+n 54 212 m 558 212 l S
+.121569 .305882 .47451 rg
+BT /F2 8.5 Tf 10.2 TL ET
+BT 1 0 0 1 54 182 Tm (APPROVAL) Tj T* ET
+.839216 .862745 .894118 RG
+.6 w
+n 109.226 185 m 558 185 l S
 .34902 .34902 .34902 RG
 .7 w
-n 54 238 m 304 238 l S
-n 334 238 m 558 238 l S
+n 54 144 m 304 144 l S
+n 334 144 m 558 144 l S
 .34902 .34902 .34902 rg
 BT /F1 8 Tf 9.6 TL ET
-BT 1 0 0 1 54 227 Tm (Requester signature) Tj T* ET
-BT 1 0 0 1 334 227 Tm (Date) Tj T* ET
-n 54 192 m 304 192 l S
-n 334 192 m 558 192 l S
+BT 1 0 0 1 54 133 Tm (Requester signature) Tj T* ET
+BT 1 0 0 1 334 133 Tm (Date) Tj T* ET
+n 54 106 m 304 106 l S
+n 334 106 m 558 106 l S
 .34902 .34902 .34902 rg
 BT /F1 8 Tf 9.6 TL ET
-BT 1 0 0 1 54 181 Tm (Finance approval) Tj T* ET
-BT 1 0 0 1 334 181 Tm (Date) Tj T* ET
+BT 1 0 0 1 54 95 Tm (Finance approval) Tj T* ET
+BT 1 0 0 1 334 95 Tm (Date) Tj T* ET
 .839216 .862745 .894118 RG
 .8 w
 n 54 74 m 558 74 l S
@@ -867,11 +877,11 @@ xref
 0000016173 00000 n 
 0000016560 00000 n 
 0000016621 00000 n 
-0000022071 00000 n 
+0000022245 00000 n 
 trailer
 <<
 /ID 
-[<2c1d2d3fc6f889a12eb3e23e57411e9d><2c1d2d3fc6f889a12eb3e23e57411e9d>]
+[<fcf985c3424d04e9901bbb087f606ded><fcf985c3424d04e9901bbb087f606ded>]
 % ReportLab generated PDF document -- digest (opensource)
 
 /Info 40 0 R
@@ -879,5 +889,5 @@ trailer
 /Size 44
 >>
 startxref
-22244
+22418
 %%EOF
