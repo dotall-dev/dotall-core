@@ -427,6 +427,19 @@ After Wave 12 integrates (set_print_titles, set_shape_font_name, set_paragraph_f
 
 Each task ends with the standing demo gate.
 
+## Wave 14 — highlight run props + companion slices (parallel)
+
+After Wave 13 integrates (set_page_orientation, set_shape_font_color, set_paragraph_font_color, set_form_field_password):
+
+1. **XLSX:** `set_page_margins` — set worksheet print margins via surgical `pageMargins` (`left`/`right`/`top`/`bottom` in inches; optional `header`/`footer`); inspect surfaces `page_margins` when present
+2. **PPTX:** `set_shape_highlight` — set/clear text highlight on shape runs (`a:highlight`/`a:srgbClr val` inside `a:rPr` from `#RRGGBB` / `RRGGBB`; null clears); content-on-slide companion to font color
+3. **DOCX:** `set_paragraph_highlight` — set/clear `w:highlight` on runs (`w:val` from Word highlight names e.g. `yellow` / `none`; null clears); content-in-document companion to font color
+4. **PDF:** `set_form_field_max_length` — set/clear AcroForm text-field `/MaxLen` (positive integer or null); pairs with password/multiline; reject non-`tx` fields
+
+**Deferred:** replace-across-shapes/paragraphs, hyperlinks, richer table cell content; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
