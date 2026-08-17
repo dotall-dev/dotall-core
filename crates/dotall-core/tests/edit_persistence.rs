@@ -217,6 +217,56 @@ fn apply_lock_blocks_concurrent_acquire() {
 }
 
 #[test]
+fn dropping_apply_lock_leaves_the_lock_file() {
+    let (temp, store, _tx_id) = init_store_with_source();
+    let lock_path = temp
+        .path()
+        .join(".all/objects/book.xlsx/state/edits/.apply.lock");
+
+    {
+        let _lock = store.acquire_apply_lock("book.xlsx").expect("lock");
+        assert!(lock_path.is_file());
+    }
+    assert!(
+        lock_path.is_file(),
+        "unlinking the lock file lets a third process create a new inode"
+    );
+    store
+        .acquire_apply_lock("book.xlsx")
+        .expect("reacquire after drop");
+}
+
+#[test]
+fn register_source_preserves_disk_version_count_from_another_store() {
+    let temp = tempdir().expect("tempdir");
+    fs::write(temp.path().join("book.xlsx"), b"initial").expect("source");
+    let mut writer = DotallStore::init(temp.path()).expect("writer");
+    writer
+        .register_source("book.xlsx", "xlsx")
+        .expect("register");
+    let mut stale = DotallStore::open(temp.path()).expect("stale in-memory snapshot");
+    let tx_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").expect("uuid");
+    writer
+        .append_history(
+            "book.xlsx",
+            &sample_history_record(0, tx_id, "=A1*1.1", "2026-07-20T10:15:30Z", "a", "b"),
+        )
+        .expect("append");
+    assert_eq!(writer.manifest().objects["book.xlsx"].version_count, 1);
+
+    stale
+        .register_source("book.xlsx", "xlsx")
+        .expect("stale register must not clobber versions");
+
+    let reopened = DotallStore::open(temp.path()).expect("reopen");
+    assert_eq!(
+        reopened.manifest().objects["book.xlsx"].version_count,
+        1,
+        "a stale process must not write version_count 0 over disk"
+    );
+}
+
+#[test]
 fn write_encoded_snapshot_deduplicates_parts_and_persists_manifest() {
     let (temp, store, _tx_id) = init_store_with_source();
     let bytes = b"workbook-bytes-v1";

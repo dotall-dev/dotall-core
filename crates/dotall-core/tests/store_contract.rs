@@ -1,6 +1,8 @@
 use std::fs;
+use std::time::{Duration, SystemTime};
 
 use dotall_core::{DotallStore, ObjectState};
+use filetime::{FileTime, set_file_mtime};
 use tempfile::tempdir;
 
 #[test]
@@ -50,6 +52,49 @@ fn registered_source_moves_from_fresh_to_stale() {
     fs::write(&source, b"changed and larger").expect("change source");
     let stale = store.status().expect("stale status");
     assert_eq!(stale[0].state, ObjectState::Stale);
+}
+
+#[test]
+fn refresh_writes_back_fingerprint_after_mtime_only_change() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("book.xlsx");
+    fs::write(&source, b"same-bytes").expect("source");
+    let mut store = DotallStore::init(temp.path()).expect("init");
+    store
+        .register_source("book.xlsx", "xlsx")
+        .expect("register");
+    let before = store.manifest().objects["book.xlsx"].fingerprint.clone();
+
+    let later = SystemTime::now() + Duration::from_secs(5);
+    set_file_mtime(&source, FileTime::from_system_time(later)).expect("mtime");
+
+    let hashed = store.status().expect("status after mtime");
+    assert_eq!(hashed[0].state, ObjectState::FreshAfterHash);
+    assert_eq!(
+        store.manifest().objects["book.xlsx"].fingerprint,
+        before,
+        "read-only status must not persist the new mtime"
+    );
+
+    let refreshed = store
+        .refresh_fresh_fingerprints()
+        .expect("write-back fingerprints");
+    assert_eq!(refreshed[0].state, ObjectState::FreshAfterHash);
+    let after = store.manifest().objects["book.xlsx"].fingerprint.clone();
+    assert_eq!(after.blake3, before.blake3);
+    assert_ne!(
+        after.modified_unix_nanos, before.modified_unix_nanos,
+        "mtime-only freshness should persist the new fingerprint"
+    );
+
+    let fast = store.status().expect("status after write-back");
+    assert_eq!(fast[0].state, ObjectState::FreshFastPath);
+
+    let reopened = DotallStore::open(temp.path()).expect("reopen");
+    assert_eq!(
+        reopened.status().expect("reopened status")[0].state,
+        ObjectState::FreshFastPath
+    );
 }
 
 #[test]

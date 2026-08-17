@@ -1,14 +1,9 @@
 use dotall_core::registry::{DetectionProbe, DetectionScore};
 
 pub fn score(probe: &DetectionProbe<'_>) -> DetectionScore {
-    let has_docx_extension = probe
-        .path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("docx"));
-    let has_zip_magic = dotall_ooxml::has_zip_magic(probe.prefix);
-    DetectionScore(match (has_docx_extension, has_zip_magic) {
-        (true, true) => 100,
-        (true, false) => 40,
-        (false, _) => 0,
-    })
+    DetectionScore(dotall_ooxml::score_office_package(
+        probe,
+        "docx",
+        "word/document.xml",
+    ))
 }

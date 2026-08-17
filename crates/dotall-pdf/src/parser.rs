@@ -54,6 +54,7 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
     let (comments, pictures) = collect_annots(&document, &pages_map)?;
     let outline = collect_outline(&document);
     let metadata = collect_metadata(&document);
+    let signed = document_is_signed(&document, &fields);
 
     Ok(PdfDocumentModel {
         document_id: ids::document_id(&source_hash, SCHEMA_VERSION),
@@ -64,6 +65,7 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
         pictures,
         outline,
         encrypted: false,
+        signed,
         metadata,
     })
 }
@@ -85,6 +87,16 @@ fn page_rotate(document: &Document, page_id: lopdf::ObjectId) -> Option<u32> {
     u32::try_from(*value).ok()
 }
 
+fn document_is_signed(document: &Document, fields: &[crate::model::PdfFieldModel]) -> bool {
+    if fields.iter().any(|field| field.field_type == "sig") {
+        return true;
+    }
+    let Ok(catalog) = document.catalog() else {
+        return false;
+    };
+    catalog.get(b"Perms").is_ok()
+}
+
 fn encrypted_stub(source_hash: &str) -> PdfDocumentModel {
     PdfDocumentModel {
         document_id: ids::document_id(source_hash, SCHEMA_VERSION),
@@ -95,6 +107,7 @@ fn encrypted_stub(source_hash: &str) -> PdfDocumentModel {
         pictures: Vec::new(),
         outline: Vec::new(),
         encrypted: true,
+        signed: false,
         metadata: PdfMetadata::default(),
     }
 }
@@ -476,5 +489,18 @@ mod tests {
         assert_eq!(model.fields[0].name, "Name");
         assert_eq!(model.fields[0].value, "Ada");
         assert!(!model.encrypted);
+    }
+
+    #[test]
+    fn catalog_perms_marks_the_document_signed_without_a_sig_field() {
+        let model = parse_pdf_bytes(&crate::fixture::catalog_perms_pdf()).expect("parse");
+        assert!(
+            model.signed,
+            "DocMDP /Perms must count as signed even without a Sig field"
+        );
+        assert!(
+            !model.fields.iter().any(|field| field.field_type == "sig"),
+            "fixture must not rely on an AcroForm signature field"
+        );
     }
 }

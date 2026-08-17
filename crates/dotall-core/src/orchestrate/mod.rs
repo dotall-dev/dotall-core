@@ -133,12 +133,20 @@ impl Engine {
         })
     }
 
-    pub fn status(&self) -> Result<Vec<EngineStatus>> {
+    pub fn status(&mut self) -> Result<Vec<EngineStatus>> {
         self.store
-            .status()?
+            .refresh_fresh_fingerprints()?
             .into_iter()
             .map(|object| {
-                let tracked = &self.store.manifest().objects[&object.path];
+                let tracked = self
+                    .store
+                    .manifest()
+                    .objects
+                    .get(&object.path)
+                    .ok_or_else(|| DotallError::InvalidSourcePath {
+                        path: Path::new(&object.path).to_path_buf(),
+                        reason: "status object is missing from the manifest".into(),
+                    })?;
                 Ok(EngineStatus {
                     path: object.path,
                     format_id: object.format_id,
@@ -404,6 +412,9 @@ impl Engine {
 
     /// Finalizes journals whose source replacement is already durable.
     pub fn recover(&mut self, relative: &str) -> Result<usize> {
+        if !self.store.manifest().objects.contains_key(relative) {
+            return Ok(0);
+        }
         let journals: Vec<ApplyJournal> = self.store.read_journals(relative)?;
         let mut recovered = 0;
         for journal in journals {
@@ -415,8 +426,9 @@ impl Engine {
                     self.store.discard_journal(relative, journal.tx_id)?;
                     continue;
                 };
-                let loaded = self.model(relative)?;
-                self.finalize_apply(relative, &loaded.handler, &staged, &journal)?;
+                let prefix = read_prefix(&source)?;
+                let handler = self.registry.detect(&source, &prefix)?;
+                self.finalize_apply(relative, &handler, &staged, &journal)?;
                 recovered += 1;
             } else if !journal.committed && actual_hash == journal.before_source_hash {
                 self.store.discard_journal(relative, journal.tx_id)?;
@@ -432,6 +444,7 @@ impl Engine {
         interrupt_after_replace: bool,
         interrupt_after_commit: bool,
     ) -> Result<AppliedEdit> {
+        self.recover(relative)?;
         if let Some(record) = self.history_for_transaction(relative, tx_id)? {
             return Ok(applied_from_record(&record));
         }
@@ -623,7 +636,7 @@ impl Engine {
         let mut response = handler.read(model, &render_request)?;
         let offset = parse_continuation(request, &handler.descriptor().id)?;
         let (content, truncated, continuation) =
-            apply_budget(&response.content, request.max_tokens, offset);
+            apply_budget(&response.content, request.max_tokens, offset)?;
         response.estimated_tokens = content.chars().count().div_ceil(4);
         response.content = content;
         response.truncated = truncated;
@@ -632,16 +645,17 @@ impl Engine {
     }
 
     fn model(&mut self, relative: &str) -> Result<LoadedModel> {
+        self.recover(relative)?;
         let (key, source) = resolve_source(self.store.workspace(), Path::new(relative))?;
         let prefix = read_prefix(&source)?;
-        let handler = self.registry.detect(Path::new(&key), &prefix)?;
+        let handler = self.registry.detect(&source, &prefix)?;
         let descriptor = handler.descriptor();
         let schema = handler.artifact_schema();
 
         let is_fresh = self.store.manifest().objects.contains_key(&key)
             && self
                 .store
-                .status()?
+                .refresh_fresh_fingerprints()?
                 .into_iter()
                 .find(|object| object.path == key)
                 .is_some_and(|object| {

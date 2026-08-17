@@ -22,8 +22,10 @@ brainstorming notes live elsewhere.
 - `skills/pdf/SKILL.md` — agent workflow for `.pdf` form fill via Dotall MCP.
 - `demo/README.md` — multi-format samples (`financials.xlsx`, `deck.pptx`, `memo.docx`,
   `form.pdf`) + CLI/MCP walkthroughs. Regenerate with
-  `cargo run -p dotall-cli --example generate_demos`. After each format capability
-  wave, refresh demos + README and CLI-smoke both new ops and prior v0 paths.
+  `cargo run -p dotall-cli --example generate_demos -- --force`. Without `--force`
+  the example writes smoke fixtures to `demo/generated/` and leaves the authored
+  pack alone. After each format capability wave, refresh demos + README and
+  CLI-smoke both new ops and prior v0 paths.
 
 Specs are the source of truth. If code and spec disagree, fix one deliberately —
 don't silently drift.
@@ -161,7 +163,7 @@ cargo fmt && cargo clippy
 ## Non-goals (v0)
 
 No formula evaluation engine · no global `~/.all/cache` · no `watch` daemon · no
-multi-agent conflict/locking · no branching history · no DOCX/PDF · no Python/JS SDK
+multi-agent conflict/locking · no branching history · no Python/JS SDK
 · no charts/pivots **editing** (preserve them, don't mutate).
 
 ## Git

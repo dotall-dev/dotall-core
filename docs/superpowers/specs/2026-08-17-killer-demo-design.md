@@ -57,7 +57,10 @@ Today’s `demo/financials.xlsx`, `demo/deck.pptx`, `demo/memo.docx`, and
 small to drown a naive agent.
 
 Add a generated pack under `demo/q3-pack/`, produced by the existing
-`generate_demos` example (or a sibling example invoked from it):
+`generate_demos` example (or a sibling example invoked from it). The company
+story is **Northstar Analytics**, a B2B SaaS FY2026 Q3 board pack. Live selectors
+stay the same; surrounding sheets/slides/paragraphs look like a real operating
+review so a naive unzip+grep drowns in decoy `10%` hits.
 
 | File | Requirements |
 |------|----------------|

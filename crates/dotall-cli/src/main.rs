@@ -206,8 +206,8 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
             }
         }
         Command::Status { path } => {
-            let store = DotallStore::open(path)?;
-            let objects = store.status()?;
+            let mut store = DotallStore::open(path)?;
+            let objects = store.refresh_fresh_fingerprints()?;
             let output = StatusOutput {
                 workspace: store.workspace().root().to_path_buf(),
                 tracked_count: objects.len(),
@@ -654,9 +654,13 @@ fn build_operations(
         }
         other => {
             return Err(DotallError::UnsupportedCapability {
-                format_id: "xlsx".into(),
-                capability: format!("edit op {other}"),
-                available: vec!["set_cell_value".into(), "set_cell_formula".into()],
+                format_id: "cli".into(),
+                capability: format!("edit --op {other}"),
+                available: vec![
+                    "set_cell_value".into(),
+                    "set_cell_formula".into(),
+                    "--ops-json".into(),
+                ],
             });
         }
     };

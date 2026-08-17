@@ -51,6 +51,31 @@ mod tests {
     }
 
     #[test]
+    fn presentation_package_wins_even_with_xlsx_extension() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("deck.xlsx");
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "ppt/presentation.xml",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .expect("entry");
+        std::io::Write::write_all(&mut writer, b"<p:presentation/>").expect("bytes");
+        let package = writer.finish().expect("finish").into_inner();
+        std::fs::write(&path, &package).expect("write");
+        let score = detection::score(&DetectionProbe {
+            path: &path,
+            prefix: &package[..4],
+        });
+        assert!(
+            score.0 >= 80,
+            "package evidence should identify PPTX without a .pptx extension, got {}",
+            score.0
+        );
+    }
+
+    #[test]
     fn ids_are_deterministic_and_opaque() {
         let first = ids::shape_id("Slide 1", "Title", 1);
         let second = ids::shape_id("Slide 1", "Title", 1);

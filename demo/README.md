@@ -1,17 +1,19 @@
 # Dotall demo workspace
 
-Multi-format samples for CLI and MCP walkthroughs. Regenerate after format changes:
+Northstar Analytics FY2026 Q3 board pack for CLI and MCP walkthroughs. These
+Office/PDF binaries are authored (openpyxl / python-pptx / python-docx /
+reportlab), not the minimal rust_xlsxwriter fixtures.
 
-```bash
-cargo run -p dotall-cli --example generate_demos
-```
+`cargo run -p dotall-cli --example generate_demos` still emits test-shaped
+copies and **will overwrite** these files — do not run it unless you intend
+to replace the pack.
 
 | File | Format | Agent workload |
 |------|--------|----------------|
-| [`financials.xlsx`](financials.xlsx) | XLSX | Multi-sheet formulas, named range `Rate`, merged header, percent/currency formats, seeded column widths + freeze panes at B2 |
-| [`deck.pptx`](deck.pptx) | PPTX | Title + metrics table + speaker notes; second slide next-steps |
-| [`memo.docx`](memo.docx) | DOCX | Heading memo + multi-run body + status table + confidential header |
-| [`form.pdf`](form.pdf) | PDF | Intake form + page labels; Name/Email/Agree/Priority/Department; `/Info` metadata |
+| [`financials.xlsx`](financials.xlsx) | XLSX | Northstar Q3 model: Cover + Inputs (named `Rate`, CFO note) + Revenue (commission formula + chart) + Pipeline + Headcount |
+| [`deck.pptx`](deck.pptx) | PPTX | 6-slide Northstar review: title + metrics table + speaker notes; agenda / pipeline / risks / ask; Next Steps last |
+| [`memo.docx`](memo.docx) | DOCX | Heading memo + multi-run body + status table + confidential header/footer + Q3 context |
+| [`form.pdf`](form.pdf) | PDF | Northstar vendor intake + page labels; Name/Email/Agree/Priority/Department; `/Info` metadata |
 
 Skills: [`xlsx`](../skills/xlsx/SKILL.md) · [`pptx`](../skills/pptx/SKILL.md) · [`docx`](../skills/docx/SKILL.md) · [`pdf`](../skills/pdf/SKILL.md)
 
@@ -33,14 +35,20 @@ Use `./target/debug/dotall` below (or a release build). Paths are relative to th
 
 ## XLSX — `financials.xlsx`
 
+Northstar Analytics FY2026 Q3 operating model. Live bake-off selectors are unchanged.
+
 | Sheet | Cell | Value / formula |
 |-------|------|-----------------|
+| `Cover` | A1 | `Northstar Analytics` |
 | `Inputs` | A1:B1 | merged header `Assumptions` |
-| `Inputs` | B2 | `0.10` (Rate) — named range `Rate`, number format `0%` |
+| `Inputs` | B2 | `0.10` (Rate) — named range `Rate`, number format `0%`, yellow input + CFO note |
 | `Inputs` | B3 | `100` (Base) — number format `$#,##0.00` |
-| `Revenue` | B2 / B3 | Jan / Feb amounts (`$#,##0.00`) |
-| `Revenue` | B4 | `=B2+B3` (Total, currency) |
-| `Revenue` | B5 | `=B4*Inputs!B2` (Commission, currency) |
+| `Inputs` | B4:B10 | list price, MoM growth, churn, COGS, NRR, gross margin, sales tax |
+| `Revenue` | B2 / B3 | Jan / Feb billed (`$1,184,200` / `$1,278,936`) |
+| `Revenue` | B4 | `=B2+B3` (Total, currency, cached) |
+| `Revenue` | B5 | `=B4*Inputs!B2` (Commission, currency, cached) |
+| `Pipeline` | A1:E9 | named deals + ACV |
+| `Headcount` | A1:D7 | org plan vs Q2 |
 
 ```bash
 DOTALL=./target/debug/dotall
@@ -271,8 +279,9 @@ $DOTALL history demo/financials.xlsx
 
 ## PPTX — `deck.pptx`
 
-Slide 1: title `Q3 Product Review`, body blurb, table `Metrics` (NPS=42), speaker notes.
-Slide 2: `Next Steps`.
+Six-slide Northstar Q3 review. Slide 1: title `Q3 Product Review`, body blurb, table `Metrics` (NPS=42, plus ARR/NRR), speaker notes.
+Slides 2–5: Agenda, Pipeline, Risks, The ask.
+Slide 6: `Next Steps`.
 
 ```bash
 DOTALL=./target/debug/dotall
@@ -295,11 +304,11 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"add_slide","payload":{"after":"Slide 1"}}]'
 $DOTALL apply demo/deck.pptx --all
-$DOTALL inspect demo/deck.pptx   # expect 3 slides
+$DOTALL inspect demo/deck.pptx   # expect 7 slides
 $DOTALL edit demo/deck.pptx --ops-json \
-  '[{"kind":"delete_slide","payload":{"slide":"Slide 3"}}]'
+  '[{"kind":"delete_slide","payload":{"slide":"Slide 7"}}]'
 $DOTALL apply demo/deck.pptx --all
-$DOTALL inspect demo/deck.pptx   # expect 2 slides (updated title slide + blank)
+$DOTALL inspect demo/deck.pptx   # expect 6 slides (updated title slide + blank + remaining narrative)
 
 # Wave 3 — speaker notes (notes part only)
 $DOTALL edit demo/deck.pptx --ops-json \
@@ -450,6 +459,7 @@ Body document-order indices: `0` heading, `1`–`2` body, `3`–`6` table cells
 Paragraph `1` is multi-run (bold + italic) for Wave 3 fidelity smoke.
 
 Header part `header1` index `0`: `CONFIDENTIAL - Agent Pilot Memo` (separate from body).
+Footer part `footer1`: `Northstar Analytics - FY2026 Q3 - do not distribute`.
 
 ```bash
 DOTALL=./target/debug/dotall

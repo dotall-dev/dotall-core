@@ -1,20 +1,14 @@
 use dotall_core::registry::{DetectionProbe, DetectionScore};
 
-/// Scores XLSX candidates using both their OOXML ZIP signature and extension.
+/// Scores XLSX candidates using extension, ZIP magic, and package evidence.
 ///
-/// A generic ZIP is not treated as XLSX so PPTX/DOCX can win on their extensions.
+/// A generic ZIP is not treated as XLSX so PPTX/DOCX can win on their parts.
 pub fn score(probe: &DetectionProbe<'_>) -> DetectionScore {
-    let has_xlsx_extension = probe
-        .path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"));
-    let has_zip_magic = dotall_ooxml::has_zip_magic(probe.prefix);
-
-    DetectionScore(match (has_xlsx_extension, has_zip_magic) {
-        (true, true) => 100,
-        (true, false) => 40,
-        (false, _) => 0,
-    })
+    DetectionScore(dotall_ooxml::score_office_package(
+        probe,
+        "xlsx",
+        "xl/workbook.xml",
+    ))
 }
 
 #[cfg(test)]
@@ -40,5 +34,37 @@ mod tests {
             prefix: b"PK\x03\x04",
         });
         assert_eq!(score.0, 100);
+    }
+
+    #[test]
+    fn readable_pptx_package_with_xlsx_extension_is_a_weak_xlsx_match() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("deck.xlsx");
+        write_zip(&path, "ppt/presentation.xml");
+        let bytes = std::fs::read(&path).expect("zip bytes");
+        let score = score(&DetectionProbe {
+            path: &path,
+            prefix: &bytes[..4],
+        });
+        assert!(
+            score.0 < 80,
+            "wrong-family package must not win as XLSX, got {}",
+            score.0
+        );
+    }
+
+    fn write_zip(path: &Path, entry: &str) {
+        use std::io::{Cursor, Write};
+
+        use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
+
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(entry, SimpleFileOptions::default())
+            .expect("entry");
+        writer.write_all(b"<root/>").expect("bytes");
+        let package = writer.finish().expect("finish").into_inner();
+        std::fs::write(path, package).expect("write zip");
     }
 }

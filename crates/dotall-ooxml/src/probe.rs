@@ -5,6 +5,26 @@ pub fn has_zip_magic(prefix: &[u8]) -> bool {
         || prefix.starts_with(b"PK\x07\x08")
 }
 
+/// Package-part evidence for a path that may or may not be a readable ZIP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PackageEvidence {
+    Present,
+    Absent,
+    Unreadable,
+}
+
+/// Reads `path` and reports whether the ZIP central directory lists `name`.
+pub fn zip_path_contains_entry(path: &std::path::Path, name: &str) -> PackageEvidence {
+    let Ok(bytes) = std::fs::read(path) else {
+        return PackageEvidence::Unreadable;
+    };
+    if zip_contains_entry(&bytes, name) {
+        PackageEvidence::Present
+    } else {
+        PackageEvidence::Absent
+    }
+}
+
 /// Returns true when the ZIP central directory lists `name` (forward slashes).
 pub fn zip_contains_entry(package: &[u8], name: &str) -> bool {
     let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(package)) else {
@@ -16,6 +36,29 @@ pub fn zip_contains_entry(package: &[u8], name: &str) -> bool {
             .map(|entry| entry.name() == name)
             .unwrap_or(false)
     })
+}
+
+/// Scores an Office family using extension, ZIP magic, and a characteristic part.
+pub fn score_office_package(
+    probe: &dotall_core::registry::DetectionProbe<'_>,
+    extension: &str,
+    part: &str,
+) -> u16 {
+    let has_extension = probe
+        .path
+        .extension()
+        .is_some_and(|value| value.eq_ignore_ascii_case(extension));
+    let has_zip_magic = has_zip_magic(probe.prefix);
+    let evidence = zip_path_contains_entry(probe.path, part);
+
+    match (has_extension, has_zip_magic, evidence) {
+        (_, _, PackageEvidence::Present) if has_extension => 100,
+        (_, _, PackageEvidence::Present) => 80,
+        (true, true, PackageEvidence::Absent) => 10,
+        (true, true, PackageEvidence::Unreadable) => 100,
+        (true, false, _) => 40,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
