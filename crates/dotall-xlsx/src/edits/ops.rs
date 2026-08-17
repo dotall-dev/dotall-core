@@ -89,6 +89,10 @@ pub enum XlsxEditOp {
     DeleteName {
         name: String,
     },
+    HideSheet {
+        sheet: String,
+        hidden: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -74,6 +74,14 @@ pub fn validate(
     {
         return validate_delete_name_operations(model, operations);
     }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "hide_sheet"))
+    {
+        return Err(format_error(
+            "hide_sheet requires source-aware validation (validate_edit_with_source)",
+        ));
+    }
 
     let workbook = decode(model)?;
     let graph = build(&workbook);
@@ -143,6 +151,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "delete_name"))
     {
         return validate_delete_name_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "hide_sheet"))
+    {
+        return validate_hide_sheet_operations(source, model, operations);
     }
     if operations.iter().all(|operation| {
         !matches!(
@@ -882,6 +896,84 @@ fn validate_delete_name_operations(
     })
 }
 
+fn validate_hide_sheet_operations(
+    source: &Path,
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "hide_sheet edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "hide_sheet" {
+        return Err(format_error("unsupported hide_sheet edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format_error("hide_sheet requires a non-empty `sheet` field"))?;
+    let hidden = operation
+        .payload
+        .get("hidden")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format_error("hide_sheet requires a boolean `hidden` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let package = fs::read(source).map_err(|error| DotallError::Io {
+        path: source.to_path_buf(),
+        source: error,
+    })?;
+    let visibility = crate::edits::writer::sheet_visibility(&package)?;
+    let current_hidden = visibility
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(&sheet.name))
+        .map(|(_, is_hidden)| *is_hidden)
+        .ok_or_else(|| {
+            format_error(format!(
+                "worksheet `{}` was not found in package",
+                sheet.name
+            ))
+        })?;
+    if hidden && !current_hidden {
+        let visible_count = visibility
+            .iter()
+            .filter(|(_, is_hidden)| !*is_hidden)
+            .count();
+        if visible_count <= 1 {
+            return Err(format_error("cannot hide the last visible worksheet"));
+        }
+    }
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "hide_sheet".into(),
+            payload: serde_json::json!({
+                "sheet": sheet.name,
+                "hidden": hidden,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("sheet:{}", sheet.name),
+            element_id: sheet.element_id.clone(),
+            change: "hide_sheet".into(),
+            before: Some(if current_hidden { "hidden" } else { "visible" }.into()),
+            after: Some(if hidden { "hidden" } else { "visible" }.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn normalize_defined_name_formula(formula: &str) -> Result<String> {
     let trimmed = formula.trim();
     let body = trimmed.strip_prefix('=').unwrap_or(trimmed).trim();
@@ -1394,7 +1486,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::SetRowHeight { .. }
             | XlsxEditOp::FreezePanes { .. }
             | XlsxEditOp::DefineName { .. }
-            | XlsxEditOp::DeleteName { .. } => {
+            | XlsxEditOp::DeleteName { .. }
+            | XlsxEditOp::HideSheet { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -1506,7 +1599,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetRowHeight { .. }
         | XlsxEditOp::FreezePanes { .. }
         | XlsxEditOp::DefineName { .. }
-        | XlsxEditOp::DeleteName { .. } => {
+        | XlsxEditOp::DeleteName { .. }
+        | XlsxEditOp::HideSheet { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )

@@ -143,6 +143,14 @@ Remove a workbook-scoped named range (surgical `xl/workbook.xml` only):
 { "kind": "delete_name", "payload": { "name": "Rate" } }
 ```
 
+Hide or unhide a worksheet (`state="hidden"` on the workbook sheet tag only):
+
+```json
+{ "kind": "hide_sheet", "payload": { "sheet": "Revenue", "hidden": true } }
+```
+
+Rejects hiding the last visible sheet. Worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

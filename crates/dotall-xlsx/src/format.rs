@@ -542,6 +542,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Surgically patches only xl/workbook.xml definedNames; worksheets and other parts stay byte-identical."
                 .into(),
         },
+        EditCapability {
+            operation: "hide_sheet".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Hide or unhide a worksheet via workbook sheet state=\"hidden\"."
+                .into(),
+            example: json!({
+                "kind": "hide_sheet",
+                "payload": { "sheet": "Revenue", "hidden": true }
+            }),
+            safety: "Surgically patches only xl/workbook.xml sheet state. Rejects hiding the last visible sheet. Worksheets stay byte-identical."
+                .into(),
+        },
     ]
 }
 

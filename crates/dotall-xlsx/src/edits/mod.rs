@@ -117,6 +117,10 @@ pub(crate) fn parse_validated_operations(
             "delete_name" => Ok(XlsxEditOp::DeleteName {
                 name: required_string(operation, "name")?,
             }),
+            "hide_sheet" => Ok(XlsxEditOp::HideSheet {
+                sheet: required_string(operation, "sheet")?,
+                hidden: required_bool(operation, "hidden")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
@@ -125,6 +129,21 @@ pub(crate) fn parse_validated_operations(
             ))),
         })
         .collect()
+}
+
+fn required_bool(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<bool> {
+    operation
+        .payload
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| {
+            invalid_operation(format!(
+                "validated edit operation requires boolean `{field}`"
+            ))
+        })
 }
 
 fn required_positive_u32(

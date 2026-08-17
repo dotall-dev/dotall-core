@@ -110,6 +110,81 @@ pub(super) fn delete_name(package: &[u8], name: &str) -> Result<PackagePatch> {
     })
 }
 
+/// Set or clear workbook sheet `state="hidden"`. Patches only `xl/workbook.xml`.
+pub(super) fn hide_sheet(package: &[u8], name: &str, hidden: bool) -> Result<PackagePatch> {
+    let workbook = entry_bytes(package, "xl/workbook.xml")?;
+    let sheets = sheets(&workbook)?;
+    let sheet = find_sheet(&sheets, name)?;
+    if hidden {
+        let visible_count = sheets.iter().filter(|sheet| sheet.visible).count();
+        if sheet.visible && visible_count <= 1 {
+            return Err(writer_error("cannot hide the last visible worksheet"));
+        }
+    }
+    let patched = set_sheet_hidden_state(&workbook, sheet.tag_start, sheet.tag_end, hidden)?;
+    Ok(PackagePatch {
+        replacements: BTreeMap::from([("xl/workbook.xml".into(), patched)]),
+        additions: BTreeMap::new(),
+        removals: BTreeSet::new(),
+    })
+}
+
+/// Returns `(sheet_name, is_hidden)` for each workbook sheet.
+pub(super) fn sheet_visibility(package: &[u8]) -> Result<Vec<(String, bool)>> {
+    let workbook = entry_bytes(package, "xl/workbook.xml")?;
+    Ok(sheets(&workbook)?
+        .into_iter()
+        .map(|sheet| (sheet.name, !sheet.visible))
+        .collect())
+}
+
+fn set_sheet_hidden_state(
+    xml: &[u8],
+    tag_start: usize,
+    tag_end: usize,
+    hidden: bool,
+) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
+    let tag = &text[tag_start..tag_end];
+    let without_state = remove_attribute(tag, "state")?;
+    let replacement = if hidden {
+        insert_attribute_before_close(&without_state, r#" state="hidden""#)?
+    } else {
+        without_state
+    };
+    Ok(format!("{}{}{}", &text[..tag_start], replacement, &text[tag_end..]).into_bytes())
+}
+
+fn remove_attribute(tag: &str, attribute: &str) -> Result<String> {
+    let needle = format!("{attribute}=\"");
+    let Some(rel) = tag.find(&needle) else {
+        return Ok(tag.to_owned());
+    };
+    let value_start = rel + needle.len();
+    let value_end = tag[value_start..]
+        .find('"')
+        .map(|offset| value_start + offset)
+        .ok_or_else(|| writer_error(format!("unterminated `{attribute}` attribute")))?;
+    let mut start = rel;
+    while start > 0 && tag.as_bytes()[start - 1] == b' ' {
+        start -= 1;
+    }
+    Ok(format!("{}{}", &tag[..start], &tag[value_end + 1..]))
+}
+
+fn insert_attribute_before_close(tag: &str, attribute: &str) -> Result<String> {
+    if tag.ends_with("/>") {
+        let open = tag.trim_end_matches("/>").trim_end();
+        return Ok(format!("{open}{attribute}/>"));
+    }
+    if tag.ends_with('>') {
+        let open = tag.trim_end_matches('>').trim_end();
+        return Ok(format!("{open}{attribute}>"));
+    }
+    Err(writer_error("unterminated workbook sheet tag"))
+}
+
 pub(super) fn rename_sheet(package: &[u8], from: &str, to: &str) -> Result<PackagePatch> {
     let workbook = entry_bytes(package, "xl/workbook.xml")?;
     let sheets = sheets(&workbook)?;

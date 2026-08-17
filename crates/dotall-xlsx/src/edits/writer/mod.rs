@@ -27,3 +27,7 @@ pub(crate) fn delete_sheet_references(
 ) -> Result<workbook::DeleteSheetReferences> {
     workbook::delete_sheet_references(package, name)
 }
+
+pub(crate) fn sheet_visibility(package: &[u8]) -> Result<Vec<(String, bool)>> {
+    workbook::sheet_visibility(package)
+}

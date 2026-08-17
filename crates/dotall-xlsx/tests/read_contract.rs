@@ -125,6 +125,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "freeze_panes",
             "define_name",
             "delete_name",
+            "hide_sheet",
         ]
     );
     assert_eq!(
