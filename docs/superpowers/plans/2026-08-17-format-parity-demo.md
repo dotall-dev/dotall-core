@@ -401,6 +401,19 @@ After Wave 10 integrates (set_auto_filter, set_shape_underline, set_paragraph_un
 
 Each task ends with the standing demo gate.
 
+## Wave 12 — font name run props + companion slices (parallel)
+
+After Wave 11 integrates (set_print_area, set_shape_font_size, set_paragraph_font_size, set_form_field_required):
+
+1. **XLSX:** `set_print_titles` — set/clear worksheet print titles via surgical workbook `_xlnm.Print_Titles` (`rows` like `1:1` and/or `cols` like `A:A`; both null clears); inspect surfaces `print_titles` when present
+2. **PPTX:** `set_shape_font_name` — set/clear font name on shape text runs (`a:latin` / `a:ea` / `a:cs` `typeface` inside `a:rPr`); content-on-slide companion to font size
+3. **DOCX:** `set_paragraph_font_name` — set/clear `w:rFonts` on runs (`w:ascii` / `w:hAnsi` / `w:cs` from `font`); content-in-document companion to font size
+4. **PDF:** `set_form_field_multiline` — set/clear AcroForm text-field Multiline (`/Ff` bit 13); pairs with readonly/required; reject non-`tx` fields
+
+**Deferred:** highlight/color, replace-across-shapes/paragraphs; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
