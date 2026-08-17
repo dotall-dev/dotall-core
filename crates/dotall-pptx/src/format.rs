@@ -399,6 +399,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Upserts a:highlight/a:srgbClr val from #RRGGBB/RRGGBB (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
         EditCapability {
+            operation: "set_shape_strikethrough".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear strikethrough on all text runs inside a slide shape (a:rPr strike)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_strikethrough",
+                "payload": { "slide": "Slide 1", "shape": "Title", "strikethrough": true }
+            }),
+            safety: "Upserts a:rPr strike=\"sngStrike\"/\"noStrike\" on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
             operation: "replace_shape_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

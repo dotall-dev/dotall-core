@@ -179,6 +179,15 @@ Set or clear highlight on all runs in a body/table paragraph (`w:highlight`; Wor
 }
 ```
 
+Set or clear strikethrough on all runs in a body/table paragraph (`w:strike`):
+
+```json
+{
+  "kind": "set_paragraph_strikethrough",
+  "payload": { "index": 1, "strikethrough": true }
+}
+```
+
 Find/replace a substring inside one body/table paragraph (rejects empty `find` / no match; first-run rewrite like `set_paragraph_text`):
 
 ```json

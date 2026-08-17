@@ -49,9 +49,10 @@ pub fn validate(
         "set_shape_font_name" => validate_set_shape_font_name(model, operation),
         "set_shape_font_color" => validate_set_shape_font_color(model, operation),
         "set_shape_highlight" => validate_set_shape_highlight(model, operation),
+        "set_shape_strikethrough" => validate_set_shape_strikethrough(model, operation),
         "replace_shape_text" => validate_replace_shape_text(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -308,6 +309,13 @@ fn validate_set_shape_underline(
     operation: &SemanticOperation,
 ) -> Result<ValidatedEdit> {
     validate_set_shape_run_bool(model, operation, "set_shape_underline", "underline")
+}
+
+fn validate_set_shape_strikethrough(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    validate_set_shape_run_bool(model, operation, "set_shape_strikethrough", "strikethrough")
 }
 
 fn validate_set_shape_font_size(
@@ -1021,6 +1029,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 removals: BTreeSet::new(),
             }
         }
+        "set_shape_strikethrough" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let strikethrough = operation
+                .payload
+                .get("strikethrough")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`strikethrough` boolean is required"))?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_shape_strikethrough(&original, shape, strikethrough)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
         other => {
             return Err(format_error(format!(
                 "cannot apply unsupported pptx edit `{other}`"
@@ -1336,6 +1362,15 @@ pub fn patch_shape_italic(xml: &[u8], shape: &str, italic: bool) -> Result<Vec<u
 pub fn patch_shape_underline(xml: &[u8], shape: &str, underline: bool) -> Result<Vec<u8>> {
     let value = if underline { "sng" } else { "none" };
     patch_shape_run_attr(xml, shape, "u", value)
+}
+
+pub fn patch_shape_strikethrough(xml: &[u8], shape: &str, strikethrough: bool) -> Result<Vec<u8>> {
+    let value = if strikethrough {
+        "sngStrike"
+    } else {
+        "noStrike"
+    };
+    patch_shape_run_attr(xml, shape, "strike", value)
 }
 
 pub fn patch_shape_font_size(xml: &[u8], shape: &str, size_pt: Option<f64>) -> Result<Vec<u8>> {

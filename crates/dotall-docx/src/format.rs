@@ -448,6 +448,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_strikethrough".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear strikethrough (w:strike) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_strikethrough",
+                "payload": { "index": 1, "strikethrough": true }
+            }),
+            safety:
+                "Upserts w:strike on each run (w:val=\"0\" clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "replace_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:
