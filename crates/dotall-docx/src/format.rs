@@ -504,6 +504,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_bullet".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear a bullet on a body/table paragraph (w:numPr plus a numbering.xml bullet definition)."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_bullet",
+                "payload": { "index": 0, "bullet": true }
+            }),
+            safety:
+                "Sets w:pPr/w:numPr (ilvl 0 + numId) pointing at a bullet numbering definition; false removes w:numPr only. Creates word/numbering.xml plus document.xml.rels and [Content_Types].xml entries when missing. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "replace_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

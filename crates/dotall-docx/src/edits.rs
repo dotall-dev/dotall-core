@@ -15,7 +15,17 @@ use crate::model::{DocumentModel, HeaderFooterParagraphModel, SCHEMA_ID, SCHEMA_
 const UNSAFE_MARKERS: [&str; 5] = ["<w:del", "<w:ins", "<w:sdt", "<w:fldChar", "<w:instrText"];
 const HYPERLINK_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+const NUMBERING_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
 const DOCUMENT_RELS_NAME: &str = "word/_rels/document.xml.rels";
+const NUMBERING_PART: &str = "word/numbering.xml";
+const CONTENT_TYPES_NAME: &str = "[Content_Types].xml";
+const NUMBERING_OVERRIDE: &str = concat!(
+    r#"<Override PartName="/word/numbering.xml" ContentType=""#,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
+    r#""/>"#
+);
+const MINIMAL_BULLET_NUMBERING: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="&#8226;"/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
 const R_NAMESPACE: &str =
     r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
 const EMPTY_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#;
@@ -44,6 +54,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_vert_align" => validate_set_paragraph_vert_align(model, operation),
         "set_paragraph_caps" => validate_set_paragraph_caps(model, operation),
         "set_paragraph_hyperlink" => validate_set_paragraph_hyperlink(model, operation),
+        "set_paragraph_bullet" => validate_set_paragraph_bullet(model, operation),
         "replace_paragraph_text" => validate_replace_paragraph_text(model, operation),
         "replace_across_paragraphs" => validate_replace_across_paragraphs(model, operation),
         "set_header_paragraph_text" => {
@@ -53,7 +64,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_paragraph_bullet, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -473,6 +484,43 @@ fn validate_set_paragraph_caps(
                 Some(value) => value.to_owned(),
                 None => "cleared".into(),
             }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_paragraph_bullet(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let bullet = required_bool(&operation.payload, "bullet")?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_bullet".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "bullet": bullet,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_bullet".into(),
+            before: None,
+            after: Some(if bullet { "true" } else { "false" }.into()),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -1115,6 +1163,15 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let url = optional_hyperlink_url(&operation.payload, "url")?;
             apply_paragraph_hyperlink(package, index, url)
         }
+        "set_paragraph_bullet" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let bullet = required_bool(&operation.payload, "bullet")?;
+            apply_paragraph_bullet(package, index, bullet)
+        }
         "set_header_paragraph_text" | "set_footer_paragraph_text" => {
             let part = required_str(&operation.payload, "part")?;
             let index = operation
@@ -1427,6 +1484,266 @@ fn apply_paragraph_hyperlink(
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes,
     })
+}
+
+fn apply_paragraph_bullet(package: &[u8], index: u32, bullet: bool) -> Result<PatchedOutput> {
+    let original = entry_bytes(package, "word/document.xml")?;
+    let mut replacements = BTreeMap::new();
+    if bullet {
+        let numbering_existed = has_entry(package, NUMBERING_PART)?;
+        let (num_id, numbering_patch) = ensure_bullet_numbering(package)?;
+        replacements.insert(
+            "word/document.xml".to_owned(),
+            patch_paragraph_num_pr(&original, index, Some(num_id))?,
+        );
+        if let Some(numbering) = numbering_patch {
+            replacements.insert(NUMBERING_PART.to_owned(), numbering);
+        }
+        if !numbering_existed {
+            ensure_numbering_package_links(package, &mut replacements)?;
+        }
+    } else {
+        replacements.insert(
+            "word/document.xml".to_owned(),
+            patch_paragraph_num_pr(&original, index, None)?,
+        );
+    }
+    let bytes = rebuild_package(package, &replacements)?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn ensure_bullet_numbering(package: &[u8]) -> Result<(u32, Option<Vec<u8>>)> {
+    if has_entry(package, NUMBERING_PART)? {
+        let xml = entry_bytes(package, NUMBERING_PART)?;
+        if let Some(num_id) = find_bullet_num_id(&xml)? {
+            return Ok((num_id, None));
+        }
+        let (num_id, patched) = append_bullet_definition(&xml)?;
+        Ok((num_id, Some(patched)))
+    } else {
+        Ok((1, Some(MINIMAL_BULLET_NUMBERING.to_vec())))
+    }
+}
+
+fn ensure_numbering_package_links(
+    package: &[u8],
+    replacements: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    let rels_exist = has_entry(package, DOCUMENT_RELS_NAME)?;
+    let rels_xml = if rels_exist {
+        entry_bytes(package, DOCUMENT_RELS_NAME)?
+    } else {
+        EMPTY_RELATIONSHIPS.to_vec()
+    };
+    if !relationship_has_type(&rels_xml, NUMBERING_REL_TYPE)? {
+        let used = relationship_id_numbers(&rels_xml)?;
+        let rid = format!("rId{}", lowest_unused_number(&used));
+        replacements.insert(
+            DOCUMENT_RELS_NAME.to_owned(),
+            insert_before_close(
+                &rels_xml,
+                "Relationships",
+                &format!(
+                    r#"<Relationship Id="{rid}" Type="{NUMBERING_REL_TYPE}" Target="numbering.xml"/>"#
+                ),
+            )?,
+        );
+    }
+    let content_types = entry_bytes(package, CONTENT_TYPES_NAME)?;
+    if !content_types_has_part(&content_types, "/word/numbering.xml")? {
+        replacements.insert(
+            CONTENT_TYPES_NAME.to_owned(),
+            insert_before_close(&content_types, "Types", NUMBERING_OVERRIDE)?,
+        );
+    }
+    Ok(())
+}
+
+fn relationship_has_type(xml: &[u8], rel_type: &str) -> Result<bool> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("relationships XML is not UTF-8: {error}")))?;
+    Ok(text.contains(rel_type))
+}
+
+fn content_types_has_part(xml: &[u8], part_name: &str) -> Result<bool> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("content types XML is not UTF-8: {error}")))?;
+    Ok(text.contains(&format!(r#"PartName="{part_name}""#)))
+}
+
+fn find_bullet_num_id(xml: &[u8]) -> Result<Option<u32>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("numbering XML is not UTF-8: {error}")))?;
+    let mut bullet_abstracts: BTreeSet<u32> = BTreeSet::new();
+    let mut cursor = 0;
+    while let Some(rel) = find_named_open(&text[cursor..], "w:abstractNum") {
+        let start = cursor + rel;
+        let end = element_end(text, start, "w:abstractNum")?;
+        let block = &text[start..end];
+        if block.contains(r#"w:numFmt w:val="bullet""#) {
+            let gt = block
+                .find('>')
+                .ok_or_else(|| format_error("unterminated w:abstractNum"))?;
+            if let Some(id) = tag_attribute(&block[..=gt], "w:abstractNumId")
+                && let Ok(number) = id.parse()
+            {
+                bullet_abstracts.insert(number);
+            }
+        }
+        cursor = end;
+    }
+    if bullet_abstracts.is_empty() {
+        return Ok(None);
+    }
+    cursor = 0;
+    while let Some(rel) = find_named_open(&text[cursor..], "w:num") {
+        let start = cursor + rel;
+        let end = element_end(text, start, "w:num")?;
+        let block = &text[start..end];
+        let gt = block
+            .find('>')
+            .ok_or_else(|| format_error("unterminated w:num"))?;
+        let num_id = tag_attribute(&block[..=gt], "w:numId")
+            .and_then(|id| id.parse().ok())
+            .ok_or_else(|| format_error("w:num is missing w:numId"))?;
+        if let Some(abstract_id) = extract_named_element(block, "w:abstractNumId")
+            && let Some(value) = tag_attribute(abstract_id, "w:val")
+            && let Ok(number) = value.parse()
+            && bullet_abstracts.contains(&number)
+        {
+            return Ok(Some(num_id));
+        }
+        cursor = end;
+    }
+    Ok(None)
+}
+
+fn append_bullet_definition(xml: &[u8]) -> Result<(u32, Vec<u8>)> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("numbering XML is not UTF-8: {error}")))?;
+    let abstract_id = lowest_unused_number(&named_attribute_numbers(
+        text,
+        "w:abstractNum",
+        "w:abstractNumId",
+    )?);
+    let num_id = lowest_unused_number(&named_attribute_numbers(text, "w:num", "w:numId")?);
+    let insertion = format!(
+        r#"<w:abstractNum w:abstractNumId="{abstract_id}"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="&#8226;"/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum><w:num w:numId="{num_id}"><w:abstractNumId w:val="{abstract_id}"/></w:num>"#
+    );
+    Ok((num_id, insert_before_close(xml, "w:numbering", &insertion)?))
+}
+
+fn named_attribute_numbers(xml: &str, tag: &str, attribute: &str) -> Result<BTreeSet<u32>> {
+    let mut numbers = BTreeSet::new();
+    let mut cursor = 0;
+    while let Some(rel) = find_named_open(&xml[cursor..], tag) {
+        let start = cursor + rel;
+        let end = element_end(xml, start, tag)?;
+        let gt = xml[start..end]
+            .find('>')
+            .map(|offset| start + offset)
+            .ok_or_else(|| format_error(format!("unterminated `{tag}`")))?;
+        if let Some(id) = tag_attribute(&xml[start..=gt], attribute)
+            && let Ok(number) = id.parse()
+        {
+            numbers.insert(number);
+        }
+        cursor = end;
+    }
+    Ok(numbers)
+}
+
+fn patch_paragraph_num_pr(xml: &[u8], index: u32, num_id: Option<u32>) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let open_end = paragraph
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    let replacement = match (num_id, extract_p_pr(&paragraph[open_end..])) {
+        (Some(num_id), Some(p_pr)) => {
+            let num_pr = num_pr_tag(num_id);
+            let patched_p_pr = upsert_num_pr(p_pr, &num_pr)?;
+            format!(
+                "{}{}{}",
+                &paragraph[..open_end],
+                patched_p_pr,
+                &paragraph[open_end + p_pr.len()..]
+            )
+        }
+        (Some(num_id), None) => {
+            format!(
+                "{}<w:pPr>{}</w:pPr>{}",
+                &paragraph[..open_end],
+                num_pr_tag(num_id),
+                &paragraph[open_end..]
+            )
+        }
+        (None, Some(p_pr)) => {
+            let patched_p_pr = remove_num_pr(p_pr)?;
+            format!(
+                "{}{}{}",
+                &paragraph[..open_end],
+                patched_p_pr,
+                &paragraph[open_end + p_pr.len()..]
+            )
+        }
+        (None, None) => paragraph.to_owned(),
+    };
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&replacement);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
+fn num_pr_tag(num_id: u32) -> String {
+    format!(r#"<w:numPr><w:ilvl w:val="0"/><w:numId w:val="{num_id}"/></w:numPr>"#)
+}
+
+fn upsert_num_pr(p_pr: &str, num_pr_tag: &str) -> Result<String> {
+    if let Some(start) = find_named_open(p_pr, "w:numPr") {
+        let end = element_end(p_pr, start, "w:numPr")?;
+        return Ok(format!("{}{}{}", &p_pr[..start], num_pr_tag, &p_pr[end..]));
+    }
+    let open_end = p_pr
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:pPr"))?;
+    if p_pr[..open_end].ends_with("/>") {
+        let open = p_pr[..open_end].trim_end_matches("/>");
+        return Ok(format!("{open}>{num_pr_tag}</w:pPr>"));
+    }
+    Ok(format!(
+        "{}{}{}",
+        &p_pr[..open_end],
+        num_pr_tag,
+        &p_pr[open_end..]
+    ))
+}
+
+fn remove_num_pr(p_pr: &str) -> Result<String> {
+    let Some(start) = find_named_open(p_pr, "w:numPr") else {
+        return Ok(p_pr.to_owned());
+    };
+    let end = element_end(p_pr, start, "w:numPr")?;
+    Ok(format!("{}{}", &p_pr[..start], &p_pr[end..]))
 }
 
 fn patch_paragraph_hyperlink(xml: &[u8], index: u32, rid: Option<&str>) -> Result<Vec<u8>> {
@@ -2686,6 +3003,7 @@ fn resolve_body_paragraph<'a>(
     }
     let index = payload
         .get("index")
+        .or_else(|| payload.get("paragraph"))
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| format_error("`index` or `element_id` is required"))? as u32;
     model

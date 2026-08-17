@@ -1700,6 +1700,20 @@ fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&s
     }
 }
 
+fn assert_existing_entries_identical_except(before: &[u8], after: &[u8], patched: &[&str]) {
+    let before_entries = zip_entries(before);
+    let after_entries = zip_entries(after);
+    for (name, before_bytes) in &before_entries {
+        if patched.contains(&name.as_str()) {
+            continue;
+        }
+        let after_bytes = after_entries
+            .get(name)
+            .unwrap_or_else(|| panic!("entry retained: {name}"));
+        assert_eq!(before_bytes, after_bytes, "bytes changed for {name}");
+    }
+}
+
 fn zip_entries(package: &[u8]) -> BTreeMap<String, Vec<u8>> {
     let mut archive = ZipArchive::new(Cursor::new(package)).expect("zip");
     let mut entries = BTreeMap::new();
@@ -1945,5 +1959,248 @@ fn capabilities_advertise_replace_across_paragraphs() {
             .iter()
             .any(|cap| cap.operation == "replace_across_paragraphs"),
         "capabilities must advertise replace_across_paragraphs"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_paragraph_bullet() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_paragraph_bullet"),
+        "capabilities must advertise set_paragraph_bullet"
+    );
+}
+
+#[test]
+fn set_paragraph_bullet_true_sets_numpr_and_creates_numbering_part() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+    let before_entries = zip_entries(&before);
+    assert!(
+        !before_entries.contains_key("word/numbering.xml"),
+        "fixture must start without numbering.xml"
+    );
+    assert!(
+        !before_entries.contains_key("word/_rels/document.xml.rels"),
+        "fixture must start without document.xml.rels"
+    );
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bullet".into(),
+                payload: serde_json::json!({ "index": 0, "bullet": true }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let entries = zip_entries(&patched.bytes);
+    let document_xml =
+        String::from_utf8(entries["word/document.xml"].clone()).expect("document xml");
+    let numbering = String::from_utf8(entries["word/numbering.xml"].clone()).expect("numbering");
+    let rels = String::from_utf8(entries["word/_rels/document.xml.rels"].clone()).expect("rels");
+    let content_types =
+        String::from_utf8(entries["[Content_Types].xml"].clone()).expect("content types");
+
+    assert!(
+        document_xml.contains("<w:numPr>") && document_xml.contains(r#"<w:ilvl w:val="0"/>"#),
+        "expected w:numPr with ilvl 0, got: {document_xml}"
+    );
+    assert!(
+        document_xml.contains(r#"<w:numId w:val=""#),
+        "expected w:numId, got: {document_xml}"
+    );
+    assert!(
+        numbering.contains(r#"w:val="bullet""#) || numbering.contains("<w:numFmt"),
+        "expected bullet numbering definition, got: {numbering}"
+    );
+    assert!(
+        rels.contains("officeDocument/2006/relationships/numbering"),
+        "expected numbering Relationship, got: {rels}"
+    );
+    assert!(
+        content_types.contains(r#"PartName="/word/numbering.xml""#)
+            && content_types.contains("wordprocessingml.numbering+xml"),
+        "expected numbering Override, got: {content_types}"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "set_paragraph_bullet");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("true"));
+    assert_existing_entries_identical_except(
+        &before,
+        &patched.bytes,
+        &[
+            "word/document.xml",
+            "word/numbering.xml",
+            "word/_rels/document.xml.rels",
+            "[Content_Types].xml",
+        ],
+    );
+}
+
+#[test]
+fn set_paragraph_bullet_false_removes_numpr_and_leaves_numbering() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bullet".into(),
+                payload: serde_json::json!({ "paragraph": 1, "bullet": true }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after_set = zip_entries(&patched.bytes);
+    let numbering_before = after_set["word/numbering.xml"].clone();
+    let rels_before = after_set["word/_rels/document.xml.rels"].clone();
+    let types_before = after_set["[Content_Types].xml"].clone();
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bullet".into(),
+                payload: serde_json::json!({ "index": 1, "bullet": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let entries = zip_entries(&cleared.bytes);
+    let document_xml =
+        String::from_utf8(entries["word/document.xml"].clone()).expect("document xml");
+    assert!(
+        !document_xml.contains("w:numPr"),
+        "expected w:numPr removed, got: {document_xml}"
+    );
+    assert_eq!(
+        entries["word/numbering.xml"], numbering_before,
+        "clearing a bullet must leave numbering.xml"
+    );
+    assert_eq!(
+        entries["word/_rels/document.xml.rels"], rels_before,
+        "clearing a bullet must leave document.xml.rels"
+    );
+    assert_eq!(
+        entries["[Content_Types].xml"], types_before,
+        "clearing a bullet must leave [Content_Types].xml"
+    );
+    assert_eq!(clear.semantic_diff[0].after.as_deref(), Some("false"));
+    assert_untouched_entries_identical(&patched.bytes, &cleared.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_bullet_table_cell_reuses_existing_numbering() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    let before = fixture::table_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let first = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bullet".into(),
+                payload: serde_json::json!({ "index": 0, "bullet": true }),
+            }],
+        )
+        .expect("validate first");
+    let after_first = handler.apply_edit(&path, &first).expect("apply first");
+    fs::write(&path, &after_first.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let second = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bullet".into(),
+                payload: serde_json::json!({ "index": 1, "bullet": true }),
+            }],
+        )
+        .expect("validate table cell");
+    let patched = handler
+        .apply_edit(&path, &second)
+        .expect("apply table cell");
+    let document_xml = document_xml(&patched.bytes);
+    assert_eq!(document_xml.matches("<w:numPr>").count(), 2);
+    assert!(
+        document_xml.contains("<w:t>CellA</w:t>"),
+        "table cell text must remain: {document_xml}"
+    );
+    assert_untouched_entries_identical(&after_first.bytes, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_bullet_rejects_tracked_changes_and_missing_paragraph() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("tracked.docx");
+    fs::write(&path, fixture::tracked_change_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let tracked = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bullet".into(),
+                payload: serde_json::json!({ "index": 1, "bullet": true }),
+            }],
+        )
+        .expect_err("tracked changes must fail");
+    assert!(
+        tracked.to_string().to_lowercase().contains("tracked"),
+        "unexpected: {tracked}"
+    );
+
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+    let model = handler.parse(&path).expect("parse");
+    let missing = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bullet".into(),
+                payload: serde_json::json!({ "index": 99, "bullet": true }),
+            }],
+        )
+        .expect_err("missing paragraph");
+    let message = missing.to_string().to_lowercase();
+    assert!(
+        message.contains("not found") || message.contains("missing"),
+        "unexpected error: {missing}"
+    );
+    let bad = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bullet".into(),
+                payload: serde_json::json!({ "index": 0, "bullet": "yes" }),
+            }],
+        )
+        .expect_err("non-bool bullet");
+    assert!(
+        bad.to_string().to_lowercase().contains("bullet")
+            || bad.to_string().to_lowercase().contains("boolean"),
+        "unexpected: {bad}"
     );
 }

@@ -22,7 +22,9 @@ For `.docx` files in an initialized Dotall workspace:
 
 Dotall patches only the target story part for paragraph edits (`word/document.xml`,
 `word/header*.xml`, or `word/footer*.xml`). Hyperlink edits also patch
-`word/_rels/document.xml.rels`. Untouched ZIP parts stay byte-identical.
+`word/_rels/document.xml.rels`. Bullet edits may also create/patch `word/numbering.xml`,
+`word/_rels/document.xml.rels`, and `[Content_Types].xml` when numbering is missing.
+Untouched ZIP parts stay byte-identical.
 
 ## Prerequisites
 
@@ -223,6 +225,17 @@ Set or clear an external hyperlink wrapping a body/table paragraph’s runs (`w:
 ```
 
 `element_id` is also accepted instead of `index`. Setting wraps existing runs in one `w:hyperlink r:id` (or updates the existing wrapper and Target). Clearing unwraps inner `w:r` and removes the matching hyperlink Relationship. Patches `word/document.xml` and `word/_rels/document.xml.rels` only.
+
+Set or clear a bullet on a body/table paragraph (`w:numPr` + `word/numbering.xml`):
+
+```json
+{
+  "kind": "set_paragraph_bullet",
+  "payload": { "index": 0, "bullet": true }
+}
+```
+
+`element_id` (or `paragraph` as an index alias) is also accepted instead of `index`. `true` ensures a bullet numbering definition exists and sets `w:pPr/w:numPr` with `w:ilvl val="0"` and a matching `w:numId`. `false` removes `w:numPr` from that paragraph only and leaves `numbering.xml`. If `word/numbering.xml` is missing, Dotall creates it plus a numbering Relationship in `word/_rels/document.xml.rels` and an Override in `[Content_Types].xml`. Other ZIP parts stay byte-identical except those created/patched parts.
 
 Find/replace a substring inside one body/table paragraph (rejects empty `find` / no match; first-run rewrite like `set_paragraph_text`):
 
