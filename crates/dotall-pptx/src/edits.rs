@@ -62,6 +62,7 @@ pub fn validate(
         "set_shape_text" => validate_set_shape_text(model, operation),
         "set_table_cell_text" => validate_set_table_cell_text(model, operation),
         "set_table_cell_bold" => validate_set_table_cell_bold(model, operation),
+        "set_table_cell_italic" => validate_set_table_cell_italic(model, operation),
         "set_notes_text" => validate_set_notes_text(model, operation),
         "add_slide" => validate_add_slide(model, operation),
         "delete_slide" => validate_delete_slide(model, operation),
@@ -97,7 +98,7 @@ pub fn validate(
             "rejected pptx edit `set_chart_title`: chart mutate is not supported (charts are inspect-only)",
         )),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, replace_across_shapes, set_table_cell_text, set_table_cell_bold, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_bullet, set_shape_hyperlink, insert_comment, insert_picture, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, replace_across_shapes, set_table_cell_text, set_table_cell_bold, set_table_cell_italic, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_bullet, set_shape_hyperlink, insert_comment, insert_picture, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -358,6 +359,55 @@ fn validate_set_table_cell_bold(
             change: "set_table_cell_bold".into(),
             before: None,
             after: Some(if bold { "true" } else { "false" }.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_table_cell_italic(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let table_ref = table_ref(&operation.payload)?;
+    let row = required_u32(&operation.payload, "row")?;
+    let col = required_u32(&operation.payload, "col")?;
+    let italic = required_bool(&operation.payload, "italic")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let table = resolve_table(slide, table_ref)
+        .ok_or_else(|| format_error(format!("table `{table_ref}` was not found")))?;
+    let cell = resolve_cell(table, row, col).ok_or_else(|| {
+        format_error(format!(
+            "table cell row={row} col={col} is out of range for `{}`",
+            table.name
+        ))
+    })?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_table_cell_italic".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "table": table.name,
+                "row": row,
+                "col": col,
+                "italic": italic,
+                "part_name": slide.part_name,
+                "element_id": cell.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}!r{}c{}", slide.name, table.name, row, col),
+            element_id: cell.element_id.clone(),
+            change: "set_table_cell_italic".into(),
+            before: None,
+            after: Some(if italic { "true" } else { "false" }.into()),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -1337,6 +1387,22 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 replacements: BTreeMap::from([(
                     part_name.to_owned(),
                     patch_table_cell_bold(&original, table, row, col, bold)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
+        "set_table_cell_italic" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let table = required_str(&operation.payload, "table")?;
+            let row = required_u32(&operation.payload, "row")?;
+            let col = required_u32(&operation.payload, "col")?;
+            let italic = required_bool(&operation.payload, "italic")?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_table_cell_italic(&original, table, row, col, italic)?,
                 )]),
                 additions: BTreeMap::new(),
                 removals: BTreeSet::new(),
@@ -3349,6 +3415,47 @@ fn patch_table_cell_bold(
     let tbl = &frame[tbl_rel..tbl_end];
     let cell = nth_table_cell(tbl, row, col)?;
     let patched_cell = set_shape_runs_attr(cell, "b", value)?;
+
+    let cell_abs_start = frame_start + tbl_rel + cell_offset_in_tbl(tbl, row, col)?;
+    let cell_abs_end = cell_abs_start + cell.len();
+    let mut output = String::new();
+    output.push_str(&source[..cell_abs_start]);
+    output.push_str(&patched_cell);
+    output.push_str(&source[cell_abs_end..]);
+    Ok(output.into_bytes())
+}
+
+fn patch_table_cell_italic(
+    xml: &[u8],
+    table: &str,
+    row: u32,
+    col: u32,
+    italic: bool,
+) -> Result<Vec<u8>> {
+    let value = if italic { "1" } else { "0" };
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let needle = format!("name=\"{table}\"");
+    let name_at = source
+        .find(&needle)
+        .ok_or_else(|| format_error(format!("table `{table}` was not found in slide XML")))?;
+    let frame_start = source[..name_at]
+        .rfind("<p:graphicFrame")
+        .ok_or_else(|| format_error("table is missing a p:graphicFrame wrapper"))?;
+    let rel_end = source[name_at..]
+        .find("</p:graphicFrame>")
+        .ok_or_else(|| format_error("table is missing a closing p:graphicFrame"))?;
+    let frame_end = name_at + rel_end + "</p:graphicFrame>".len();
+    let frame = &source[frame_start..frame_end];
+    let tbl_rel = find_tag(frame, 0, "a:tbl")
+        .ok_or_else(|| format_error(format!("graphicFrame `{table}` has no a:tbl")))?;
+    let tbl_close_rel = frame[tbl_rel..]
+        .find("</a:tbl>")
+        .ok_or_else(|| format_error("unterminated a:tbl"))?;
+    let tbl_end = tbl_rel + tbl_close_rel + "</a:tbl>".len();
+    let tbl = &frame[tbl_rel..tbl_end];
+    let cell = nth_table_cell(tbl, row, col)?;
+    let patched_cell = set_shape_runs_attr(cell, "i", value)?;
 
     let cell_abs_start = frame_start + tbl_rel + cell_offset_in_tbl(tbl, row, col)?;
     let cell_abs_end = cell_abs_start + cell.len();

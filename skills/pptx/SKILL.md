@@ -119,6 +119,21 @@ Set or clear bold on a table cell’s text runs (`a:rPr b` inside the target `a:
 }
 ```
 
+Set or clear italic on a table cell’s text runs (`a:rPr i` inside the target `a:tc`). Prefer italic over cell fill — `tblStyle` fights solidFill:
+
+```json
+{
+  "kind": "set_table_cell_italic",
+  "payload": {
+    "slide": "Slide 1",
+    "table": "Table 1",
+    "row": 0,
+    "col": 1,
+    "italic": true
+  }
+}
+```
+
 Add / delete slides:
 
 ```json
@@ -295,6 +310,7 @@ Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
 `delete_shape` removes a `p:sp` by name or element_id; rejects missing shapes (tables use graphicFrame and are not deleted here).
 `rename_shape` updates `cNvPr` name; rejects empty/duplicate names (including table names on the same slide).
 `set_table_cell_bold` upserts `a:rPr b` on each text run in the target table cell; rejects out-of-range cells.
+`set_table_cell_italic` upserts `a:rPr i` on each text run in the target table cell; rejects out-of-range cells. Cell fill is not shipped (prefer italic).
 `set_shape_bold` upserts `a:rPr b` on each text run in the shape; rejects non-text shapes.
 `set_shape_italic` upserts `a:rPr i` on each text run in the shape; rejects non-text shapes.
 `set_shape_underline` upserts `a:rPr u="sng"` / `u="none"` on each text run in the shape; rejects non-text shapes.
@@ -315,6 +331,7 @@ Safety:
 - `set_shape_text`: text frames only (`p:sp` + `p:txBody`). Rejects SmartArt, charts, and grouped drawingML the writer cannot patch.
 - `set_table_cell_text`: patches one cell; rejects out-of-range `row`/`col`. First `a:t` in the cell is replaced; later runs in that cell are cleared.
 - `set_table_cell_bold`: upserts `a:rPr b` on runs in the target table cell (`a:tc`); rejects out-of-range `row`/`col`. Other parts stay byte-identical.
+- `set_table_cell_italic`: upserts `a:rPr i` on runs in the target table cell (`a:tc`); rejects out-of-range `row`/`col`. Other parts stay byte-identical. Cell fill is not shipped.
 - `set_notes_text`: patches only the notes slide part; rejects slides without a notes part. First `a:t` is replaced; later runs cleared. Slide XML stays byte-identical.
 - `insert_comment`: append-only classic comments (`ppt/commentAuthors.xml`, `ppt/comments/commentN.xml`, slide `.rels`, Content_Types). Does not rewrite existing `p:cm` entries in place. Optional `shape` anchors via extLst; omit for slide-level. Rejects mutate of existing comments.
 - `insert_picture`: adds `ppt/media/imageN.png|jpeg`, slide image rel, Default png/jpeg in Content_Types, and splices `p:pic` into the slide `spTree` (1cm×1cm). Existing `ppt/media/*` stay byte-identical. Rejects mutate of existing pictures.

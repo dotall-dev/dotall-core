@@ -291,6 +291,22 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Upserts a:rPr b on each a:r inside the target a:tc. Patches only the slide part that owns the table. Rejects out-of-range row/col and unknown table/slide. Media and other slides stay byte-identical.".into(),
         },
         EditCapability {
+            operation: "set_table_cell_italic".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear italic on all text runs inside one slide table cell (a:rPr i). Preferred over cell fill (tblStyle fights solidFill).".into(),
+            example: json!({
+                "kind": "set_table_cell_italic",
+                "payload": {
+                    "slide": "Slide 1",
+                    "table": "Table 1",
+                    "row": 0,
+                    "col": 1,
+                    "italic": true
+                }
+            }),
+            safety: "Upserts a:rPr i on each a:r inside the target a:tc. Patches only the slide part that owns the table. Rejects out-of-range row/col and unknown table/slide. Media and other slides stay byte-identical. Cell fill is not shipped.".into(),
+        },
+        EditCapability {
             operation: "set_notes_text".into(),
             schema_version: SCHEMA_VERSION,
             description: "Replace speaker notes text for a slide that already has a notes slide part.".into(),
