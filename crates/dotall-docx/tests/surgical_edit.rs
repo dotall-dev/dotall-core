@@ -616,6 +616,106 @@ fn set_paragraph_italic_rejects_non_bool() {
 }
 
 #[test]
+fn set_paragraph_font_size_sets_wsz_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_font_size".into(),
+                payload: serde_json::json!({ "index": 1, "size_pt": 14.0 }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document_xml = String::from_utf8(zip_entries(&patched.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        document_xml.contains(r#"w:sz w:val="28""#) || document_xml.contains("w:sz w:val=\"28\""),
+        "expected w:sz half-points 28 for 14pt, got: {document_xml}"
+    );
+    assert!(
+        document_xml.contains(r#"w:szCs w:val="28""#)
+            || document_xml.contains("w:szCs w:val=\"28\""),
+        "expected w:szCs half-points 28 for 14pt"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "set_paragraph_font_size");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("14"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_font_size_clear_removes_sz() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_font_size".into(),
+                payload: serde_json::json!({ "index": 1, "size_pt": 16.0 }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_font_size".into(),
+                payload: serde_json::json!({ "index": 1, "size_pt": null }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let document_xml = String::from_utf8(zip_entries(&cleared.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    // Body paragraph index 1 should no longer carry sz; leave other paragraphs alone.
+    let para = document_xml.split("<w:p>").nth(2).unwrap_or(&document_xml);
+    assert!(
+        !para.contains("<w:sz ") && !para.contains("<w:szCs "),
+        "cleared font size must remove w:sz/w:szCs from target paragraph"
+    );
+}
+
+#[test]
+fn set_paragraph_font_size_rejects_non_positive() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_font_size".into(),
+                payload: serde_json::json!({ "index": 1, "size_pt": -1 }),
+            }],
+        )
+        .expect_err("non-positive size");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("size") || message.contains("positive"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn set_paragraph_underline_sets_wu_and_leaves_other_parts_byte_identical() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("memo.docx");

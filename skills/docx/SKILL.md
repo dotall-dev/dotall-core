@@ -143,6 +143,15 @@ Set or clear underline on all runs in a body/table paragraph (`w:u`):
 }
 ```
 
+Set or clear font size on all runs in a body/table paragraph (`w:sz` / `w:szCs` from `size_pt`; `null` clears):
+
+```json
+{
+  "kind": "set_paragraph_font_size",
+  "payload": { "index": 1, "size_pt": 14.0 }
+}
+```
+
 Header / footer:
 
 ```json

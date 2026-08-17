@@ -30,6 +30,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_bold" => validate_set_paragraph_bold(model, operation),
         "set_paragraph_italic" => validate_set_paragraph_italic(model, operation),
         "set_paragraph_underline" => validate_set_paragraph_underline(model, operation),
+        "set_paragraph_font_size" => validate_set_paragraph_font_size(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -37,7 +38,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -258,6 +259,46 @@ fn validate_set_paragraph_underline(
     operation: &SemanticOperation,
 ) -> Result<ValidatedEdit> {
     validate_set_paragraph_run_bool(model, operation, "set_paragraph_underline", "underline")
+}
+
+fn validate_set_paragraph_font_size(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let size_pt = optional_positive_f64(&operation.payload, "size_pt")?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_font_size".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "size_pt": size_pt,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_font_size".into(),
+            before: None,
+            after: Some(match size_pt {
+                Some(value) => format_size_pt(value),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
 }
 
 fn validate_set_paragraph_run_bool(
@@ -521,6 +562,32 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 bytes,
             })
         }
+        "set_paragraph_font_size" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let size_pt = match operation.payload.get("size_pt") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(
+                    value
+                        .as_f64()
+                        .filter(|v| v.is_finite() && *v > 0.0)
+                        .ok_or_else(|| format_error("`size_pt` must be a positive number"))?,
+                ),
+            };
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_font_size(&original, index, size_pt)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
         "set_header_paragraph_text" | "set_footer_paragraph_text" => {
             let part = required_str(&operation.payload, "part")?;
             let index = operation
@@ -730,6 +797,233 @@ pub fn patch_paragraph_underline(xml: &[u8], index: u32, underline: bool) -> Res
         r#"<w:u w:val="none"/>"#
     };
     patch_paragraph_run_prop(xml, index, "w:u", prop)
+}
+
+pub fn patch_paragraph_font_size(xml: &[u8], index: u32, size_pt: Option<f64>) -> Result<Vec<u8>> {
+    match size_pt {
+        Some(pt) => {
+            let half = (pt * 2.0).round() as i64;
+            if half <= 0 {
+                return Err(format_error("`size_pt` must be a positive number"));
+            }
+            let prop = format!(r#"<w:sz w:val="{half}"/><w:szCs w:val="{half}"/>"#);
+            patch_paragraph_font_size_props(xml, index, Some(&prop))
+        }
+        None => patch_paragraph_font_size_props(xml, index, None),
+    }
+}
+
+fn patch_paragraph_font_size_props(
+    xml: &[u8],
+    index: u32,
+    prop_tag: Option<&str>,
+) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let patched_paragraph = match prop_tag {
+        Some(prop) => set_runs_font_size(paragraph, prop)?,
+        None => clear_runs_font_size(paragraph)?,
+    };
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&patched_paragraph);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
+fn set_runs_font_size(paragraph: &str, prop_tag: &str) -> Result<String> {
+    // Upsert both w:sz and w:szCs by replacing any existing pair with prop_tag.
+    let mut output = String::with_capacity(paragraph.len() + 32);
+    let mut cursor = 0;
+    let mut patched_any = false;
+    while let Some(rel) = paragraph[cursor..].find("<w:r") {
+        let start = cursor + rel;
+        let after = paragraph.as_bytes().get(start + 4).copied().unwrap_or(0);
+        if after != b' ' && after != b'>' && after != b'/' {
+            output.push_str(&paragraph[cursor..start + 4]);
+            cursor = start + 4;
+            continue;
+        }
+        let end = element_end(paragraph, start, "w:r")?;
+        output.push_str(&paragraph[cursor..start]);
+        output.push_str(&upsert_run_font_size(&paragraph[start..end], prop_tag)?);
+        cursor = end;
+        patched_any = true;
+    }
+    output.push_str(&paragraph[cursor..]);
+    if !patched_any {
+        return upsert_paragraph_mark_font_size(paragraph, Some(prop_tag));
+    }
+    Ok(output)
+}
+
+fn clear_runs_font_size(paragraph: &str) -> Result<String> {
+    let mut output = String::with_capacity(paragraph.len());
+    let mut cursor = 0;
+    let mut patched_any = false;
+    while let Some(rel) = paragraph[cursor..].find("<w:r") {
+        let start = cursor + rel;
+        let after = paragraph.as_bytes().get(start + 4).copied().unwrap_or(0);
+        if after != b' ' && after != b'>' && after != b'/' {
+            output.push_str(&paragraph[cursor..start + 4]);
+            cursor = start + 4;
+            continue;
+        }
+        let end = element_end(paragraph, start, "w:r")?;
+        output.push_str(&paragraph[cursor..start]);
+        output.push_str(&clear_run_font_size(&paragraph[start..end])?);
+        cursor = end;
+        patched_any = true;
+    }
+    output.push_str(&paragraph[cursor..]);
+    if !patched_any {
+        return upsert_paragraph_mark_font_size(paragraph, None);
+    }
+    Ok(output)
+}
+
+fn upsert_run_font_size(run: &str, prop_tag: &str) -> Result<String> {
+    let open_end = run
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:r"))?;
+    if run[..open_end].ends_with("/>") {
+        return Ok(run.to_owned());
+    }
+    let rest = &run[open_end..];
+    if let Some(r_pr) = extract_named_element(rest, "w:rPr") {
+        let patched_r_pr = upsert_font_size_in_r_pr(r_pr, Some(prop_tag))?;
+        return Ok(format!(
+            "{}{}{}",
+            &run[..open_end],
+            patched_r_pr,
+            &rest[r_pr.len()..]
+        ));
+    }
+    Ok(format!(
+        "{}<w:rPr>{}</w:rPr>{}",
+        &run[..open_end],
+        prop_tag,
+        rest
+    ))
+}
+
+fn clear_run_font_size(run: &str) -> Result<String> {
+    let open_end = run
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:r"))?;
+    if run[..open_end].ends_with("/>") {
+        return Ok(run.to_owned());
+    }
+    let rest = &run[open_end..];
+    let Some(r_pr) = extract_named_element(rest, "w:rPr") else {
+        return Ok(run.to_owned());
+    };
+    let patched_r_pr = upsert_font_size_in_r_pr(r_pr, None)?;
+    Ok(format!(
+        "{}{}{}",
+        &run[..open_end],
+        patched_r_pr,
+        &rest[r_pr.len()..]
+    ))
+}
+
+fn upsert_paragraph_mark_font_size(paragraph: &str, prop_tag: Option<&str>) -> Result<String> {
+    let open_end = paragraph
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    match extract_p_pr(&paragraph[open_end..]) {
+        Some(p_pr) => {
+            let patched = if let Some(start) = find_named_open(p_pr, "w:rPr") {
+                let end = element_end(p_pr, start, "w:rPr")?;
+                format!(
+                    "{}{}{}",
+                    &p_pr[..start],
+                    upsert_font_size_in_r_pr(&p_pr[start..end], prop_tag)?,
+                    &p_pr[end..]
+                )
+            } else if let Some(prop) = prop_tag {
+                let p_open_end = p_pr
+                    .find('>')
+                    .map(|offset| offset + 1)
+                    .ok_or_else(|| format_error("unterminated w:pPr"))?;
+                if p_pr[..p_open_end].ends_with("/>") {
+                    let open = p_pr[..p_open_end].trim_end_matches("/>");
+                    format!("{open}><w:rPr>{prop}</w:rPr></w:pPr>")
+                } else {
+                    format!(
+                        "{}<w:rPr>{prop}</w:rPr>{}",
+                        &p_pr[..p_open_end],
+                        &p_pr[p_open_end..]
+                    )
+                }
+            } else {
+                p_pr.to_owned()
+            };
+            Ok(format!(
+                "{}{}{}",
+                &paragraph[..open_end],
+                patched,
+                &paragraph[open_end + p_pr.len()..]
+            ))
+        }
+        None => {
+            if let Some(prop) = prop_tag {
+                Ok(format!(
+                    "{}<w:pPr><w:rPr>{prop}</w:rPr></w:pPr>{}",
+                    &paragraph[..open_end],
+                    &paragraph[open_end..]
+                ))
+            } else {
+                Ok(paragraph.to_owned())
+            }
+        }
+    }
+}
+
+fn upsert_font_size_in_r_pr(r_pr: &str, prop_tag: Option<&str>) -> Result<String> {
+    let without_sz = remove_named_child(r_pr, "w:sz")?;
+    let without_both = remove_named_child(&without_sz, "w:szCs")?;
+    let Some(prop) = prop_tag else {
+        return Ok(without_both);
+    };
+    let open_end = without_both
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:rPr"))?;
+    if without_both[..open_end].ends_with("/>") {
+        let open = without_both[..open_end].trim_end_matches("/>");
+        return Ok(format!("{open}>{prop}</w:rPr>"));
+    }
+    Ok(format!(
+        "{}{}{}",
+        &without_both[..open_end],
+        prop,
+        &without_both[open_end..]
+    ))
+}
+
+fn remove_named_child(parent: &str, tag: &str) -> Result<String> {
+    let Some(start) = find_named_open(parent, tag) else {
+        return Ok(parent.to_owned());
+    };
+    let end = element_end(parent, start, tag)?;
+    Ok(format!("{}{}", &parent[..start], &parent[end..]))
 }
 
 fn patch_paragraph_run_bool(xml: &[u8], index: u32, tag: &str, enabled: bool) -> Result<Vec<u8>> {
@@ -1294,6 +1588,25 @@ fn required_bool(payload: &serde_json::Value, key: &str) -> Result<bool> {
         .get(key)
         .and_then(serde_json::Value::as_bool)
         .ok_or_else(|| format_error(format!("`{key}` boolean is required")))
+}
+
+fn optional_positive_f64(payload: &serde_json::Value, key: &str) -> Result<Option<f64>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|n| n.is_finite() && *n > 0.0)
+            .map(Some)
+            .ok_or_else(|| format_error(format!("`{key}` must be a positive number"))),
+    }
+}
+
+fn format_size_pt(value: f64) -> String {
+    if (value - value.round()).abs() < f64::EPSILON {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value}")
+    }
 }
 
 fn required_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<&'a str> {

@@ -394,6 +394,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_font_size".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear font size (w:sz / w:szCs) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_font_size",
+                "payload": { "index": 1, "size_pt": 14.0 }
+            }),
+            safety:
+                "Upserts w:sz and w:szCs half-points from size_pt (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

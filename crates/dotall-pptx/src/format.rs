@@ -350,5 +350,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Upserts a:rPr u=\"sng\"/\"none\" on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
+        EditCapability {
+            operation: "set_shape_font_size".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear font size on all text runs inside a slide shape (a:rPr sz)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_font_size",
+                "payload": { "slide": "Slide 1", "shape": "Title", "size_pt": 28.0 }
+            }),
+            safety: "Upserts a:rPr sz in hundredths of a point from size_pt (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
     ]
 }

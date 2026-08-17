@@ -149,6 +149,12 @@ Set or clear underline on shape text runs (`a:rPr u`):
 { "kind": "set_shape_underline", "payload": { "slide": "Slide 1", "shape": "Title", "underline": true } }
 ```
 
+Set or clear font size on shape text runs (`a:rPr sz` from `size_pt`; `null` clears):
+
+```json
+{ "kind": "set_shape_font_size", "payload": { "slide": "Slide 1", "shape": "Title", "size_pt": 28.0 } }
+```
+
 Speaker notes (existing notes slide part only):
 
 ```json
@@ -166,6 +172,7 @@ Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
 `set_shape_bold` upserts `a:rPr b` on each text run in the shape; rejects non-text shapes.
 `set_shape_italic` upserts `a:rPr i` on each text run in the shape; rejects non-text shapes.
 `set_shape_underline` upserts `a:rPr u="sng"` / `u="none"` on each text run in the shape; rejects non-text shapes.
+`set_shape_font_size` upserts `a:rPr sz` (hundredths of a point from `size_pt`; null clears); rejects non-text shapes.
 
 Safety:
 
@@ -177,6 +184,7 @@ Safety:
 - `set_shape_bold`: upserts `a:rPr b` on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `set_shape_italic`: upserts `a:rPr i` on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `set_shape_underline`: upserts `a:rPr u="sng"`/`none` on runs in the target shape’s `txBody`; other parts stay byte-identical.
+- `set_shape_font_size`: upserts `a:rPr sz` on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `add_textbox`: inserts a `p:sp` text box (`txBox="1"`) into the target slide’s `spTree`; other parts stay byte-identical.
 - `delete_shape`: removes the matching `p:sp` from the target slide part; other parts stay byte-identical.
 - `rename_shape`: rewrites the matching `cNvPr` name attribute on the target slide part; other parts stay byte-identical.

@@ -45,8 +45,9 @@ pub fn validate(
         "set_shape_bold" => validate_set_shape_bold(model, operation),
         "set_shape_italic" => validate_set_shape_italic(model, operation),
         "set_shape_underline" => validate_set_shape_underline(model, operation),
+        "set_shape_font_size" => validate_set_shape_font_size(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -247,6 +248,51 @@ fn validate_set_shape_underline(
     operation: &SemanticOperation,
 ) -> Result<ValidatedEdit> {
     validate_set_shape_run_bool(model, operation, "set_shape_underline", "underline")
+}
+
+fn validate_set_shape_font_size(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let shape_ref = required_str(&operation.payload, "shape")?;
+    let size_pt = optional_positive_f64(&operation.payload, "size_pt")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| shape.name == shape_ref || shape.element_id == shape_ref)
+        .ok_or_else(|| format_error(format!("shape `{shape_ref}` was not found")))?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_shape_font_size".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "shape": shape.name,
+                "size_pt": size_pt,
+                "part_name": slide.part_name,
+                "element_id": shape.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, shape.name),
+            element_id: shape.element_id.clone(),
+            change: "set_shape_font_size".into(),
+            before: None,
+            after: Some(match size_pt {
+                Some(value) => format_size_pt(value),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
 }
 
 fn validate_set_shape_run_bool(
@@ -716,6 +762,28 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 removals: BTreeSet::new(),
             }
         }
+        "set_shape_font_size" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let size_pt = match operation.payload.get("size_pt") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(
+                    value
+                        .as_f64()
+                        .filter(|v| v.is_finite() && *v > 0.0)
+                        .ok_or_else(|| format_error("`size_pt` must be a positive number"))?,
+                ),
+            };
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_shape_font_size(&original, shape, size_pt)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
         other => {
             return Err(format_error(format!(
                 "cannot apply unsupported pptx edit `{other}`"
@@ -1033,9 +1101,118 @@ pub fn patch_shape_underline(xml: &[u8], shape: &str, underline: bool) -> Result
     patch_shape_run_attr(xml, shape, "u", value)
 }
 
+pub fn patch_shape_font_size(xml: &[u8], shape: &str, size_pt: Option<f64>) -> Result<Vec<u8>> {
+    match size_pt {
+        Some(pt) => {
+            let hundredths = (pt * 100.0).round() as i64;
+            if hundredths <= 0 {
+                return Err(format_error("`size_pt` must be a positive number"));
+            }
+            patch_shape_run_attr(xml, shape, "sz", &hundredths.to_string())
+        }
+        None => patch_shape_clear_run_attr(xml, shape, "sz"),
+    }
+}
+
 fn patch_shape_run_bool(xml: &[u8], shape: &str, attr: &str, enabled: bool) -> Result<Vec<u8>> {
     let value = if enabled { "1" } else { "0" };
     patch_shape_run_attr(xml, shape, attr, value)
+}
+
+fn patch_shape_clear_run_attr(xml: &[u8], shape: &str, attr: &str) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let needle = format!("name=\"{shape}\"");
+    let name_at = source
+        .find(&needle)
+        .ok_or_else(|| format_error(format!("shape `{shape}` was not found in slide XML")))?;
+    let sp_start = source[..name_at]
+        .rfind("<p:sp")
+        .ok_or_else(|| format_error("shape is missing a p:sp wrapper"))?;
+    let rel_end = source[name_at..]
+        .find("</p:sp>")
+        .ok_or_else(|| format_error("shape is missing a closing p:sp"))?;
+    let sp_end = name_at + rel_end + "</p:sp>".len();
+    let sp = &source[sp_start..sp_end];
+    if sp.contains("<p:graphicFrame")
+        || sp.contains("<a:graphic")
+        || sp.contains("<mc:AlternateContent")
+    {
+        return Err(format_error("cannot edit non-text shape"));
+    }
+    let patched_sp = clear_shape_runs_attr(sp, attr)?;
+    let mut output = String::new();
+    output.push_str(&source[..sp_start]);
+    output.push_str(&patched_sp);
+    output.push_str(&source[sp_end..]);
+    Ok(output.into_bytes())
+}
+
+fn clear_shape_runs_attr(sp: &str, attr: &str) -> Result<String> {
+    let mut output = String::with_capacity(sp.len());
+    let mut cursor = 0;
+    let mut patched_any = false;
+    while let Some(rel) = sp[cursor..].find("<a:r") {
+        let start = cursor + rel;
+        let after = sp.as_bytes().get(start + 4).copied().unwrap_or(0);
+        if after != b' ' && after != b'>' && after != b'/' {
+            output.push_str(&sp[cursor..start + 4]);
+            cursor = start + 4;
+            continue;
+        }
+        let end = element_end_drawing(sp, start, "a:r")?;
+        output.push_str(&sp[cursor..start]);
+        output.push_str(&clear_drawing_run_attr(&sp[start..end], attr)?);
+        cursor = end;
+        patched_any = true;
+    }
+    output.push_str(&sp[cursor..]);
+    if !patched_any {
+        return Err(format_error(format!(
+            "shape has no text run to clear `{attr}`"
+        )));
+    }
+    Ok(output)
+}
+
+fn clear_drawing_run_attr(run: &str, attr: &str) -> Result<String> {
+    let open_end = run
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated a:r"))?;
+    if run[..open_end].ends_with("/>") {
+        return Ok(run.to_owned());
+    }
+    let rest = &run[open_end..];
+    let Some(r_pr_start) = find_tag(rest, 0, "a:rPr") else {
+        return Ok(run.to_owned());
+    };
+    let r_pr_end = element_end_drawing(rest, r_pr_start, "a:rPr")?;
+    let patched = clear_rpr_attr(&rest[r_pr_start..r_pr_end], attr)?;
+    Ok(format!(
+        "{}{}{}{}",
+        &run[..open_end],
+        &rest[..r_pr_start],
+        patched,
+        &rest[r_pr_end..]
+    ))
+}
+
+fn clear_rpr_attr(r_pr: &str, attr: &str) -> Result<String> {
+    let needle = format!("{attr}=\"");
+    let Some(rel) = r_pr.find(&needle) else {
+        return Ok(r_pr.to_owned());
+    };
+    let value_start = rel + needle.len();
+    let value_end = r_pr[value_start..]
+        .find('"')
+        .map(|offset| value_start + offset)
+        .ok_or_else(|| format_error(format!("unterminated {attr} attribute")))?;
+    let mut start = rel;
+    while start > 0 && r_pr.as_bytes()[start - 1] == b' ' {
+        start -= 1;
+    }
+    Ok(format!("{}{}", &r_pr[..start], &r_pr[value_end + 1..]))
 }
 
 fn patch_shape_run_attr(xml: &[u8], shape: &str, attr: &str, value: &str) -> Result<Vec<u8>> {
@@ -1719,6 +1896,25 @@ fn required_bool(payload: &serde_json::Value, key: &str) -> Result<bool> {
         .get(key)
         .and_then(serde_json::Value::as_bool)
         .ok_or_else(|| format_error(format!("`{key}` boolean is required")))
+}
+
+fn optional_positive_f64(payload: &serde_json::Value, key: &str) -> Result<Option<f64>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|n| n.is_finite() && *n > 0.0)
+            .map(Some)
+            .ok_or_else(|| format_error(format!("`{key}` must be a positive number"))),
+    }
+}
+
+fn format_size_pt(value: f64) -> String {
+    if (value - value.round()).abs() < f64::EPSILON {
+        format!("{}", value.round() as i64)
+    } else {
+        format!("{value}")
+    }
 }
 
 fn optional_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option<&'a str>> {
