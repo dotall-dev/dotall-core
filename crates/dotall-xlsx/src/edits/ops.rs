@@ -145,6 +145,13 @@ pub enum XlsxEditOp {
         sheet: String,
         margins: crate::model::PageMargins,
     },
+    SetHeaderFooter {
+        sheet: String,
+        /// Odd-page header; `None` with footer `None` clears `<headerFooter>`.
+        header: Option<String>,
+        /// Odd-page footer; `None` with header `None` clears `<headerFooter>`.
+        footer: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

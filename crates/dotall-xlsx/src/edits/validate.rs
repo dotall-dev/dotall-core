@@ -124,6 +124,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_header_footer"))
+    {
+        return validate_set_header_footer_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "define_name"))
     {
         return validate_define_name_operations(model, operations);
@@ -259,6 +265,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_page_margins"))
     {
         return validate_set_page_margins_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_header_footer"))
+    {
+        return validate_set_header_footer_operations(model, operations);
     }
     if operations
         .iter()
@@ -1692,6 +1704,85 @@ fn validate_set_page_margins_operations(
     })
 }
 
+fn validate_set_header_footer_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_header_footer edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_header_footer" {
+        return Err(format_error("unsupported set_header_footer edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_header_footer requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.header_footer.clone();
+    let header = optional_header_footer_text(&operation.payload, "header")?;
+    let footer = optional_header_footer_text(&operation.payload, "footer")?;
+    let after = match (&header, &footer) {
+        (None, None) => "cleared".into(),
+        _ => format!(
+            "header={} footer={}",
+            header.as_deref().unwrap_or(""),
+            footer.as_deref().unwrap_or("")
+        ),
+    };
+    let before_text = match before {
+        Some(value) => format!(
+            "header={} footer={}",
+            value.header.as_deref().unwrap_or(""),
+            value.footer.as_deref().unwrap_or("")
+        ),
+        None => "unset".into(),
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_header_footer".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "header": header,
+                "footer": footer,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!header_footer"),
+            element_id: format!("header_footer:{canonical_sheet}"),
+            change: "set_header_footer".into(),
+            before: Some(before_text),
+            after: Some(after),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn optional_header_footer_text(payload: &Value, field: &str) -> Result<Option<String>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        _ => Err(format_error(format!(
+            "set_header_footer `{field}` must be a string or null when present"
+        ))),
+    }
+}
+
 fn required_non_negative_margin(payload: &Value, field: &str) -> Result<f64> {
     payload
         .get(field)
@@ -2438,7 +2529,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
                 | XlsxEditOp::SetPrintScale { .. }
  | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
-        | XlsxEditOp::SetPageMargins { .. } => {
+        | XlsxEditOp::SetPageMargins { .. }
+        | XlsxEditOp::SetHeaderFooter { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -2561,7 +2653,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetPrintScale { .. }
         | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
-        | XlsxEditOp::SetPageMargins { .. } => {
+        | XlsxEditOp::SetPageMargins { .. }
+        | XlsxEditOp::SetHeaderFooter { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )
@@ -2643,6 +2736,7 @@ mod tests {
             fit_to_page: None,
             center_on_page: None,
             page_margins: None,
+            header_footer: None,
             cells,
         }
     }

@@ -89,6 +89,7 @@ impl FormatHandler for XlsxFormat {
                     "fit_to_page": sheet.fit_to_page,
                     "center_on_page": sheet.center_on_page,
                     "page_margins": sheet.page_margins,
+                    "header_footer": sheet.header_footer,
                 })
             })
             .collect::<Vec<_>>();
@@ -691,6 +692,19 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 }
             }),
             safety: "Surgically patches only the target worksheet pageMargins element. Requires left/right/top/bottom; header/footer optional. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_header_footer".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description:
+                "Set or clear worksheet print header/footer via headerFooter oddHeader/oddFooter."
+                    .into(),
+            example: json!({
+                "kind": "set_header_footer",
+                "payload": { "sheet": "Revenue", "header": "&CBoard pack", "footer": "&P" }
+            }),
+            safety: "Surgically patches only the target worksheet headerFooter/oddHeader/oddFooter. Pass null header and footer to clear. Excel codes (&C, &P) are stored verbatim (XML-escaped). Inspect surfaces header_footer when present. Other sheets stay byte-identical."
                 .into(),
         },
     ]

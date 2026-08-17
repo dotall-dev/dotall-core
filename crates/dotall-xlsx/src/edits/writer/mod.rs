@@ -3,6 +3,7 @@ mod center_on_page;
 mod dimensions;
 mod fit_to_page;
 mod freeze_panes;
+mod header_footer;
 mod merges;
 mod package;
 mod page_margins;

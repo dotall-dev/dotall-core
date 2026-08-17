@@ -12,8 +12,9 @@ use zip::ZipArchive;
 use crate::FORMAT_ID;
 use crate::ids;
 use crate::model::{
-    CellModel, CellValue, CenterOnPage, FitToPage, NamedRange, PageMargins, SCHEMA_VERSION,
-    SheetDimensions, SheetModel, StyleEntry, UnmodeledMap, WorkbookModel, column_name,
+    CellModel, CellValue, CenterOnPage, FitToPage, HeaderFooter, NamedRange, PageMargins,
+    SCHEMA_VERSION, SheetDimensions, SheetModel, StyleEntry, UnmodeledMap, WorkbookModel,
+    column_name,
 };
 
 /// Parsed `xl/styles.xml` cellXfs + number-format resolution.
@@ -34,6 +35,7 @@ struct WorksheetPart {
     fit_to_page: Option<FitToPage>,
     center_on_page: Option<CenterOnPage>,
     page_margins: Option<PageMargins>,
+    header_footer: Option<HeaderFooter>,
     cell_styles: BTreeMap<String, u32>,
 }
 
@@ -89,6 +91,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                     fit_to_page: None,
                     center_on_page: None,
                     page_margins: None,
+                    header_footer: None,
                     cell_styles: BTreeMap::new(),
                 });
             let print_area = print_areas.get(&name).cloned();
@@ -218,6 +221,7 @@ where
         fit_to_page: part.fit_to_page,
         center_on_page: part.center_on_page,
         page_margins: part.page_margins,
+        header_footer: part.header_footer,
         cells,
     })
 }
@@ -278,6 +282,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
         let fit_to_page = parse_fit_to_page(&worksheet, source)?;
         let center_on_page = parse_center_on_page(&worksheet, source)?;
         let page_margins = parse_page_margins(&worksheet, source)?;
+        let header_footer = parse_header_footer(&worksheet, source)?;
         let cell_styles = parse_cell_style_indices(&worksheet, source)?;
         parts.insert(
             name,
@@ -292,6 +297,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
                 fit_to_page,
                 center_on_page,
                 page_margins,
+                header_footer,
                 cell_styles,
             },
         );
@@ -750,6 +756,107 @@ fn parse_page_margins(xml: &[u8], source: &Path) -> Result<Option<PageMargins>> 
         buffer.clear();
     }
     Ok(None)
+}
+
+fn parse_header_footer(xml: &[u8], source: &Path) -> Result<Option<HeaderFooter>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut in_header_footer = false;
+    let mut in_odd_header = false;
+    let mut in_odd_footer = false;
+    let mut header = String::new();
+    let mut footer = String::new();
+    let mut saw_header = false;
+    let mut saw_footer = false;
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Start(element) => match local_name(element.name().as_ref()) {
+                b"headerFooter" => in_header_footer = true,
+                b"oddHeader" if in_header_footer => {
+                    in_odd_header = true;
+                    saw_header = true;
+                }
+                b"oddFooter" if in_header_footer => {
+                    in_odd_footer = true;
+                    saw_footer = true;
+                }
+                _ => {}
+            },
+            Event::Empty(element) if in_header_footer => {
+                match local_name(element.name().as_ref()) {
+                    b"oddHeader" => saw_header = true,
+                    b"oddFooter" => saw_footer = true,
+                    _ => {}
+                }
+            }
+            Event::Text(text) if in_odd_header => {
+                append_unescaped_text(&mut header, text.as_ref());
+            }
+            Event::Text(text) if in_odd_footer => {
+                append_unescaped_text(&mut footer, text.as_ref());
+            }
+            Event::GeneralRef(entity) if in_odd_header => {
+                append_general_ref(&mut header, entity.as_ref());
+            }
+            Event::GeneralRef(entity) if in_odd_footer => {
+                append_general_ref(&mut footer, entity.as_ref());
+            }
+            Event::End(element) => match local_name(element.name().as_ref()) {
+                b"oddHeader" => in_odd_header = false,
+                b"oddFooter" => in_odd_footer = false,
+                b"headerFooter" => {
+                    if saw_header || saw_footer {
+                        return Ok(Some(HeaderFooter {
+                            header: saw_header.then_some(header),
+                            footer: saw_footer.then_some(footer),
+                        }));
+                    }
+                    return Ok(None);
+                }
+                _ => {}
+            },
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(None)
+}
+
+fn append_unescaped_text(target: &mut String, raw: &[u8]) {
+    let decoded = String::from_utf8_lossy(raw);
+    match quick_xml::escape::unescape(&decoded) {
+        Ok(unescaped) => target.push_str(&unescaped),
+        Err(_) => target.push_str(&decoded),
+    }
+}
+
+fn append_general_ref(target: &mut String, entity: &[u8]) {
+    let decoded = String::from_utf8_lossy(entity);
+    if let Some(value) = quick_xml::escape::resolve_xml_entity(&decoded) {
+        target.push_str(value);
+        return;
+    }
+    if let Some(digits) = decoded.strip_prefix('#') {
+        let parsed = if let Some(hex) = digits
+            .strip_prefix('x')
+            .or_else(|| digits.strip_prefix('X'))
+        {
+            u32::from_str_radix(hex, 16).ok()
+        } else {
+            digits.parse().ok()
+        };
+        if let Some(character) = parsed.and_then(char::from_u32) {
+            target.push(character);
+            return;
+        }
+    }
+    target.push('&');
+    target.push_str(&decoded);
+    target.push(';');
 }
 
 fn parse_print_areas(package: &[u8], source: &Path) -> Result<BTreeMap<String, String>> {

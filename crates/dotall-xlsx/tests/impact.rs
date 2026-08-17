@@ -316,6 +316,7 @@ fn fixture_sheet(name: &str) -> SheetModel {
         fit_to_page: None,
         center_on_page: None,
         page_margins: None,
+        header_footer: None,
         cells: Vec::new(),
     }
 }

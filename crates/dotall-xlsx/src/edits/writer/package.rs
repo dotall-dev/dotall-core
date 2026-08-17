@@ -18,6 +18,7 @@ use super::center_on_page;
 use super::dimensions;
 use super::fit_to_page;
 use super::freeze_panes;
+use super::header_footer;
 use super::merges;
 use super::page_margins;
 use super::page_orientation;
@@ -143,6 +144,16 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     }
     if let [XlsxEditOp::SetPageMargins { sheet, margins }] = operations.as_slice() {
         return patch_page_margins(&original, sheet, margins);
+    }
+    if let [
+        XlsxEditOp::SetHeaderFooter {
+            sheet,
+            header,
+            footer,
+        },
+    ] = operations.as_slice()
+    {
+        return patch_header_footer(&original, sheet, header.as_deref(), footer.as_deref());
     }
     if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
         let patch = workbook::define_name(&original, name, formula)?;
@@ -313,6 +324,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetFitToPage { .. }
                 | XlsxEditOp::SetCenterOnPage { .. }
                 | XlsxEditOp::SetPageMargins { .. }
+                | XlsxEditOp::SetHeaderFooter { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -353,7 +365,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetPrintScale { .. }
             | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetCenterOnPage { .. }
-            | XlsxEditOp::SetPageMargins { .. } => {
+            | XlsxEditOp::SetPageMargins { .. }
+            | XlsxEditOp::SetHeaderFooter { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -885,6 +898,26 @@ fn patch_page_margins(
     let xml = entry_bytes(original, path)?;
     let mut replacements = BTreeMap::new();
     replacements.insert(path.clone(), page_margins::patch(&xml, margins)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_header_footer(
+    original: &[u8],
+    sheet: &str,
+    header: Option<&str>,
+    footer: Option<&str>,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), header_footer::patch(&xml, header, footer)?);
     let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),

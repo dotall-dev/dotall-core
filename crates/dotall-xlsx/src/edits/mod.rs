@@ -166,6 +166,11 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 margins: required_page_margins(operation)?,
             }),
+            "set_header_footer" => Ok(XlsxEditOp::SetHeaderFooter {
+                sheet: required_string(operation, "sheet")?,
+                header: optional_nullable_string(operation, "header")?,
+                footer: optional_nullable_string(operation, "footer")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
@@ -336,6 +341,19 @@ fn optional_string(
         Some(serde_json::Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
         _ => Err(invalid_operation(format!(
             "validated edit operation requires `{field}` to be a non-empty string when present"
+        ))),
+    }
+}
+
+fn optional_nullable_string(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<Option<String>> {
+    match operation.payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) => Ok(Some(value.clone())),
+        _ => Err(invalid_operation(format!(
+            "validated edit operation requires `{field}` to be a string or null when present"
         ))),
     }
 }

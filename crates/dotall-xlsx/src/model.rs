@@ -53,7 +53,21 @@ pub struct SheetModel {
     /// Print page margins in inches. Absent when no `pageMargins` element.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_margins: Option<PageMargins>,
+    /// Print header/footer (`oddHeader` / `oddFooter`). Absent when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_footer: Option<HeaderFooter>,
     pub cells: Vec<CellModel>,
+}
+
+/// Worksheet print header/footer (`headerFooter` oddHeader / oddFooter).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct HeaderFooter {
+    /// Odd-page header text, including Excel codes such as `&C`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Odd-page footer text, including Excel codes such as `&P`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer: Option<String>,
 }
 
 /// Worksheet print centering (`printOptions` horizontalCentered / verticalCentered).

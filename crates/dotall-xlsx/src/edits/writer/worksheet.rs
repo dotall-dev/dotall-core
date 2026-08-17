@@ -42,7 +42,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetPrintScale { .. }
             | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetCenterOnPage { .. }
-            | XlsxEditOp::SetPageMargins { .. } => {
+            | XlsxEditOp::SetPageMargins { .. }
+            | XlsxEditOp::SetHeaderFooter { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -160,7 +161,8 @@ pub(super) fn patch(
                 | XlsxEditOp::SetPrintScale { .. }
                 | XlsxEditOp::SetFitToPage { .. }
                 | XlsxEditOp::SetCenterOnPage { .. }
-                | XlsxEditOp::SetPageMargins { .. } => {
+                | XlsxEditOp::SetPageMargins { .. }
+                | XlsxEditOp::SetHeaderFooter { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -201,7 +203,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetPrintScale { .. }
             | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetCenterOnPage { .. }
-            | XlsxEditOp::SetPageMargins { .. } => {
+            | XlsxEditOp::SetPageMargins { .. }
+            | XlsxEditOp::SetHeaderFooter { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -342,7 +345,8 @@ fn render_new_cell(
         | XlsxEditOp::SetPrintScale { .. }
         | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
-        | XlsxEditOp::SetPageMargins { .. } => {
+        | XlsxEditOp::SetPageMargins { .. }
+        | XlsxEditOp::SetHeaderFooter { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -528,7 +532,8 @@ fn render_cell_parts(
         | XlsxEditOp::SetPrintScale { .. }
         | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
-        | XlsxEditOp::SetPageMargins { .. } => {
+        | XlsxEditOp::SetPageMargins { .. }
+        | XlsxEditOp::SetHeaderFooter { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

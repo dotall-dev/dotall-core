@@ -248,6 +248,14 @@ Set worksheet print paper size (`pageSetup` `paperSize` positive integer, e.g. `
 
 Inspect surfaces `paper_size` per sheet when present. Other worksheets stay byte-identical.
 
+Set or clear worksheet print header/footer (`headerFooter`/`oddHeader`/`oddFooter`; both `null` clears). Excel codes (`&C`, `&P`) pass through verbatim:
+
+```json
+{ "kind": "set_header_footer", "payload": { "sheet": "Revenue", "header": "&CBoard pack", "footer": "&P" } }
+```
+
+Inspect surfaces `header_footer` per sheet when present. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.
