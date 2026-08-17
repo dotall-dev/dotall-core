@@ -25,6 +25,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_text" => validate_set_paragraph_text(model, operation),
         "insert_paragraph" => validate_insert_paragraph(model, operation),
         "delete_paragraph" => validate_delete_paragraph(model, operation),
+        "set_paragraph_style" => validate_set_paragraph_style(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -32,7 +33,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -146,6 +147,41 @@ fn validate_delete_paragraph(
             change: "delete_paragraph".into(),
             before: Some(paragraph.text.clone()),
             after: None,
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_paragraph_style(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let style_id = required_str(&operation.payload, "style_id")?.to_owned();
+    if style_id.trim().is_empty() {
+        return Err(format_error("`style_id` must be non-empty"));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_style".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "style_id": style_id,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_style".into(),
+            before: paragraph.style_id.clone(),
+            after: Some(style_id),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -274,6 +310,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 bytes,
             })
         }
+        "set_paragraph_style" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let style_id = required_str(&operation.payload, "style_id")?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_style(&original, index, style_id)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
         "set_header_paragraph_text" | "set_footer_paragraph_text" => {
             let part = required_str(&operation.payload, "part")?;
             let index = operation
@@ -330,6 +384,99 @@ pub fn delete_paragraph_at(xml: &[u8], index: u32) -> Result<Vec<u8>> {
     output.push_str(&source[..span.0]);
     output.push_str(&source[span.1..]);
     Ok(output.into_bytes())
+}
+
+pub fn patch_paragraph_style(xml: &[u8], index: u32, style_id: &str) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let open_end = paragraph
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    let style_tag = format!(r#"<w:pStyle w:val="{}"/>"#, xml_escape_attr(style_id));
+    let replacement = match extract_p_pr(&paragraph[open_end..]) {
+        Some(p_pr) => {
+            let patched_p_pr = upsert_p_style(p_pr, &style_tag)?;
+            format!(
+                "{}{}{}",
+                &paragraph[..open_end],
+                patched_p_pr,
+                &paragraph[open_end + p_pr.len()..]
+            )
+        }
+        None => {
+            format!(
+                "{}<w:pPr>{}</w:pPr>{}",
+                &paragraph[..open_end],
+                style_tag,
+                &paragraph[open_end..]
+            )
+        }
+    };
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&replacement);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
+fn upsert_p_style(p_pr: &str, style_tag: &str) -> Result<String> {
+    if let Some(start) = find_p_style_open(p_pr) {
+        let end = element_end(p_pr, start, "w:pStyle")?;
+        return Ok(format!("{}{}{}", &p_pr[..start], style_tag, &p_pr[end..]));
+    }
+    let open_end = p_pr
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:pPr"))?;
+    if p_pr[..open_end].ends_with("/>") {
+        let open = p_pr[..open_end].trim_end_matches("/>");
+        return Ok(format!("{open}>{style_tag}</w:pPr>"));
+    }
+    Ok(format!(
+        "{}{}{}",
+        &p_pr[..open_end],
+        style_tag,
+        &p_pr[open_end..]
+    ))
+}
+
+fn find_p_style_open(xml: &str) -> Option<usize> {
+    let mut search = 0;
+    while let Some(rel) = xml[search..].find("<w:pStyle") {
+        let at = search + rel;
+        let after = xml
+            .as_bytes()
+            .get(at + "<w:pStyle".len())
+            .copied()
+            .unwrap_or(0);
+        if after == b' ' || after == b'>' || after == b'/' {
+            return Some(at);
+        }
+        search = at + "<w:pStyle".len();
+    }
+    None
+}
+
+fn xml_escape_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 pub fn patch_paragraph_text(

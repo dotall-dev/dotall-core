@@ -406,6 +406,64 @@ fn delete_paragraph_rejects_unknown_index() {
 }
 
 #[test]
+fn set_paragraph_style_updates_style_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(
+        model.payload["paragraphs"][0]["style_id"].as_str(),
+        Some("Heading1")
+    );
+    assert!(model.payload["paragraphs"][1]["style_id"].is_null());
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_style".into(),
+                payload: serde_json::json!({ "index": 1, "style_id": "Heading1" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs[1].style_id.as_deref(), Some("Heading1"));
+    assert_eq!(after.paragraphs[1].text, "Beta");
+    assert_eq!(after.paragraphs[0].style_id.as_deref(), Some("Heading1"));
+    assert_eq!(edit.semantic_diff[0].change, "set_paragraph_style");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("Heading1"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_style_replaces_existing_pstyle() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_style".into(),
+                payload: serde_json::json!({ "index": 0, "style_id": "Title" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.paragraphs[0].style_id.as_deref(), Some("Title"));
+    assert_eq!(edit.semantic_diff[0].before.as_deref(), Some("Heading1"));
+}
+
+#[test]
 fn set_header_paragraph_text_patches_only_header_part() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("table.docx");

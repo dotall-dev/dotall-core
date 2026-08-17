@@ -93,6 +93,20 @@ indices shift down:
 }
 ```
 
+Set paragraph style (`w:pStyle` / `style_id`) without rewriting `styles.xml`:
+
+```json
+{
+  "kind": "set_paragraph_style",
+  "payload": { "index": 2, "style_id": "Heading1" }
+}
+```
+
+`element_id` is also accepted instead of `index`. Upserts `w:pStyle` inside
+`w:pPr`; other paragraph properties and runs stay intact. The style must already
+exist in the document’s `styles.xml` for Word to resolve it — Dotall only sets
+the reference.
+
 Header / footer:
 
 ```json

@@ -331,6 +331,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_style".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set paragraph style_id (w:pStyle) without rewriting styles.xml."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_style",
+                "payload": { "index": 2, "style_id": "Heading1" }
+            }),
+            safety:
+                "Upserts w:pStyle inside w:pPr on the target body/table paragraph. Patches only word/document.xml. Style must already exist in styles.xml for Word to resolve it."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:
