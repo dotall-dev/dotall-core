@@ -349,6 +349,19 @@ After Wave 6 integrates (define_name, delete_shape, set_paragraph_style, clear_f
 
 Each task ends with the standing demo gate.
 
+## Wave 8 — next openpyxl-class gaps (parallel)
+
+After Wave 7 integrates (delete_name, rename_shape, set_paragraph_alignment, clear_document_metadata):
+
+1. **XLSX:** `hide_sheet` — set/clear workbook sheet `state="hidden"` (surgical workbook.xml); reject hiding the last visible sheet
+2. **PPTX:** `set_shape_bold` — set/clear bold on shape text runs (`a:rPr b`) inside a slide shape; content-on-slide (prefer over structural slide clone/reorder)
+3. **DOCX:** `set_paragraph_bold` — set/clear `w:b` on runs in a body/table paragraph by index/element_id; content-in-document
+4. **PDF:** `clear_all_form_fields` — clear every non-read-only AcroForm field (blank text/choice, Off buttons); pairs with `clear_form_field`
+
+**Content preference (Wave 8+):** Prefer ops that edit text/runs/formatting **inside** slides and **inside** document body over structural/meta packaging (slide add/delete/duplicate/reorder, rename-only). Deprioritize further `duplicate_slide` / `move_slide`-class work unless needed for demos. Next PPTX/DOCX waves should grow run props (italic/underline/size/font), hyperlinks, list/bullet text, replace-across-shapes, richer table cell content.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
