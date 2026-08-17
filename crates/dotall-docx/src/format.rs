@@ -448,6 +448,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "replace_paragraph_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Find/replace a substring inside one body/table paragraph (first-run rewrite like set_paragraph_text)."
+                    .into(),
+            example: json!({
+                "kind": "replace_paragraph_text",
+                "payload": { "index": 1, "find": "draft", "replace": "final" }
+            }),
+            safety:
+                "Rejects empty find and no-match. Replaces all occurrences in the paragraph text model, then surgically patches word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

@@ -34,6 +34,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_font_name" => validate_set_paragraph_font_name(model, operation),
         "set_paragraph_font_color" => validate_set_paragraph_font_color(model, operation),
         "set_paragraph_highlight" => validate_set_paragraph_highlight(model, operation),
+        "replace_paragraph_text" => validate_replace_paragraph_text(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -41,7 +42,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -83,6 +84,58 @@ fn validate_set_paragraph_text(
             change: "set_paragraph_text".into(),
             before: Some(paragraph.text.clone()),
             after: Some(text_payload.text),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_replace_paragraph_text(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let find = required_str(&operation.payload, "find")?;
+    let replace = required_str(&operation.payload, "replace")?;
+    if find.is_empty() {
+        return Err(format_error(
+            "replace_paragraph_text requires a non-empty `find` string",
+        ));
+    }
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    if !paragraph.text.contains(find) {
+        return Err(format_error(format!(
+            "`find` string was not found in paragraph `{}` text",
+            paragraph.index
+        )));
+    }
+    let after_text = paragraph.text.replace(find, replace);
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "replace_paragraph_text".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "find": find,
+                "replace": replace,
+                "text": after_text,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "replace_paragraph_text".into(),
+            before: Some(paragraph.text.clone()),
+            after: Some(after_text),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -525,7 +578,7 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
         .first()
         .ok_or_else(|| format_error("validated edit is missing operations"))?;
     match operation.kind.as_str() {
-        "set_paragraph_text" => {
+        "set_paragraph_text" | "replace_paragraph_text" => {
             let index = operation
                 .payload
                 .get("index")

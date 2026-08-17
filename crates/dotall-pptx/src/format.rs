@@ -398,5 +398,22 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Upserts a:highlight/a:srgbClr val from #RRGGBB/RRGGBB (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
+        EditCapability {
+            operation: "replace_shape_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Find/replace a substring inside one slide shape's text (first-run rewrite like set_shape_text)."
+                    .into(),
+            example: json!({
+                "kind": "replace_shape_text",
+                "payload": {
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "find": "Q3",
+                    "replace": "Q4"
+                }
+            }),
+            safety: "Rejects empty find and no-match. Replaces all occurrences in the shape text model, then surgically patches the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
     ]
 }

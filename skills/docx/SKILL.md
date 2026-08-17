@@ -179,6 +179,15 @@ Set or clear highlight on all runs in a body/table paragraph (`w:highlight`; Wor
 }
 ```
 
+Find/replace a substring inside one body/table paragraph (rejects empty `find` / no match; first-run rewrite like `set_paragraph_text`):
+
+```json
+{
+  "kind": "replace_paragraph_text",
+  "payload": { "index": 1, "find": "draft", "replace": "final" }
+}
+```
+
 Header / footer:
 
 ```json

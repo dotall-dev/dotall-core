@@ -1273,3 +1273,101 @@ fn zip_entries(package: &[u8]) -> BTreeMap<String, Vec<u8>> {
     }
     entries
 }
+
+#[test]
+fn replace_shape_text_find_replace_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = minimal_pptx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_shape_text".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "find": "ell",
+                    "replace": "ipp",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.slides[0].shapes[0].text, "Hippo");
+    assert_eq!(edit.semantic_diff[0].change, "replace_shape_text");
+    assert_eq!(edit.semantic_diff[0].before.as_deref(), Some("Hello"));
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("Hippo"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn replace_shape_text_rejects_empty_find_and_no_match() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let empty = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_shape_text".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "find": "",
+                    "replace": "x",
+                }),
+            }],
+        )
+        .expect_err("empty find");
+    assert!(
+        empty.to_string().to_lowercase().contains("find"),
+        "unexpected: {empty}"
+    );
+
+    let missing = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_shape_text".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "find": "zzz",
+                    "replace": "x",
+                }),
+            }],
+        )
+        .expect_err("no match");
+    let message = missing.to_string().to_lowercase();
+    assert!(
+        message.contains("find") || message.contains("not found") || message.contains("match"),
+        "unexpected: {missing}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_replace_shape_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "replace_shape_text"),
+        "capabilities must advertise replace_shape_text"
+    );
+}

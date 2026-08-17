@@ -173,6 +173,20 @@ Set or clear text highlight on shape runs (`a:highlight` / `a:srgbClr`; `null` c
 { "kind": "set_shape_highlight", "payload": { "slide": "Slide 1", "shape": "Title", "color": "#FFFF00" } }
 ```
 
+Find/replace a substring inside one shape’s text (rejects empty `find` / no match; first-run rewrite like `set_shape_text`):
+
+```json
+{
+  "kind": "replace_shape_text",
+  "payload": {
+    "slide": "Slide 1",
+    "shape": "Title",
+    "find": "Q3",
+    "replace": "Q4"
+  }
+}
+```
+
 Speaker notes (existing notes slide part only):
 
 ```json
@@ -194,6 +208,7 @@ Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
 `set_shape_font_name` upserts `a:latin`/`a:ea`/`a:cs` typeface (null clears); rejects non-text shapes.
 `set_shape_font_color` upserts `a:solidFill`/`a:srgbClr` from `#RRGGBB`/`RRGGBB` (null clears); rejects non-text shapes.
 `set_shape_highlight` upserts `a:highlight`/`a:srgbClr` from `#RRGGBB`/`RRGGBB` (null clears); rejects non-text shapes.
+`replace_shape_text` replaces all occurrences of `find` in the shape text model, then patches the slide part; rejects empty `find` and no-match.
 
 Safety:
 
@@ -209,6 +224,7 @@ Safety:
 - `set_shape_font_name`: upserts `a:latin`/`a:ea`/`a:cs` typeface on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `set_shape_font_color`: upserts `a:solidFill`/`a:srgbClr` on runs in the target shape’s `txBody`; other parts stay byte-identical.
 - `set_shape_highlight`: upserts `a:highlight`/`a:srgbClr` on runs in the target shape’s `txBody`; other parts stay byte-identical.
+- `replace_shape_text`: find/replace on shape text then first-run rewrite like `set_shape_text`; other parts stay byte-identical.
 - `add_textbox`: inserts a `p:sp` text box (`txBox="1"`) into the target slide’s `spTree`; other parts stay byte-identical.
 - `delete_shape`: removes the matching `p:sp` from the target slide part; other parts stay byte-identical.
 - `rename_shape`: rewrites the matching `cNvPr` name attribute on the target slide part; other parts stay byte-identical.

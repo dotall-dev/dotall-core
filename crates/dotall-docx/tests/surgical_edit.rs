@@ -1195,3 +1195,98 @@ fn zip_entries(package: &[u8]) -> BTreeMap<String, Vec<u8>> {
     }
     entries
 }
+
+#[test]
+fn replace_paragraph_text_find_replace_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_paragraph_text".into(),
+                payload: serde_json::json!({
+                    "index": 1,
+                    "find": "eta",
+                    "replace": "ETA",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs[1].text, "BETA");
+    assert_eq!(edit.semantic_diff[0].change, "replace_paragraph_text");
+    assert_eq!(edit.semantic_diff[0].before.as_deref(), Some("Beta"));
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("BETA"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn replace_paragraph_text_rejects_empty_find_and_no_match() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let empty = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_paragraph_text".into(),
+                payload: serde_json::json!({
+                    "index": 1,
+                    "find": "",
+                    "replace": "x",
+                }),
+            }],
+        )
+        .expect_err("empty find");
+    assert!(
+        empty.to_string().to_lowercase().contains("find"),
+        "unexpected: {empty}"
+    );
+
+    let missing = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_paragraph_text".into(),
+                payload: serde_json::json!({
+                    "index": 1,
+                    "find": "zzz",
+                    "replace": "x",
+                }),
+            }],
+        )
+        .expect_err("no match");
+    let message = missing.to_string().to_lowercase();
+    assert!(
+        message.contains("find") || message.contains("not found") || message.contains("match"),
+        "unexpected: {missing}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_replace_paragraph_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "replace_paragraph_text"),
+        "capabilities must advertise replace_paragraph_text"
+    );
+}

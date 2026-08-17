@@ -49,8 +49,9 @@ pub fn validate(
         "set_shape_font_name" => validate_set_shape_font_name(model, operation),
         "set_shape_font_color" => validate_set_shape_font_color(model, operation),
         "set_shape_highlight" => validate_set_shape_highlight(model, operation),
+        "replace_shape_text" => validate_replace_shape_text(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -89,6 +90,62 @@ fn validate_set_shape_text(
             change: "set_shape_text".into(),
             before: Some(shape.text.clone()),
             after: Some(text.to_owned()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_replace_shape_text(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let shape_ref = required_str(&operation.payload, "shape")?;
+    let find = required_str(&operation.payload, "find")?;
+    let replace = required_str(&operation.payload, "replace")?;
+    if find.is_empty() {
+        return Err(format_error(
+            "replace_shape_text requires a non-empty `find` string",
+        ));
+    }
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| shape.name == shape_ref || shape.element_id == shape_ref)
+        .ok_or_else(|| format_error(format!("shape `{shape_ref}` was not found")))?;
+    if !shape.text.contains(find) {
+        return Err(format_error(format!(
+            "`find` string was not found in shape `{shape_ref}` text"
+        )));
+    }
+    let after_text = shape.text.replace(find, replace);
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "replace_shape_text".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "shape": shape.name,
+                "find": find,
+                "replace": replace,
+                "text": after_text,
+                "part_name": slide.part_name,
+                "element_id": shape.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, shape.name),
+            element_id: shape.element_id.clone(),
+            change: "replace_shape_text".into(),
+            before: Some(shape.text.clone()),
+            after: Some(after_text),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -749,7 +806,7 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
         .first()
         .ok_or_else(|| format_error("validated edit is missing operations"))?;
     let patch = match operation.kind.as_str() {
-        "set_shape_text" => {
+        "set_shape_text" | "replace_shape_text" => {
             let part_name = required_str(&operation.payload, "part_name")?;
             let shape = required_str(&operation.payload, "shape")?;
             let text = required_str(&operation.payload, "text")?;
