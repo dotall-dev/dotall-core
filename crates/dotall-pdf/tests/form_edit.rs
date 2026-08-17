@@ -388,6 +388,67 @@ fn capabilities_advertise_clear_document_metadata() {
 }
 
 #[test]
+fn clear_all_form_fields_clears_text_and_checkbox() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(
+        model.payload["fields"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|field| field["name"] == "Name")
+            .map(|field| field["value"].as_str().unwrap_or("")),
+        Some("Ada Lovelace")
+    );
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_all_form_fields".into(),
+                payload: serde_json::json!({}),
+            }],
+        )
+        .expect("validate clear all");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear all");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    let agree = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Agree")
+        .expect("Agree");
+    assert_eq!(name.value, "");
+    assert_eq!(agree.value, "Off");
+    assert_eq!(edit.semantic_diff[0].change, "clear_all_form_fields");
+}
+
+#[test]
+fn capabilities_advertise_clear_all_form_fields() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "clear_all_form_fields"),
+        "capabilities must advertise clear_all_form_fields"
+    );
+}
+
+#[test]
 fn revert_after_form_fill_restores_original_bytes() {
     let workspace = tempdir().expect("workspace");
     let source = workspace.path().join("form.pdf");

@@ -28,10 +28,11 @@ pub fn validate(
     match operation.kind.as_str() {
         "set_form_field" => validate_set_form_field(model, operation),
         "clear_form_field" => validate_clear_form_field(model, operation),
+        "clear_all_form_fields" => validate_clear_all_form_fields(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, set_document_metadata, or clear_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_document_metadata, or clear_document_metadata"
         ))),
     }
 }
@@ -145,6 +146,54 @@ fn clear_value_for_field(field: &PdfFieldModel) -> Result<String> {
             "field type `{other}` is not supported in v0"
         ))),
     }
+}
+
+fn validate_clear_all_form_fields(
+    model: &PdfDocumentModel,
+    _operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let mut fields = Vec::new();
+    let mut before_parts = Vec::new();
+    let mut after_parts = Vec::new();
+    for field in &model.fields {
+        if field.read_only {
+            continue;
+        }
+        let value = clear_value_for_field(field)?;
+        before_parts.push(format!("{}={}", field.name, field.value));
+        after_parts.push(format!("{}={value}", field.name));
+        fields.push(serde_json::json!({
+            "name": field.name,
+            "value": value,
+            "element_id": field.element_id,
+            "field_type": field.field_type,
+        }));
+    }
+    if fields.is_empty() {
+        return Err(format_error(
+            "clear_all_form_fields found no editable form fields",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "clear_all_form_fields".into(),
+            payload: serde_json::json!({ "fields": fields }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: "document:/AcroForm".into(),
+            element_id: model.document_id.clone(),
+            change: "clear_all_form_fields".into(),
+            before: Some(before_parts.join("; ")),
+            after: Some(after_parts.join("; ")),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
 }
 
 fn validate_set_document_metadata(
@@ -273,6 +322,29 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("tx");
             set_field_value(&mut document, name, value, field_type)?;
+            set_need_appearances(&mut document)?;
+        }
+        "clear_all_form_fields" => {
+            let fields = operation
+                .payload
+                .get("fields")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| format_error("clear_all_form_fields requires `fields`"))?;
+            for field in fields {
+                let name = field
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format_error("clear_all_form_fields field missing name"))?;
+                let value = field
+                    .get("value")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| format_error("clear_all_form_fields field missing value"))?;
+                let field_type = field
+                    .get("field_type")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("tx");
+                set_field_value(&mut document, name, value, field_type)?;
+            }
             set_need_appearances(&mut document)?;
         }
         "set_document_metadata" => {

@@ -17,7 +17,7 @@ operators.
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | clear_form_field | set_document_metadata (stage)
+  → dotall_edit set_form_field | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -76,6 +76,15 @@ Clear a field (blank text/choice, `Off` for checkbox/radio):
 {
   "kind": "clear_form_field",
   "payload": { "name": "Name" }
+}
+```
+
+Clear every non-read-only AcroForm field in one transaction:
+
+```json
+{
+  "kind": "clear_all_form_fields",
+  "payload": {}
 }
 ```
 

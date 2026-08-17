@@ -244,6 +244,16 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Sets Tx/Ch to empty string and Btn to Off. Rejects encrypted, signed, and read-only fields. Does not rewrite page content streams.".into(),
         },
         EditCapability {
+            operation: "clear_all_form_fields".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Clear every non-read-only AcroForm field in one transaction.".into(),
+            example: json!({
+                "kind": "clear_all_form_fields",
+                "payload": {}
+            }),
+            safety: "Applies clear_form_field semantics to each editable field. Skips read-only fields. Rejects encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
             operation: "set_document_metadata".into(),
             schema_version: SCHEMA_VERSION,
             description: "Set PDF /Info Title, Author, and/or Subject.".into(),
