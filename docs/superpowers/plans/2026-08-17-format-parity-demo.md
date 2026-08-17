@@ -362,6 +362,19 @@ After Wave 7 integrates (delete_name, rename_shape, set_paragraph_alignment, cle
 
 Each task ends with the standing demo gate.
 
+## Wave 9 — content-first run props + companion slices (parallel)
+
+After Wave 8 integrates (hide_sheet, set_shape_bold, set_paragraph_bold, clear_all_form_fields; duplicate_slide deferred):
+
+1. **XLSX:** `set_tab_color` — set/clear worksheet tab color via surgical `sheetPr`/`tabColor` (`rgb` AARRGGBB or clear); inspect surfaces `tab_color` when present
+2. **PPTX:** `set_shape_italic` — set/clear italic on shape text runs (`a:rPr i`); content-on-slide companion to `set_shape_bold`
+3. **DOCX:** `set_paragraph_italic` — set/clear `w:i` on runs in a body/table paragraph; content-in-document companion to `set_paragraph_bold`
+4. **PDF:** `set_form_fields` — bulk set multiple AcroForm fields in one op (name→value map); pairs with `set_form_field` / `clear_all_form_fields`
+
+**Deferred:** `duplicate_slide` / further structural PPTX packaging; underline/size/font run props land in later waves.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
