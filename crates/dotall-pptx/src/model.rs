@@ -9,6 +9,10 @@ pub struct PresentationModel {
     pub slides: Vec<SlideModel>,
     #[serde(default)]
     pub media_parts: Vec<String>,
+    #[serde(default)]
+    pub comments: Vec<CommentModel>,
+    #[serde(default)]
+    pub charts: Vec<ChartModel>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -46,4 +50,21 @@ pub struct TableCellModel {
     pub row: u32,
     pub col: u32,
     pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CommentModel {
+    pub element_id: String,
+    pub slide: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<String>,
+    pub author: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ChartModel {
+    pub element_id: String,
+    pub slide: String,
+    pub title: String,
 }

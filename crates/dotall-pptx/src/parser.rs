@@ -10,7 +10,8 @@ use zip::ZipArchive;
 use crate::FORMAT_ID;
 use crate::ids;
 use crate::model::{
-    PresentationModel, SCHEMA_VERSION, ShapeModel, SlideModel, TableCellModel, TableModel,
+    ChartModel, CommentModel, PresentationModel, SCHEMA_VERSION, ShapeModel, SlideModel,
+    TableCellModel, TableModel,
 };
 
 pub fn parse_presentation(source: &Path) -> Result<PresentationModel> {
@@ -28,9 +29,12 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
     let presentation_xml = zip_entry(&mut archive, "ppt/presentation.xml")?;
     let rels_xml = zip_entry(&mut archive, "ppt/_rels/presentation.xml.rels")?;
     let rids = slide_rids(&presentation_xml)?;
-    let targets = relationship_targets(&rels_xml)?;
+    let targets = relationship_targets(&rels_xml, "/slide")?;
+    let authors = parse_comment_authors(&mut archive);
 
     let mut slides = Vec::new();
+    let mut comments = Vec::new();
+    let mut charts = Vec::new();
     for (index, rid) in rids.into_iter().enumerate() {
         let target = targets
             .get(&rid)
@@ -40,6 +44,25 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
         let name = format!("Slide {}", index + 1);
         let (shapes, tables) = parse_shapes_and_tables(&slide_xml, &name)?;
         let (notes, notes_part_name) = resolve_notes(&mut archive, &part_name);
+        let slide_rels = slide_relationship_part(&part_name);
+        let slide_rel_targets = zip_entry(&mut archive, &slide_rels)
+            .ok()
+            .and_then(|xml| relationship_targets_all(&xml).ok())
+            .unwrap_or_default();
+
+        comments.extend(parse_slide_comments(
+            &mut archive,
+            &name,
+            &slide_rel_targets,
+            &authors,
+        ));
+        charts.extend(parse_slide_charts(
+            &mut archive,
+            &name,
+            &slide_xml,
+            &slide_rel_targets,
+        ));
+
         slides.push(SlideModel {
             element_id: ids::slide_id(&name, index as u32, SCHEMA_VERSION),
             name,
@@ -56,6 +79,8 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
         presentation_id: ids::presentation_id(&source_hash, SCHEMA_VERSION),
         slides,
         media_parts: media_part_names(&mut archive),
+        comments,
+        charts,
     })
 }
 
@@ -130,19 +155,12 @@ fn slide_relationship_part(slide_part: &str) -> String {
 }
 
 fn notes_parts_from_slide_rels(xml: &[u8]) -> Vec<String> {
-    let Ok(targets) = relationship_targets(xml) else {
+    let Ok(targets) = relationship_targets(xml, "notesSlide") else {
         return Vec::new();
     };
     targets
         .into_values()
-        .filter(|target| target.contains("notesSlide"))
-        .map(|target| {
-            if let Some(rest) = target.strip_prefix("../") {
-                format!("ppt/{rest}")
-            } else {
-                resolve_ppt_target(&target)
-            }
-        })
+        .map(|target| resolve_slide_relative_target(&target))
         .collect()
 }
 
@@ -175,7 +193,16 @@ fn slide_rids(xml: &[u8]) -> Result<Vec<String>> {
     Ok(rids)
 }
 
-fn relationship_targets(xml: &[u8]) -> Result<BTreeMap<String, String>> {
+fn relationship_targets(xml: &[u8], type_suffix: &str) -> Result<BTreeMap<String, String>> {
+    let all = relationship_targets_all(xml)?;
+    Ok(all
+        .into_iter()
+        .filter(|(_, (_, rel_type))| rel_type.ends_with(type_suffix))
+        .map(|(id, (target, _))| (id, target))
+        .collect())
+}
+
+fn relationship_targets_all(xml: &[u8]) -> Result<BTreeMap<String, (String, String)>> {
     let mut reader = Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
     let mut buffer = Vec::new();
@@ -203,10 +230,8 @@ fn relationship_targets(xml: &[u8]) -> Result<BTreeMap<String, String>> {
                         _ => {}
                     }
                 }
-                if rel_type.ends_with("/slide")
-                    && let (Some(id), Some(target)) = (id, target)
-                {
-                    targets.insert(id, target);
+                if let (Some(id), Some(target)) = (id, target) {
+                    targets.insert(id, (target, rel_type));
                 }
             }
             Event::Eof => break,
@@ -215,6 +240,243 @@ fn relationship_targets(xml: &[u8]) -> Result<BTreeMap<String, String>> {
         buffer.clear();
     }
     Ok(targets)
+}
+
+fn resolve_slide_relative_target(target: &str) -> String {
+    if let Some(rest) = target.strip_prefix("../") {
+        format!("ppt/{rest}")
+    } else {
+        resolve_ppt_target(target)
+    }
+}
+
+fn parse_comment_authors(archive: &mut ZipArchive<Cursor<&[u8]>>) -> BTreeMap<u32, String> {
+    let Ok(xml) = zip_entry(archive, "ppt/commentAuthors.xml") else {
+        return BTreeMap::new();
+    };
+    let mut reader = Reader::from_reader(xml.as_slice());
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut authors = BTreeMap::new();
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Empty(tag) | Event::Start(tag))
+                if tag.local_name().as_ref() == b"cmAuthor" =>
+            {
+                let mut id = None;
+                let mut name = None;
+                for attribute in tag.attributes().flatten() {
+                    let value = String::from_utf8_lossy(&attribute.value).into_owned();
+                    match attribute.key.local_name().as_ref() {
+                        b"id" => id = value.parse::<u32>().ok(),
+                        b"name" => name = Some(value),
+                        _ => {}
+                    }
+                }
+                if let (Some(id), Some(name)) = (id, name) {
+                    authors.insert(id, name);
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    authors
+}
+
+fn parse_slide_comments(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    slide_name: &str,
+    slide_rel_targets: &BTreeMap<String, (String, String)>,
+    authors: &BTreeMap<u32, String>,
+) -> Vec<CommentModel> {
+    let mut comments = Vec::new();
+    for (target, rel_type) in slide_rel_targets.values() {
+        if !rel_type.ends_with("/comments") {
+            continue;
+        }
+        let part_name = resolve_slide_relative_target(target);
+        let Ok(xml) = zip_entry(archive, &part_name) else {
+            continue;
+        };
+        comments.extend(parse_comment_list(&xml, slide_name, authors));
+    }
+    comments
+}
+
+fn parse_comment_list(
+    xml: &[u8],
+    slide_name: &str,
+    authors: &BTreeMap<u32, String>,
+) -> Vec<CommentModel> {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut comments = Vec::new();
+    let mut in_cm = false;
+    let mut author_id = 0u32;
+    let mut idx = 0u32;
+    let mut text = String::new();
+    let mut shape = None;
+    let mut depth = 0usize;
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(tag)) if tag.local_name().as_ref() == b"cm" => {
+                in_cm = true;
+                depth = 1;
+                author_id = 0;
+                idx = 0;
+                text.clear();
+                shape = None;
+                for attribute in tag.attributes().flatten() {
+                    let value = String::from_utf8_lossy(&attribute.value).into_owned();
+                    match attribute.key.local_name().as_ref() {
+                        b"authorId" => {
+                            if let Ok(parsed) = value.parse::<u32>() {
+                                author_id = parsed;
+                            }
+                        }
+                        b"idx" => {
+                            if let Ok(parsed) = value.parse::<u32>() {
+                                idx = parsed;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Ok(Event::Start(tag)) if in_cm && tag.local_name().as_ref() == b"text" => {
+                if let Ok(value) = reader.read_text(tag.name()) {
+                    text = decode_text(value);
+                }
+            }
+            Ok(Event::Empty(tag) | Event::Start(tag))
+                if in_cm && tag.local_name().as_ref() == b"shapeAnchor" =>
+            {
+                for attribute in tag.attributes().flatten() {
+                    if attribute.key.local_name().as_ref() == b"name" {
+                        shape = Some(String::from_utf8_lossy(&attribute.value).into_owned());
+                    }
+                }
+            }
+            Ok(Event::Start(_)) if in_cm => {
+                depth += 1;
+            }
+            Ok(Event::End(tag)) if in_cm && tag.local_name().as_ref() == b"cm" => {
+                let author = authors
+                    .get(&author_id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("author:{author_id}"));
+                comments.push(CommentModel {
+                    element_id: ids::comment_id(slide_name, &author, &text, idx, SCHEMA_VERSION),
+                    slide: slide_name.to_owned(),
+                    shape: shape.take(),
+                    author,
+                    text: text.clone(),
+                });
+                in_cm = false;
+                depth = 0;
+            }
+            Ok(Event::End(_)) if in_cm => {
+                depth = depth.saturating_sub(1);
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    let _ = depth;
+    comments
+}
+
+fn parse_slide_charts(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    slide_name: &str,
+    slide_xml: &[u8],
+    slide_rel_targets: &BTreeMap<String, (String, String)>,
+) -> Vec<ChartModel> {
+    let chart_rids = chart_relationship_ids(slide_xml);
+    let mut charts = Vec::new();
+    for rid in chart_rids {
+        let Some((target, rel_type)) = slide_rel_targets.get(&rid) else {
+            continue;
+        };
+        if !rel_type.ends_with("/chart") {
+            continue;
+        }
+        let part_name = resolve_slide_relative_target(target);
+        let title = zip_entry(archive, &part_name)
+            .map(|xml| chart_title(&xml))
+            .unwrap_or_default();
+        charts.push(ChartModel {
+            element_id: ids::chart_id(slide_name, &part_name, SCHEMA_VERSION),
+            slide: slide_name.to_owned(),
+            title,
+        });
+    }
+    charts
+}
+
+fn chart_relationship_ids(slide_xml: &[u8]) -> Vec<String> {
+    let mut reader = Reader::from_reader(slide_xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut rids = Vec::new();
+    let mut in_chart_graphic = false;
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(tag)) if tag.local_name().as_ref() == b"graphicData" => {
+                in_chart_graphic = tag.attributes().flatten().any(|attribute| {
+                    attribute.key.local_name().as_ref() == b"uri"
+                        && String::from_utf8_lossy(&attribute.value).contains("/chart")
+                });
+            }
+            Ok(Event::End(tag)) if tag.local_name().as_ref() == b"graphicData" => {
+                in_chart_graphic = false;
+            }
+            Ok(Event::Empty(tag) | Event::Start(tag))
+                if in_chart_graphic && tag.local_name().as_ref() == b"chart" =>
+            {
+                for attribute in tag.attributes().flatten() {
+                    if attribute.key.local_name().as_ref() == b"id" {
+                        rids.push(String::from_utf8_lossy(&attribute.value).into_owned());
+                    }
+                }
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    rids
+}
+
+fn chart_title(xml: &[u8]) -> String {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut in_title = false;
+    let mut texts = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(tag)) if tag.local_name().as_ref() == b"title" => {
+                in_title = true;
+            }
+            Ok(Event::Start(tag)) if in_title && tag.local_name().as_ref() == b"t" => {
+                if let Ok(text) = reader.read_text(tag.name()) {
+                    texts.push(decode_text(text));
+                }
+            }
+            Ok(Event::End(tag)) if in_title && tag.local_name().as_ref() == b"title" => {
+                break;
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    texts.concat()
 }
 
 fn parse_shapes_and_tables(

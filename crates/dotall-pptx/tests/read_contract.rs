@@ -1,7 +1,10 @@
 use std::fs;
 
 use dotall_core::registry::{FormatHandler, ReadRequest, ReadSelector};
-use dotall_pptx::{PptxFormat, minimal_pptx, minimal_pptx_with_media, pptx_with_table};
+use dotall_pptx::{
+    PptxFormat, minimal_pptx, minimal_pptx_with_media, pptx_with_chart, pptx_with_comment,
+    pptx_with_table,
+};
 use tempfile::tempdir;
 
 #[test]
@@ -133,4 +136,75 @@ fn read_slide_exposes_table_cell_texts() {
     assert!(response.content.contains("A1"));
     assert!(response.content.contains("B2"));
     assert!(response.content.contains("Table 1"));
+}
+
+#[test]
+fn inspect_lists_classic_comment_with_shape_author_and_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_comment()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+
+    let comments = inspection.summary["comments"]
+        .as_array()
+        .expect("comments array");
+    assert_eq!(comments.len(), 1);
+    let comment = &comments[0];
+    assert_eq!(comment["slide"], "Slide 1");
+    assert_eq!(comment["shape"], "Title");
+    assert_eq!(comment["author"], "Ada");
+    assert_eq!(comment["text"], "Check KPI");
+    let element_id = comment["element_id"].as_str().expect("element_id");
+    assert!(
+        element_id.starts_with("cm_"),
+        "expected opaque cm_ id, got {element_id}"
+    );
+}
+
+#[test]
+fn inspect_omits_or_empties_comments_when_absent() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+
+    let comments = &inspection.summary["comments"];
+    assert!(
+        comments.is_null()
+            || comments
+                .as_array()
+                .map(|items| items.is_empty())
+                .unwrap_or(false),
+        "expected omit or empty comments, got {comments}"
+    );
+}
+
+#[test]
+fn inspect_lists_chart_with_title_slide_and_element_id() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_chart()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+
+    let charts = inspection.summary["charts"]
+        .as_array()
+        .expect("charts array");
+    assert_eq!(charts.len(), 1);
+    let chart = &charts[0];
+    assert_eq!(chart["slide"], "Slide 1");
+    assert_eq!(chart["title"], "Revenue");
+    let element_id = chart["element_id"].as_str().expect("element_id");
+    assert!(
+        element_id.starts_with("ch_"),
+        "expected opaque ch_ id, got {element_id}"
+    );
 }

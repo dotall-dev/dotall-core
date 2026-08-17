@@ -88,6 +88,25 @@ impl FormatHandler for PptxFormat {
             summary: json!({
                 "slides": slides,
                 "media_parts": presentation.media_parts,
+                "comments": presentation.comments.iter().map(|comment| {
+                    let mut value = json!({
+                        "element_id": comment.element_id,
+                        "slide": comment.slide,
+                        "author": comment.author,
+                        "text": comment.text,
+                    });
+                    if let Some(shape) = &comment.shape {
+                        value["shape"] = json!(shape);
+                    }
+                    value
+                }).collect::<Vec<_>>(),
+                "charts": presentation.charts.iter().map(|chart| {
+                    json!({
+                        "element_id": chart.element_id,
+                        "slide": chart.slide,
+                        "title": chart.title,
+                    })
+                }).collect::<Vec<_>>(),
             }),
             capabilities: capabilities(),
             edit_capabilities: edit_capabilities(),
@@ -506,6 +525,21 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "slide": "Slide 1", "shape": "Title", "bullet": true }
             }),
             safety: "Upserts a:pPr a:buChar char=\"•\" (true) or a:buNone (false) on each a:p in the shape txBody, replacing existing buNone/buFont/buChar/buAutoNum. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "insert_comment".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert one new classic PowerPoint comment on a slide (ISO commentAuthors + comments part).".into(),
+            example: json!({
+                "kind": "insert_comment",
+                "payload": {
+                    "slide": "Slide 1",
+                    "text": "Check KPI",
+                    "author": "Dotall",
+                    "shape": "Title"
+                }
+            }),
+            safety: "Append-only: creates or appends ppt/comments/commentN.xml and updates commentAuthors, slide .rels, and Content_Types. Does not mutate existing comments. Charts are inspect-only.".into(),
         },
     ]
 }
