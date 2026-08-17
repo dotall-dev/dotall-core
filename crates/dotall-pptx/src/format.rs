@@ -317,5 +317,15 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Patches only the target slide part. Rejects duplicate names on the same slide (including table names). Other slides and media stay byte-identical.".into(),
         },
+        EditCapability {
+            operation: "set_shape_bold".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear bold on all text runs inside a slide shape (a:rPr b).".into(),
+            example: json!({
+                "kind": "set_shape_bold",
+                "payload": { "slide": "Slide 1", "shape": "Title", "bold": true }
+            }),
+            safety: "Upserts a:rPr b on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
     ]
 }

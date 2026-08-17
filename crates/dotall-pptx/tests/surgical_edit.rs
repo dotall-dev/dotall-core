@@ -607,6 +607,70 @@ fn rename_shape_rejects_duplicate_name() {
     );
 }
 
+#[test]
+fn set_shape_bold_sets_rpr_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = minimal_pptx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_bold".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "bold": true,
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let slide_xml = String::from_utf8(zip_entries(&patched.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        slide_xml.contains(r#"b="1""#) || slide_xml.contains("b=\"1\""),
+        "expected a:rPr b=1 in slide XML"
+    );
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.slides[0].shapes[0].text, "Hello");
+    assert_eq!(edit.semantic_diff[0].change, "set_shape_bold");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("true"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn set_shape_bold_rejects_missing_shape() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_bold".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Missing",
+                    "bold": true,
+                }),
+            }],
+        )
+        .expect_err("missing shape");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("not found") || message.contains("missing"),
+        "unexpected error: {error}"
+    );
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);

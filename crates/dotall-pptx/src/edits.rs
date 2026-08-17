@@ -42,8 +42,9 @@ pub fn validate(
         "add_textbox" => validate_add_textbox(model, operation),
         "delete_shape" => validate_delete_shape(model, operation),
         "rename_shape" => validate_rename_shape(model, operation),
+        "set_shape_bold" => validate_set_shape_bold(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -217,6 +218,48 @@ fn validate_add_slide(
             change: "add_slide".into(),
             before: None,
             after: Some("blank".into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_shape_bold(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let shape_ref = required_str(&operation.payload, "shape")?;
+    let bold = required_bool(&operation.payload, "bold")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| shape.name == shape_ref || shape.element_id == shape_ref)
+        .ok_or_else(|| format_error(format!("shape `{shape_ref}` was not found")))?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_shape_bold".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "shape": shape.name,
+                "bold": bold,
+                "part_name": slide.part_name,
+                "element_id": shape.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, shape.name),
+            element_id: shape.element_id.clone(),
+            change: "set_shape_bold".into(),
+            before: None,
+            after: Some(if bold { "true" } else { "false" }.into()),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -594,6 +637,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 removals: BTreeSet::new(),
             }
         }
+        "set_shape_bold" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let bold = operation
+                .payload
+                .get("bold")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`bold` boolean is required"))?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_shape_bold(&original, shape, bold)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
         other => {
             return Err(format_error(format!(
                 "cannot apply unsupported pptx edit `{other}`"
@@ -896,6 +957,132 @@ pub fn patch_shape_text(xml: &[u8], shape: &str, text: &str) -> Result<Vec<u8>> 
     output.push_str(&patched_sp);
     output.push_str(&source[sp_end..]);
     Ok(output.into_bytes())
+}
+
+pub fn patch_shape_bold(xml: &[u8], shape: &str, bold: bool) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let needle = format!("name=\"{shape}\"");
+    let name_at = source
+        .find(&needle)
+        .ok_or_else(|| format_error(format!("shape `{shape}` was not found in slide XML")))?;
+    let sp_start = source[..name_at]
+        .rfind("<p:sp")
+        .ok_or_else(|| format_error("shape is missing a p:sp wrapper"))?;
+    let rel_end = source[name_at..]
+        .find("</p:sp>")
+        .ok_or_else(|| format_error("shape is missing a closing p:sp"))?;
+    let sp_end = name_at + rel_end + "</p:sp>".len();
+    let sp = &source[sp_start..sp_end];
+    if sp.contains("<p:graphicFrame")
+        || sp.contains("<a:graphic")
+        || sp.contains("<mc:AlternateContent")
+    {
+        return Err(format_error("cannot edit non-text shape"));
+    }
+    let patched_sp = set_shape_runs_bold(sp, bold)?;
+    let mut output = String::new();
+    output.push_str(&source[..sp_start]);
+    output.push_str(&patched_sp);
+    output.push_str(&source[sp_end..]);
+    Ok(output.into_bytes())
+}
+
+fn set_shape_runs_bold(sp: &str, bold: bool) -> Result<String> {
+    let mut output = String::with_capacity(sp.len() + 32);
+    let mut cursor = 0;
+    let mut patched_any = false;
+    while let Some(rel) = sp[cursor..].find("<a:r") {
+        let start = cursor + rel;
+        let after = sp.as_bytes().get(start + 4).copied().unwrap_or(0);
+        if after != b' ' && after != b'>' && after != b'/' {
+            output.push_str(&sp[cursor..start + 4]);
+            cursor = start + 4;
+            continue;
+        }
+        let end = element_end_drawing(sp, start, "a:r")?;
+        output.push_str(&sp[cursor..start]);
+        output.push_str(&upsert_drawing_run_bold(&sp[start..end], bold)?);
+        cursor = end;
+        patched_any = true;
+    }
+    output.push_str(&sp[cursor..]);
+    if !patched_any {
+        return Err(format_error("shape has no text run to bold"));
+    }
+    Ok(output)
+}
+
+fn upsert_drawing_run_bold(run: &str, bold: bool) -> Result<String> {
+    let open_end = run
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated a:r"))?;
+    if run[..open_end].ends_with("/>") {
+        return Ok(run.to_owned());
+    }
+    let rest = &run[open_end..];
+    if let Some(r_pr_start) = find_tag(rest, 0, "a:rPr") {
+        let r_pr_end = element_end_drawing(rest, r_pr_start, "a:rPr")?;
+        let patched = set_rpr_bold_attr(&rest[r_pr_start..r_pr_end], bold)?;
+        return Ok(format!(
+            "{}{}{}{}",
+            &run[..open_end],
+            &rest[..r_pr_start],
+            patched,
+            &rest[r_pr_end..]
+        ));
+    }
+    let r_pr = if bold {
+        r#"<a:rPr b="1"/>"#.to_owned()
+    } else {
+        r#"<a:rPr b="0"/>"#.to_owned()
+    };
+    Ok(format!("{}{}{}", &run[..open_end], r_pr, rest))
+}
+
+fn set_rpr_bold_attr(r_pr: &str, bold: bool) -> Result<String> {
+    let value = if bold { "1" } else { "0" };
+    let needle = "b=\"";
+    if let Some(rel) = r_pr.find(needle) {
+        let value_start = rel + needle.len();
+        let value_end = r_pr[value_start..]
+            .find('"')
+            .map(|offset| value_start + offset)
+            .ok_or_else(|| format_error("unterminated b attribute"))?;
+        return Ok(format!(
+            "{}{}{}",
+            &r_pr[..value_start],
+            value,
+            &r_pr[value_end..]
+        ));
+    }
+    // Insert b= before the tag close.
+    if r_pr.ends_with("/>") {
+        let open = r_pr.trim_end_matches("/>").trim_end();
+        return Ok(format!("{open} b=\"{value}\"/>"));
+    }
+    if let Some(gt) = r_pr.find('>') {
+        let open = r_pr[..gt].trim_end();
+        return Ok(format!("{open} b=\"{value}\">{}", &r_pr[gt + 1..]));
+    }
+    Err(format_error("unterminated a:rPr"))
+}
+
+fn element_end_drawing(xml: &str, start: usize, local: &str) -> Result<usize> {
+    let open = &xml[start..];
+    let open_end = open
+        .find('>')
+        .map(|offset| start + offset + 1)
+        .ok_or_else(|| format_error(format!("unterminated <{local}")))?;
+    if xml[start..open_end].ends_with("/>") {
+        return Ok(open_end);
+    }
+    let close = format!("</{local}>");
+    xml[open_end..]
+        .find(&close)
+        .map(|offset| open_end + offset + close.len())
+        .ok_or_else(|| format_error(format!("missing closing </{local}>")))
 }
 
 pub fn patch_table_cell_text(
@@ -1449,6 +1636,13 @@ fn table_ref(payload: &serde_json::Value) -> Result<&str> {
         return Ok(value);
     }
     required_str(payload, "shape").map_err(|_| format_error("`table` is required"))
+}
+
+fn required_bool(payload: &serde_json::Value, key: &str) -> Result<bool> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| format_error(format!("`{key}` boolean is required")))
 }
 
 fn optional_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option<&'a str>> {
