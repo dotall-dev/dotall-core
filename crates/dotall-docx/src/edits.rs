@@ -27,6 +27,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "delete_paragraph" => validate_delete_paragraph(model, operation),
         "set_paragraph_style" => validate_set_paragraph_style(model, operation),
         "set_paragraph_alignment" => validate_set_paragraph_alignment(model, operation),
+        "set_paragraph_bold" => validate_set_paragraph_bold(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -34,7 +35,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -236,6 +237,43 @@ fn normalize_alignment(raw: &str) -> Result<String> {
     }
 }
 
+fn validate_set_paragraph_bold(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let bold = required_bool(&operation.payload, "bold")?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_bold".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "bold": bold,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_bold".into(),
+            before: None,
+            after: Some(if bold { "true" } else { "false" }.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_header_footer_text(
     model: &DocumentModel,
     operation: &SemanticOperation,
@@ -383,6 +421,28 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let alignment = required_str(&operation.payload, "alignment")?;
             let original = entry_bytes(package, "word/document.xml")?;
             let patched_xml = patch_paragraph_alignment(&original, index, alignment)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
+        "set_paragraph_bold" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let bold = operation
+                .payload
+                .get("bold")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`bold` boolean is required"))?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_bold(&original, index, bold)?;
             let bytes = rebuild_package(
                 package,
                 &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
@@ -584,6 +644,167 @@ fn upsert_p_jc(p_pr: &str, jc_tag: &str) -> Result<String> {
         jc_tag,
         &p_pr[open_end..]
     ))
+}
+
+pub fn patch_paragraph_bold(xml: &[u8], index: u32, bold: bool) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let patched_paragraph = set_runs_bold(paragraph, bold)?;
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&patched_paragraph);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
+fn set_runs_bold(paragraph: &str, bold: bool) -> Result<String> {
+    let mut output = String::with_capacity(paragraph.len() + 32);
+    let mut cursor = 0;
+    let mut patched_any = false;
+    while let Some(rel) = paragraph[cursor..].find("<w:r") {
+        let start = cursor + rel;
+        let after = paragraph.as_bytes().get(start + 4).copied().unwrap_or(0);
+        if after != b' ' && after != b'>' && after != b'/' {
+            output.push_str(&paragraph[cursor..start + 4]);
+            cursor = start + 4;
+            continue;
+        }
+        let end = element_end(paragraph, start, "w:r")?;
+        output.push_str(&paragraph[cursor..start]);
+        output.push_str(&upsert_run_bold(&paragraph[start..end], bold)?);
+        cursor = end;
+        patched_any = true;
+    }
+    output.push_str(&paragraph[cursor..]);
+    if !patched_any {
+        // Empty paragraph: ensure paragraph mark rPr carries bold.
+        return upsert_paragraph_mark_bold(paragraph, bold);
+    }
+    Ok(output)
+}
+
+fn upsert_run_bold(run: &str, bold: bool) -> Result<String> {
+    let open_end = run
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:r"))?;
+    if run[..open_end].ends_with("/>") {
+        return Ok(run.to_owned());
+    }
+    let rest = &run[open_end..];
+    let b_tag = if bold {
+        "<w:b/>".to_owned()
+    } else {
+        r#"<w:b w:val="0"/>"#.to_owned()
+    };
+    if let Some(r_pr) = extract_named_element(rest, "w:rPr") {
+        let patched_r_pr = upsert_b_in_r_pr(r_pr, &b_tag)?;
+        return Ok(format!(
+            "{}{}{}",
+            &run[..open_end],
+            patched_r_pr,
+            &rest[r_pr.len()..]
+        ));
+    }
+    Ok(format!(
+        "{}<w:rPr>{}</w:rPr>{}",
+        &run[..open_end],
+        b_tag,
+        rest
+    ))
+}
+
+fn upsert_paragraph_mark_bold(paragraph: &str, bold: bool) -> Result<String> {
+    let open_end = paragraph
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    let b_tag = if bold {
+        "<w:b/>".to_owned()
+    } else {
+        r#"<w:b w:val="0"/>"#.to_owned()
+    };
+    let r_pr_inner = format!("<w:rPr>{b_tag}</w:rPr>");
+    match extract_p_pr(&paragraph[open_end..]) {
+        Some(p_pr) => {
+            let patched = if let Some(start) = find_named_open(p_pr, "w:rPr") {
+                let end = element_end(p_pr, start, "w:rPr")?;
+                format!(
+                    "{}{}{}",
+                    &p_pr[..start],
+                    upsert_b_in_r_pr(&p_pr[start..end], &b_tag)?,
+                    &p_pr[end..]
+                )
+            } else {
+                let p_open_end = p_pr
+                    .find('>')
+                    .map(|offset| offset + 1)
+                    .ok_or_else(|| format_error("unterminated w:pPr"))?;
+                if p_pr[..p_open_end].ends_with("/>") {
+                    let open = p_pr[..p_open_end].trim_end_matches("/>");
+                    format!("{open}>{r_pr_inner}</w:pPr>")
+                } else {
+                    format!(
+                        "{}{}{}",
+                        &p_pr[..p_open_end],
+                        r_pr_inner,
+                        &p_pr[p_open_end..]
+                    )
+                }
+            };
+            Ok(format!(
+                "{}{}{}",
+                &paragraph[..open_end],
+                patched,
+                &paragraph[open_end + p_pr.len()..]
+            ))
+        }
+        None => Ok(format!(
+            "{}<w:pPr>{r_pr_inner}</w:pPr>{}",
+            &paragraph[..open_end],
+            &paragraph[open_end..]
+        )),
+    }
+}
+
+fn upsert_b_in_r_pr(r_pr: &str, b_tag: &str) -> Result<String> {
+    if let Some(start) = find_named_open(r_pr, "w:b") {
+        let end = element_end(r_pr, start, "w:b")?;
+        return Ok(format!("{}{}{}", &r_pr[..start], b_tag, &r_pr[end..]));
+    }
+    let open_end = r_pr
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:rPr"))?;
+    if r_pr[..open_end].ends_with("/>") {
+        let open = r_pr[..open_end].trim_end_matches("/>");
+        return Ok(format!("{open}>{b_tag}</w:rPr>"));
+    }
+    Ok(format!(
+        "{}{}{}",
+        &r_pr[..open_end],
+        b_tag,
+        &r_pr[open_end..]
+    ))
+}
+
+fn extract_named_element<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
+    let start = find_named_open(xml, tag)?;
+    let end = element_end(xml, start, tag).ok()?;
+    Some(&xml[start..end])
 }
 
 fn find_named_open(xml: &str, tag: &str) -> Option<usize> {
@@ -979,6 +1200,13 @@ fn rebuild_package(original: &[u8], replacements: &BTreeMap<String, Vec<u8>>) ->
         .finish()
         .map_err(|error| format_error(format!("cannot finish DOCX package: {error}")))
         .map(|cursor| cursor.into_inner())
+}
+
+fn required_bool(payload: &serde_json::Value, key: &str) -> Result<bool> {
+    payload
+        .get(key)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| format_error(format!("`{key}` boolean is required")))
 }
 
 fn required_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<&'a str> {

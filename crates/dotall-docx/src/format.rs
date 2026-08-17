@@ -357,6 +357,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_bold".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear bold (w:b) on all runs in a body/table paragraph.".into(),
+            example: json!({
+                "kind": "set_paragraph_bold",
+                "payload": { "index": 1, "bold": true }
+            }),
+            safety:
+                "Upserts w:b inside each run's w:rPr (or paragraph-mark rPr when empty). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

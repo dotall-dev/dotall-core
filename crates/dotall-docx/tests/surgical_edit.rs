@@ -498,6 +498,65 @@ fn set_paragraph_alignment_rejects_invalid_value() {
 }
 
 #[test]
+fn set_paragraph_bold_sets_wb_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bold".into(),
+                payload: serde_json::json!({ "index": 1, "bold": true }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document_xml = String::from_utf8(zip_entries(&patched.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        document_xml.contains("<w:b/>")
+            || document_xml.contains(r#"<w:b "#)
+            || document_xml.contains(r#"w:b w:val="true""#)
+            || document_xml.contains(r#"w:b w:val="1""#),
+        "expected w:b in document.xml"
+    );
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.paragraphs[1].text, "Beta");
+    assert_eq!(edit.semantic_diff[0].change, "set_paragraph_bold");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("true"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_bold_rejects_non_bool() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_bold".into(),
+                payload: serde_json::json!({ "index": 0, "bold": "yes" }),
+            }],
+        )
+        .expect_err("non-bool bold");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("bold") || message.contains("boolean") || message.contains("bool"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn set_paragraph_style_replaces_existing_pstyle() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("memo.docx");

@@ -116,6 +116,15 @@ Set paragraph alignment (`w:jc`: `left`, `center`, `right`, `both` / `justify`):
 }
 ```
 
+Set or clear bold on all runs in a body/table paragraph (`w:b`):
+
+```json
+{
+  "kind": "set_paragraph_bold",
+  "payload": { "index": 1, "bold": true }
+}
+```
+
 Header / footer:
 
 ```json
