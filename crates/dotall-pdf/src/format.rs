@@ -161,6 +161,7 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         "read_only": field.read_only,
         "required": field.required,
         "multiline": field.multiline,
+        "password": field.password,
     });
     if !field.export_values.is_empty() {
         summary["export_values"] = json!(field.export_values);
@@ -297,6 +298,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "name": "Name", "multiline": true }
             }),
             safety: "Toggles /Ff Multiline on tx fields only. Inspect surfaces multiline. Rejects non-text fields, encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "set_form_field_password".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear the AcroForm text-field Password flag (/Ff bit 14)."
+                .into(),
+            example: json!({
+                "kind": "set_form_field_password",
+                "payload": { "name": "Name", "password": true }
+            }),
+            safety: "Toggles /Ff Password on tx fields only. Inspect surfaces password. Rejects non-text fields, encrypted and signed PDFs.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),

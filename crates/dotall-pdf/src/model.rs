@@ -54,4 +54,6 @@ pub struct PdfFieldModel {
     pub required: bool,
     #[serde(default)]
     pub multiline: bool,
+    #[serde(default)]
+    pub password: bool,
 }

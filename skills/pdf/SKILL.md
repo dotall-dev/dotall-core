@@ -17,7 +17,7 @@ operators.
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -127,6 +127,15 @@ Mark a text field multiline or single-line (`/Ff` Multiline bit; `tx` only):
 {
   "kind": "set_form_field_multiline",
   "payload": { "name": "Name", "multiline": true }
+}
+```
+
+Mark a text field as password or clear (`/Ff` Password bit; `tx` only):
+
+```json
+{
+  "kind": "set_form_field_password",
+  "payload": { "name": "Name", "password": true }
 }
 ```
 
