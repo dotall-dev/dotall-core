@@ -56,6 +56,9 @@ pub struct PdfFieldModel {
     pub multiline: bool,
     #[serde(default)]
     pub password: bool,
+    /// AcroForm Comb flag (`/Ff` bit 25) for text fields.
+    #[serde(default)]
+    pub comb: bool,
     /// AcroForm `/MaxLen` for text fields when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_length: Option<u32>,

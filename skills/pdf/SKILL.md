@@ -17,7 +17,7 @@ operators.
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -145,6 +145,15 @@ Set or clear a text field character limit (`/MaxLen`; `tx` only; `null` clears):
 {
   "kind": "set_form_field_max_length",
   "payload": { "name": "Name", "max_length": 32 }
+}
+```
+
+Mark a text field as comb (character boxes) or clear (`/Ff` Comb bit; `tx` only; typically paired with MaxLen):
+
+```json
+{
+  "kind": "set_form_field_comb",
+  "payload": { "name": "Name", "comb": true }
 }
 ```
 

@@ -165,6 +165,7 @@ fn walk_field(
     let required = flags & 2 == 2;
     let multiline = flags & 4096 == 4096;
     let password = flags & 8192 == 8192;
+    let comb = flags & 16_777_216 == 16_777_216;
     let max_length = dict
         .get(b"MaxLen")
         .ok()
@@ -186,6 +187,7 @@ fn walk_field(
             required,
             multiline,
             password,
+            comb,
             max_length,
         });
     }

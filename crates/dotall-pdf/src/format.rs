@@ -162,6 +162,7 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         "required": field.required,
         "multiline": field.multiline,
         "password": field.password,
+        "comb": field.comb,
     });
     if let Some(max_length) = field.max_length {
         summary["max_length"] = json!(max_length);
@@ -322,6 +323,16 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "name": "Name", "max_length": 32 }
             }),
             safety: "Sets /MaxLen on tx fields (null clears). Inspect surfaces max_length. Rejects non-text fields, encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "set_form_field_comb".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear the AcroForm text-field Comb flag (/Ff bit 25).".into(),
+            example: json!({
+                "kind": "set_form_field_comb",
+                "payload": { "name": "Name", "comb": true }
+            }),
+            safety: "Toggles /Ff Comb on tx fields only. Inspect surfaces comb. Typically paired with MaxLen. Rejects non-text fields, encrypted and signed PDFs.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),

@@ -1194,3 +1194,117 @@ fn revert_after_radio_fill_restores_original_bytes() {
 fn uuid(n: u8) -> uuid::Uuid {
     uuid::Uuid::parse_str(&format!("00000000-0000-0000-0000-00000000000{n}")).expect("uuid")
 }
+
+#[test]
+fn set_form_field_comb_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["comb"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_comb".into(),
+                payload: serde_json::json!({ "name": "Name", "comb": true }),
+            }],
+        )
+        .expect("validate comb");
+    let patched = handler.apply_edit(&path, &edit).expect("apply comb");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.comb);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_comb");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["comb"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_comb".into(),
+                payload: serde_json::json!({ "name": "Name", "comb": false }),
+            }],
+        )
+        .expect("validate clear comb");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let after = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.comb);
+}
+
+#[test]
+fn set_form_field_comb_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["field_type"] == "btn"))
+        .and_then(|f| f["name"].as_str())
+        .expect("btn field")
+        .to_owned();
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_comb".into(),
+                payload: serde_json::json!({ "name": name, "comb": true }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text") || message.contains("comb") || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_comb() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_comb"),
+        "capabilities must advertise set_form_field_comb"
+    );
+}
