@@ -518,6 +518,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_cell_shading".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear table-cell fill (w:tcPr/w:shd w:fill) on the cell containing a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_cell_shading",
+                "payload": { "index": 1, "color": "#FFFF00" }
+            }),
+            safety:
+                "Upserts w:shd w:fill from #RRGGBB/RRGGBB on the enclosing w:tc (null clears). Inserts w:tcPr when missing. Rejects paragraphs that are not inside a table cell. Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "replace_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

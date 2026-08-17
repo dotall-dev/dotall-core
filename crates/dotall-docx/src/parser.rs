@@ -109,6 +109,7 @@ fn parse_body(xml: &[u8]) -> Result<(Vec<ParagraphModel>, u32)> {
             style_id: draft.style_id,
             text: draft.text,
             editable: draft.editable,
+            in_table: draft.in_table,
         });
     }
     Ok((paragraphs, parsed.table_count))
@@ -143,6 +144,7 @@ struct DraftParagraph {
     style_id: Option<String>,
     text: String,
     editable: bool,
+    in_table: bool,
 }
 
 struct ParsedParagraphs {
@@ -215,6 +217,7 @@ fn parse_paragraphs(xml: &[u8]) -> Result<ParsedParagraphs> {
                     style_id: style_id.take(),
                     text: texts.concat(),
                     editable,
+                    in_table: table_depth > 0,
                 });
                 in_paragraph = false;
             }

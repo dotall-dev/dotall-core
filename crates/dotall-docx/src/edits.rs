@@ -55,6 +55,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_caps" => validate_set_paragraph_caps(model, operation),
         "set_paragraph_hyperlink" => validate_set_paragraph_hyperlink(model, operation),
         "set_paragraph_bullet" => validate_set_paragraph_bullet(model, operation),
+        "set_cell_shading" => validate_set_cell_shading(model, operation),
         "replace_paragraph_text" => validate_replace_paragraph_text(model, operation),
         "replace_across_paragraphs" => validate_replace_across_paragraphs(model, operation),
         "set_header_paragraph_text" => {
@@ -64,7 +65,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_paragraph_bullet, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_paragraph_bullet, set_cell_shading, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -689,6 +690,49 @@ fn validate_set_paragraph_font_color(
     })
 }
 
+fn validate_set_cell_shading(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let color = optional_srgb_color(&operation.payload, "color")?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    if !paragraph.in_table {
+        return Err(format_error("paragraph is not inside a table cell"));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_cell_shading".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "color": color,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_cell_shading".into(),
+            before: None,
+            after: Some(match color.as_deref() {
+                Some(value) => value.to_owned(),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_paragraph_highlight(
     model: &DocumentModel,
     operation: &SemanticOperation,
@@ -1171,6 +1215,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 .ok_or_else(|| format_error("`index` is required"))? as u32;
             let bullet = required_bool(&operation.payload, "bullet")?;
             apply_paragraph_bullet(package, index, bullet)
+        }
+        "set_cell_shading" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let color = optional_srgb_color(&operation.payload, "color")?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_cell_shading(&original, index, color.as_deref())?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
         }
         "set_header_paragraph_text" | "set_footer_paragraph_text" => {
             let part = required_str(&operation.payload, "part")?;
@@ -2469,6 +2531,161 @@ pub fn patch_paragraph_font_color(xml: &[u8], index: u32, color: Option<&str>) -
             patch_paragraph_named_run_prop(xml, index, "w:color", Some(&prop))
         }
         None => patch_paragraph_named_run_prop(xml, index, "w:color", None),
+    }
+}
+
+pub fn patch_cell_shading(xml: &[u8], index: u32, color: Option<&str>) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let Some((cell_start, cell_end)) = enclosing_table_cell(source, span.0, span.1)? else {
+        return Err(format_error("paragraph is not inside a table cell"));
+    };
+    let cell = &source[cell_start..cell_end];
+    let patched_cell = upsert_cell_shading(cell, color)?;
+    let mut output = String::new();
+    output.push_str(&source[..cell_start]);
+    output.push_str(&patched_cell);
+    output.push_str(&source[cell_end..]);
+    Ok(output.into_bytes())
+}
+
+fn enclosing_table_cell(
+    xml: &str,
+    para_start: usize,
+    para_end: usize,
+) -> Result<Option<(usize, usize)>> {
+    let prefix = &xml[..para_start];
+    let mut search_end = prefix.len();
+    while let Some(rel) = prefix[..search_end].rfind("<w:tc") {
+        let after = prefix.as_bytes().get(rel + 5).copied().unwrap_or(0);
+        if after == b' ' || after == b'>' || after == b'/' {
+            let end = element_end(xml, rel, "w:tc")?;
+            if end >= para_end {
+                return Ok(Some((rel, end)));
+            }
+        }
+        if rel == 0 {
+            break;
+        }
+        search_end = rel;
+    }
+    Ok(None)
+}
+
+fn upsert_cell_shading(cell: &str, color: Option<&str>) -> Result<String> {
+    let open_end = cell
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:tc"))?;
+    if cell[..open_end].ends_with("/>") {
+        return Err(format_error("empty table cell cannot be shaded"));
+    }
+    let inner = &cell[open_end..];
+    match extract_named_element(inner, "w:tcPr") {
+        Some(tc_pr) => {
+            let start_in_inner = find_named_open(inner, "w:tcPr")
+                .ok_or_else(|| format_error("w:tcPr vanished while patching cell shading"))?;
+            let patched_tc_pr = upsert_shd_in_tc_pr(tc_pr, color)?;
+            Ok(format!(
+                "{}{}{}{}",
+                &cell[..open_end],
+                &inner[..start_in_inner],
+                patched_tc_pr,
+                &inner[start_in_inner + tc_pr.len()..]
+            ))
+        }
+        None => {
+            let Some(fill) = color else {
+                return Ok(cell.to_owned());
+            };
+            let tc_pr = format!(
+                r#"<w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="{fill}"/></w:tcPr>"#
+            );
+            Ok(format!(
+                "{}{}{}",
+                &cell[..open_end],
+                tc_pr,
+                &cell[open_end..]
+            ))
+        }
+    }
+}
+
+fn upsert_shd_in_tc_pr(tc_pr: &str, color: Option<&str>) -> Result<String> {
+    match color {
+        None => remove_named_child(tc_pr, "w:shd"),
+        Some(fill) => {
+            let shd = format!(r#"<w:shd w:val="clear" w:color="auto" w:fill="{fill}"/>"#);
+            if let Some(existing) = extract_named_element(tc_pr, "w:shd") {
+                let start = find_named_open(tc_pr, "w:shd")
+                    .ok_or_else(|| format_error("w:shd vanished while patching cell shading"))?;
+                let patched_shd = set_shd_fill(existing, fill)?;
+                Ok(format!(
+                    "{}{}{}",
+                    &tc_pr[..start],
+                    patched_shd,
+                    &tc_pr[start + existing.len()..]
+                ))
+            } else {
+                let open_end = tc_pr
+                    .find('>')
+                    .map(|offset| offset + 1)
+                    .ok_or_else(|| format_error("unterminated w:tcPr"))?;
+                if tc_pr[..open_end].ends_with("/>") {
+                    let open = tc_pr[..open_end].trim_end_matches("/>");
+                    return Ok(format!("{open}>{shd}</w:tcPr>"));
+                }
+                Ok(format!(
+                    "{}{}{}",
+                    &tc_pr[..open_end],
+                    shd,
+                    &tc_pr[open_end..]
+                ))
+            }
+        }
+    }
+}
+
+fn set_shd_fill(shd: &str, fill: &str) -> Result<String> {
+    const FILL_ATTR: &str = "w:fill=\"";
+    if let Some(rel) = shd.find(FILL_ATTR) {
+        let value_start = rel + FILL_ATTR.len();
+        let value_end = shd[value_start..]
+            .find('"')
+            .map(|offset| value_start + offset)
+            .ok_or_else(|| format_error("unterminated w:fill"))?;
+        return Ok(format!(
+            "{}{}{}",
+            &shd[..value_start],
+            fill,
+            &shd[value_end..]
+        ));
+    }
+    let gt = shd
+        .find('>')
+        .ok_or_else(|| format_error("unterminated w:shd"))?;
+    if shd.as_bytes().get(gt.saturating_sub(1)) == Some(&b'/') {
+        Ok(format!(
+            r#"{} w:fill="{}"{}"#,
+            &shd[..gt - 1],
+            fill,
+            &shd[gt - 1..]
+        ))
+    } else {
+        Ok(format!(r#"{} w:fill="{}"{}"#, &shd[..gt], fill, &shd[gt..]))
     }
 }
 

@@ -237,6 +237,17 @@ Set or clear a bullet on a body/table paragraph (`w:numPr` + `word/numbering.xml
 
 `element_id` (or `paragraph` as an index alias) is also accepted instead of `index`. `true` ensures a bullet numbering definition exists and sets `w:pPr/w:numPr` with `w:ilvl val="0"` and a matching `w:numId`. `false` removes `w:numPr` from that paragraph only and leaves `numbering.xml`. If `word/numbering.xml` is missing, Dotall creates it plus a numbering Relationship in `word/_rels/document.xml.rels` and an Override in `[Content_Types].xml`. Other ZIP parts stay byte-identical except those created/patched parts.
 
+Set or clear table-cell fill (`w:tcPr`/`w:shd` `w:fill`) on the cell that contains a body/table paragraph (`#RRGGBB` / `RRGGBB`; `null` clears). Rejects paragraphs that are not inside a table cell:
+
+```json
+{
+  "kind": "set_cell_shading",
+  "payload": { "index": 1, "color": "#FFFF00" }
+}
+```
+
+`element_id` is also accepted instead of `index`. Inserts `w:tcPr` when missing. Patches only `word/document.xml`.
+
 Find/replace a substring inside one body/table paragraph (rejects empty `find` / no match; first-run rewrite like `set_paragraph_text`):
 
 ```json

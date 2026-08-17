@@ -30,6 +30,9 @@ pub struct ParagraphModel {
     pub text: String,
     #[serde(default = "editable_default")]
     pub editable: bool,
+    /// True when the paragraph lives inside a `w:tbl` (table cell).
+    #[serde(default)]
+    pub in_table: bool,
 }
 
 /// Paragraph living in a header or footer story part (not the body).

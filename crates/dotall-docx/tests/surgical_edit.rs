@@ -2204,3 +2204,204 @@ fn set_paragraph_bullet_rejects_tracked_changes_and_missing_paragraph() {
         "unexpected: {bad}"
     );
 }
+
+#[test]
+fn capabilities_advertise_set_cell_shading() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_cell_shading"),
+        "capabilities must advertise set_cell_shading"
+    );
+}
+
+#[test]
+fn set_cell_shading_sets_wshd_fill_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    let before = fixture::table_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_shading".into(),
+                payload: serde_json::json!({ "index": 1, "color": "#FFFF00" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document_xml = String::from_utf8(zip_entries(&patched.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        document_xml.contains(r#"w:fill="FFFF00""#),
+        "expected w:shd w:fill=FFFF00 (6 hex digits, no #), got: {document_xml}"
+    );
+    assert!(
+        document_xml.contains("<w:shd") || document_xml.contains("w:shd"),
+        "expected w:shd on the enclosing table cell, got: {document_xml}"
+    );
+    assert!(
+        !document_xml.contains("#FFFF00"),
+        "w:fill must omit the leading #, got: {document_xml}"
+    );
+    assert!(
+        document_xml.contains("<w:t>CellA</w:t>"),
+        "table cell text must remain CellA: {document_xml}"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "set_cell_shading");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("FFFF00"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_cell_shading_clear_removes_wshd() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    fs::write(&path, fixture::table_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_shading".into(),
+                payload: serde_json::json!({ "index": 1, "color": "FFFF00" }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_shading".into(),
+                payload: serde_json::json!({ "index": 1, "color": null }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let document_xml = String::from_utf8(zip_entries(&cleared.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    let cell_a = document_xml
+        .split("<w:tc>")
+        .nth(1)
+        .and_then(|rest| rest.split("</w:tc>").next())
+        .unwrap_or(&document_xml);
+    assert!(
+        !cell_a.contains("<w:shd") && !cell_a.contains("w:fill="),
+        "cleared cell shading must remove w:shd (or fill) from the target cell, got: {document_xml}"
+    );
+    assert!(
+        document_xml.contains("<w:t>CellA</w:t>"),
+        "table cell text must remain CellA: {document_xml}"
+    );
+    assert_untouched_entries_identical(&patched.bytes, &cleared.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_cell_shading_rejects_paragraph_not_in_table_cell() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    fs::write(&path, fixture::table_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_shading".into(),
+                payload: serde_json::json!({ "index": 0, "color": "#FFFF00" }),
+            }],
+        )
+        .expect_err("body paragraph is not a table cell");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("table cell") || message.contains("not inside a table"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn set_cell_shading_rejects_invalid_color() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    fs::write(&path, fixture::table_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_shading".into(),
+                payload: serde_json::json!({ "index": 1, "color": "red" }),
+            }],
+        )
+        .expect_err("invalid color");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        !message.contains("unsupported"),
+        "invalid color must be a validation error, not an unsupported op: {error}"
+    );
+    assert!(
+        message.contains("hex") || message.contains("rrggbb"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn set_cell_shading_rejects_tracked_changes_and_missing_paragraph() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("tracked.docx");
+    fs::write(&path, fixture::tracked_change_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let tracked = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_shading".into(),
+                payload: serde_json::json!({ "index": 1, "color": "#FFFF00" }),
+            }],
+        )
+        .expect_err("tracked changes must fail");
+    let tracked_message = tracked.to_string().to_lowercase();
+    assert!(
+        tracked_message.contains("tracked") || tracked_message.contains("table cell"),
+        "unexpected: {tracked}"
+    );
+
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+    let model = handler.parse(&path).expect("parse");
+    let missing = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_cell_shading".into(),
+                payload: serde_json::json!({ "index": 99, "color": "#FFFF00" }),
+            }],
+        )
+        .expect_err("missing paragraph");
+    let message = missing.to_string().to_lowercase();
+    assert!(
+        message.contains("not found") || message.contains("missing"),
+        "unexpected error: {missing}"
+    );
+}
