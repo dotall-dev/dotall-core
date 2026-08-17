@@ -29,6 +29,7 @@ struct WorksheetPart {
     tab_color: Option<String>,
     auto_filter: Option<String>,
     page_orientation: Option<String>,
+    paper_size: Option<u32>,
     print_scale: Option<u32>,
     fit_to_page: Option<FitToPage>,
     center_on_page: Option<CenterOnPage>,
@@ -83,6 +84,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                     tab_color: None,
                     auto_filter: None,
                     page_orientation: None,
+                    paper_size: None,
                     print_scale: None,
                     fit_to_page: None,
                     center_on_page: None,
@@ -211,6 +213,7 @@ where
         print_area: print.print_area,
         print_titles: print.print_titles,
         page_orientation: part.page_orientation,
+        paper_size: part.paper_size,
         print_scale: part.print_scale,
         fit_to_page: part.fit_to_page,
         center_on_page: part.center_on_page,
@@ -270,6 +273,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
         let tab_color = parse_tab_color(&worksheet, source)?;
         let auto_filter = parse_auto_filter(&worksheet, source)?;
         let page_orientation = parse_page_orientation(&worksheet, source)?;
+        let paper_size = parse_paper_size(&worksheet, source)?;
         let print_scale = parse_print_scale(&worksheet, source)?;
         let fit_to_page = parse_fit_to_page(&worksheet, source)?;
         let center_on_page = parse_center_on_page(&worksheet, source)?;
@@ -283,6 +287,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
                 tab_color,
                 auto_filter,
                 page_orientation,
+                paper_size,
                 print_scale,
                 fit_to_page,
                 center_on_page,
@@ -514,6 +519,36 @@ fn parse_auto_filter(xml: &[u8], source: &Path) -> Result<Option<String>> {
                         if !reference.is_empty() {
                             return Ok(Some(reference));
                         }
+                    }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(None)
+}
+
+fn parse_paper_size(xml: &[u8], source: &Path) -> Result<Option<u32>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if local_name(element.name().as_ref()) == b"pageSetup" =>
+            {
+                for attribute in element.attributes().flatten() {
+                    if local_name(attribute.key.as_ref()) == b"paperSize"
+                        && let Ok(value) = String::from_utf8_lossy(attribute.value.as_ref())
+                            .trim()
+                            .parse::<u32>()
+                        && value > 0
+                    {
+                        return Ok(Some(value));
                     }
                 }
             }

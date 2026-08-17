@@ -7,6 +7,7 @@ mod merges;
 mod package;
 mod page_margins;
 mod page_orientation;
+mod paper_size;
 mod print_scale;
 mod shared_strings;
 mod structural;

@@ -94,6 +94,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_paper_size"))
+    {
+        return validate_set_paper_size_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "set_print_scale"))
     {
         return validate_set_print_scale_operations(model, operations);
@@ -223,6 +229,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_page_orientation"))
     {
         return validate_set_page_orientation_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_paper_size"))
+    {
+        return validate_set_paper_size_operations(model, operations);
     }
     if operations
         .iter()
@@ -1309,6 +1321,67 @@ fn validate_set_page_orientation_operations(
     })
 }
 
+fn validate_set_paper_size_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_paper_size edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_paper_size" {
+        return Err(format_error("unsupported set_paper_size edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_paper_size requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.paper_size;
+    let paper_size = operation
+        .payload
+        .get("paper_size")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_f64().map(|f| f as u64))
+                .and_then(|v| u32::try_from(v).ok())
+        })
+        .filter(|v| *v > 0)
+        .ok_or_else(|| format_error("set_paper_size requires a positive integer `paper_size`"))?;
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paper_size".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "paper_size": paper_size,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!paper_size"),
+            element_id: format!("paper_size:{canonical_sheet}"),
+            change: "set_paper_size".into(),
+            before: before.map(|v| v.to_string()),
+            after: Some(paper_size.to_string()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_print_scale_operations(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
@@ -2361,6 +2434,7 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::SetPrintArea { .. }
             | XlsxEditOp::SetPrintTitles { .. }
             | XlsxEditOp::SetPageOrientation { .. }
+            | XlsxEditOp::SetPaperSize { .. }
                 | XlsxEditOp::SetPrintScale { .. }
  | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
@@ -2483,6 +2557,7 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetPrintArea { .. }
         | XlsxEditOp::SetPrintTitles { .. }
         | XlsxEditOp::SetPageOrientation { .. }
+        | XlsxEditOp::SetPaperSize { .. }
         | XlsxEditOp::SetPrintScale { .. }
         | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
@@ -2563,6 +2638,7 @@ mod tests {
             print_area: None,
             print_titles: None,
             page_orientation: None,
+            paper_size: None,
             print_scale: None,
             fit_to_page: None,
             center_on_page: None,

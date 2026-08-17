@@ -234,6 +234,14 @@ Set or clear worksheet print centering (`printOptions` `horizontalCentered`/`ver
 
 Inspect surfaces `center_on_page` per sheet when either axis is centered. Other worksheets stay byte-identical.
 
+Set worksheet print paper size (`pageSetup` `paperSize` positive integer, e.g. `1` Letter / `9` A4):
+
+```json
+{ "kind": "set_paper_size", "payload": { "sheet": "Revenue", "paper_size": 9 } }
+```
+
+Inspect surfaces `paper_size` per sheet when present. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

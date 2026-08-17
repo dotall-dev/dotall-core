@@ -120,6 +120,11 @@ pub enum XlsxEditOp {
         /// `portrait` or `landscape`.
         orientation: String,
     },
+    SetPaperSize {
+        sheet: String,
+        /// OOXML `pageSetup/@paperSize` (positive integer).
+        paper_size: u32,
+    },
     SetPrintScale {
         sheet: String,
         /// Print scale percent 10–400.

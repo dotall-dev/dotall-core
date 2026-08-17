@@ -132,6 +132,7 @@ fn fixture_sheet(name: &str, cells: Vec<CellModel>) -> SheetModel {
         print_area: None,
         print_titles: None,
         page_orientation: None,
+        paper_size: None,
         print_scale: None,
         fit_to_page: None,
         center_on_page: None,

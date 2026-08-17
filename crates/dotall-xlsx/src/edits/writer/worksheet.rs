@@ -38,6 +38,7 @@ pub(super) fn patch(
             | XlsxEditOp::SetPrintArea { .. }
             | XlsxEditOp::SetPrintTitles { .. }
             | XlsxEditOp::SetPageOrientation { .. }
+            | XlsxEditOp::SetPaperSize { .. }
             | XlsxEditOp::SetPrintScale { .. }
             | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetCenterOnPage { .. }
@@ -155,6 +156,7 @@ pub(super) fn patch(
                 | XlsxEditOp::SetPrintArea { .. }
                 | XlsxEditOp::SetPrintTitles { .. }
                 | XlsxEditOp::SetPageOrientation { .. }
+                | XlsxEditOp::SetPaperSize { .. }
                 | XlsxEditOp::SetPrintScale { .. }
                 | XlsxEditOp::SetFitToPage { .. }
                 | XlsxEditOp::SetCenterOnPage { .. }
@@ -195,6 +197,7 @@ pub(super) fn patch(
             | XlsxEditOp::SetPrintArea { .. }
             | XlsxEditOp::SetPrintTitles { .. }
             | XlsxEditOp::SetPageOrientation { .. }
+            | XlsxEditOp::SetPaperSize { .. }
             | XlsxEditOp::SetPrintScale { .. }
             | XlsxEditOp::SetFitToPage { .. }
             | XlsxEditOp::SetCenterOnPage { .. }
@@ -335,6 +338,7 @@ fn render_new_cell(
         | XlsxEditOp::SetPrintArea { .. }
         | XlsxEditOp::SetPrintTitles { .. }
         | XlsxEditOp::SetPageOrientation { .. }
+        | XlsxEditOp::SetPaperSize { .. }
         | XlsxEditOp::SetPrintScale { .. }
         | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }
@@ -520,6 +524,7 @@ fn render_cell_parts(
         | XlsxEditOp::SetPrintArea { .. }
         | XlsxEditOp::SetPrintTitles { .. }
         | XlsxEditOp::SetPageOrientation { .. }
+        | XlsxEditOp::SetPaperSize { .. }
         | XlsxEditOp::SetPrintScale { .. }
         | XlsxEditOp::SetFitToPage { .. }
         | XlsxEditOp::SetCenterOnPage { .. }

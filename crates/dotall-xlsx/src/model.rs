@@ -38,6 +38,9 @@ pub struct SheetModel {
     /// Page orientation (`portrait` / `landscape`). Absent when unset in OOXML.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_orientation: Option<String>,
+    /// Print paper size from `pageSetup/@paperSize` (e.g. 1=Letter, 9=A4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_size: Option<u32>,
     /// Print scale percent (10–400) from `pageSetup/@scale`. Absent when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub print_scale: Option<u32>,

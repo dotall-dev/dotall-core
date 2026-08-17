@@ -84,6 +84,7 @@ impl FormatHandler for XlsxFormat {
                     "print_area": sheet.print_area,
                     "print_titles": sheet.print_titles,
                     "page_orientation": sheet.page_orientation,
+                    "paper_size": sheet.paper_size,
                     "print_scale": sheet.print_scale,
                     "fit_to_page": sheet.fit_to_page,
                     "center_on_page": sheet.center_on_page,
@@ -621,6 +622,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "orientation": "landscape" }
             }),
             safety: "Surgically patches only the target worksheet pageSetup orientation attribute. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_paper_size".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet print paper size via pageSetup paperSize (positive integer)."
+                .into(),
+            example: json!({
+                "kind": "set_paper_size",
+                "payload": { "sheet": "Revenue", "paper_size": 9 }
+            }),
+            safety: "Surgically patches only the target worksheet pageSetup paperSize attribute (e.g. 1=Letter, 9=A4). Inspect surfaces paper_size. Other sheets stay byte-identical."
                 .into(),
         },
         EditCapability {

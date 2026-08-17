@@ -142,6 +142,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 orientation: required_string(operation, "orientation")?,
             }),
+            "set_paper_size" => Ok(XlsxEditOp::SetPaperSize {
+                sheet: required_string(operation, "sheet")?,
+                paper_size: required_positive_u32(operation, "paper_size")?,
+            }),
             "set_print_scale" => Ok(XlsxEditOp::SetPrintScale {
                 sheet: required_string(operation, "sheet")?,
                 scale: required_print_scale(operation)?,
