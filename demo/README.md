@@ -114,6 +114,16 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"hide_sheet","payload":{"sheet":"Revenue","hidden":false}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 9: set_tab_color on Inputs (sheetPr/tabColor), then clear
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_tab_color","payload":{"sheet":"Inputs","color":"FF4472C4"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect sheets[].tab_color FF4472C4 for Inputs
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_tab_color","payload":{"sheet":"Inputs","color":null}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -191,9 +201,14 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_shape_bold","payload":{"slide":"Slide 2","shape":"Title","bold":true}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 9 — italic Title text (content-on-slide companion to bold)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_shape_italic","payload":{"slide":"Slide 2","shape":"Title","italic":true}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` patch only the target slide part.
 
 ---
 
@@ -262,6 +277,11 @@ $DOTALL apply demo/memo.docx --all
 # Wave 8 — paragraph bold (w:b on runs)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_bold","payload":{"index":2,"bold":true}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 9 — paragraph italic (w:i on runs)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_italic","payload":{"index":2,"italic":true}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
@@ -349,6 +369,13 @@ $DOTALL edit demo/form.pdf --ops-json \
 $DOTALL apply demo/form.pdf --all
 $DOTALL read demo/form.pdf --selector-kind field --selector Name
 # expect blank Name; Agree/Priority Off
+
+# Wave 9 — bulk set multiple fields in one transaction
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_fields","payload":{"fields":{"Name":"Grace Hopper","Agree":"On","Department":"Engineering"}}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL read demo/form.pdf --selector-kind field --selector Name
+# expect Grace Hopper; Agree Yes
 ```
 
 ---
