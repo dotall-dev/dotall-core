@@ -115,6 +115,17 @@ impl FormatHandler for DocxFormat {
                 })
             })
             .collect::<Vec<_>>();
+        let pictures = document
+            .pictures
+            .iter()
+            .map(|picture| {
+                json!({
+                    "element_id": picture.element_id,
+                    "index": picture.index,
+                    "part": picture.part,
+                })
+            })
+            .collect::<Vec<_>>();
         Ok(Inspection {
             format_id: FORMAT_ID.into(),
             summary: json!({
@@ -127,6 +138,7 @@ impl FormatHandler for DocxFormat {
                 "table_count": document.table_count,
                 "skipped_tables": document.skipped_tables,
                 "comments": comments,
+                "pictures": pictures,
                 "charts": [],
             }),
             capabilities: capabilities(),
@@ -586,6 +598,24 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety:
                 "Appends a new w:comment and range markers; never rewrites existing comments.xml entries. Creates word/comments.xml plus document.xml.rels and [Content_Types].xml when missing. Rejects set_comment / delete_comment / replace_comment."
+                    .into(),
+        },
+        EditCapability {
+            operation: "insert_picture".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Insert an inline PNG/JPEG picture as the last run in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "insert_picture",
+                "payload": {
+                    "index": 1,
+                    "bytes_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+                    "content_type": "image/png"
+                }
+            }),
+            safety:
+                "Adds word/media/imageN.png, a document image Relationship, Default png in [Content_Types].xml, and an inline w:drawing/wp:inline/a:blip run. Existing word/media/* stay byte-identical. Rejects replace_picture / delete_picture / set_picture."
                     .into(),
         },
         EditCapability {

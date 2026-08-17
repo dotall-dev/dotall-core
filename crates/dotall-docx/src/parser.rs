@@ -9,7 +9,8 @@ use zip::ZipArchive;
 use crate::FORMAT_ID;
 use crate::ids;
 use crate::model::{
-    CommentModel, DocumentModel, HeaderFooterParagraphModel, ParagraphModel, SCHEMA_VERSION,
+    CommentModel, DocumentModel, HeaderFooterParagraphModel, ParagraphModel, PictureModel,
+    SCHEMA_VERSION,
 };
 
 pub fn parse_document(source: &Path) -> Result<DocumentModel> {
@@ -31,6 +32,7 @@ pub fn parse_document_bytes(package: &[u8]) -> Result<DocumentModel> {
     let header_paragraphs = parse_story_parts(&mut archive, &header_names, "header")?;
     let footer_paragraphs = parse_story_parts(&mut archive, &footer_names, "footer")?;
     let comments = parse_comments(&mut archive, &document_xml, &paragraphs)?;
+    let pictures = parse_pictures(&mut archive, &document_xml)?;
     Ok(DocumentModel {
         document_id: ids::document_id(&source_hash, SCHEMA_VERSION),
         paragraphs,
@@ -39,6 +41,7 @@ pub fn parse_document_bytes(package: &[u8]) -> Result<DocumentModel> {
         skipped_tables: false,
         table_count,
         comments,
+        pictures,
     })
 }
 
@@ -148,6 +151,108 @@ fn parse_comments(
         });
     }
     Ok(comments)
+}
+
+fn parse_pictures(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    document_xml: &[u8],
+) -> Result<Vec<PictureModel>> {
+    let Some(rels_xml) = optional_zip_entry(archive, "word/_rels/document.xml.rels")? else {
+        return Ok(Vec::new());
+    };
+    let image_targets = parse_image_relationships(&rels_xml)?;
+    if image_targets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut pictures = Vec::new();
+    for (index, embed) in picture_paragraph_embeds(document_xml)? {
+        let Some(target) = image_targets.get(&embed) else {
+            continue;
+        };
+        let part = if target.starts_with("word/") {
+            target.clone()
+        } else {
+            format!("word/{target}")
+        };
+        pictures.push(PictureModel {
+            element_id: ids::picture_id(index, &part, SCHEMA_VERSION),
+            index,
+            part,
+        });
+    }
+    Ok(pictures)
+}
+
+fn parse_image_relationships(xml: &[u8]) -> Result<std::collections::BTreeMap<String, String>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("relationships XML is not UTF-8: {error}")))?;
+    let mut map = std::collections::BTreeMap::new();
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find("<Relationship") {
+        let start = cursor + rel;
+        let end = text[start..]
+            .find("/>")
+            .or_else(|| text[start..].find('>'))
+            .map(|offset| start + offset)
+            .ok_or_else(|| format_error("unterminated Relationship"))?;
+        let tag = &text[start..=end];
+        cursor = end + 1;
+        if !tag
+            .contains("http://schemas.openxmlformats.org/officeDocument/2006/relationships/image")
+        {
+            continue;
+        }
+        let Some(id) = xml_attr(tag, "Id") else {
+            continue;
+        };
+        let Some(target) = xml_attr(tag, "Target") else {
+            continue;
+        };
+        map.insert(id.to_owned(), target.to_owned());
+    }
+    Ok(map)
+}
+
+fn xml_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!("{name}=\"");
+    let start = tag.find(&key)? + key.len();
+    let end = tag[start..].find('"')? + start;
+    Some(&tag[start..end])
+}
+
+fn picture_paragraph_embeds(document_xml: &[u8]) -> Result<Vec<(u32, String)>> {
+    let mut reader = Reader::from_reader(document_xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut embeds = Vec::new();
+    let mut paragraph_index: Option<u32> = None;
+    let mut next_index = 0u32;
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(format!("invalid document XML: {error}")))?
+        {
+            Event::Start(tag) if tag.local_name().as_ref() == b"p" => {
+                paragraph_index = Some(next_index);
+                next_index += 1;
+            }
+            Event::End(tag) if tag.local_name().as_ref() == b"p" => {
+                paragraph_index = None;
+            }
+            Event::Empty(tag) | Event::Start(tag) if tag.local_name().as_ref() == b"blip" => {
+                if let Some(index) = paragraph_index
+                    && let Some(embed) = attribute_val(&tag, b"embed")?
+                {
+                    embeds.push((index, embed));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(embeds)
 }
 
 struct DraftComment {

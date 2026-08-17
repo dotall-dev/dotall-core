@@ -16,6 +16,11 @@ pub fn comment_id(w_id: u32, author: &str, text: &str, schema_version: u32) -> S
     opaque_id("cm", schema_version, &[&w_id, author, text])
 }
 
+pub fn picture_id(index: u32, part: &str, schema_version: u32) -> String {
+    let index = index.to_string();
+    opaque_id("pic", schema_version, &[&index, part])
+}
+
 pub fn header_footer_paragraph_id(
     kind: &str,
     part: &str,

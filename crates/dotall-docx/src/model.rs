@@ -20,8 +20,11 @@ pub struct DocumentModel {
     #[serde(default)]
     pub table_count: u32,
     /// Comments from `word/comments.xml`, anchored to body paragraphs.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<CommentModel>,
+    /// Inline pictures from `word/document.xml` drawings → `word/media/*`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pictures: Vec<PictureModel>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -33,6 +36,15 @@ pub struct CommentModel {
     pub index: u32,
     pub author: String,
     pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PictureModel {
+    pub element_id: String,
+    /// Document-order paragraph index containing the drawing.
+    pub index: u32,
+    /// Package part path, e.g. `word/media/image1.png`.
+    pub part: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

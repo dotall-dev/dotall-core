@@ -25,8 +25,9 @@ Dotall patches only the target story part for paragraph edits (`word/document.xm
 `word/_rels/document.xml.rels`. Bullet edits may also create/patch `word/numbering.xml`,
 `word/_rels/document.xml.rels`, and `[Content_Types].xml` when numbering is missing.
 Comment inserts may create/patch `word/comments.xml`, `word/document.xml`,
-`word/_rels/document.xml.rels`, and `[Content_Types].xml`. Untouched ZIP parts stay
-byte-identical.
+`word/_rels/document.xml.rels`, and `[Content_Types].xml`. Picture inserts may create
+`word/media/imageN.png` plus document rels and a png Default in `[Content_Types].xml`.
+Untouched ZIP parts stay byte-identical.
 
 ## Prerequisites
 
@@ -250,7 +251,22 @@ Insert a **new** Word comment anchored to a body/table paragraph (append-only). 
 
 `element_id` is also accepted instead of `index`. `author` is optional and defaults to `"Dotall"`. Allocates the next unused `w:id`, appends a `w:comment`, and adds `w:commentRangeStart` / `w:commentRangeEnd` / `w:commentReference` on the target paragraph. Creates `word/comments.xml` plus a comments Relationship and Content_Types Override when missing. Rejected: `set_comment`, `delete_comment`, `replace_comment`.
 
-Inspect lists `comments[]` as `{ element_id, paragraph, index, author, text }` (`paragraph` is the anchored paragraph `element_id`; `index` is that paragraph’s document-order index). `charts[]` is omitted or `[]` on typical memos (read-only inventory if present; never mutate charts).
+Inspect lists `comments[]` as `{ element_id, paragraph, index, author, text }` (`paragraph` is the anchored paragraph `element_id`; `index` is that paragraph’s document-order index). Inspect always emits `pictures[]` as `{ element_id, index, part }` (possibly `[]`). `charts[]` is omitted or `[]` on typical memos (read-only inventory if present; never mutate charts).
+
+Insert an inline PNG/JPEG picture as the last run in a body/table paragraph:
+
+```json
+{
+  "kind": "insert_picture",
+  "payload": {
+    "index": 1,
+    "bytes_base64": "<standard-base64 PNG or JPEG bytes>",
+    "content_type": "image/png"
+  }
+}
+```
+
+`element_id` is also accepted instead of `index`. `content_type` defaults to `image/png` (`image/jpeg` also accepted). Adds the next `word/media/imageN.png` (or `.jpeg`), a document image Relationship, and a Content_Types Default when missing. Existing `word/media/*` stay byte-identical. Rejected: `replace_picture`, `delete_picture`, `set_picture`.
 
 Set or clear table-cell fill (`w:tcPr`/`w:shd` `w:fill`) on the cell that contains a body/table paragraph (`#RRGGBB` / `RRGGBB`; `null` clears). Rejects paragraphs that are not inside a table cell:
 

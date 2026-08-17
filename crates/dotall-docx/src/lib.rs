@@ -12,12 +12,13 @@ pub const FORMAT_ID: &str = "docx";
 
 pub use fixture::{
     demo_memo_docx, demo_q3_memo_docx, docx_with_comment, docx_with_comment_and_media,
-    header_footer_docx, minimal_docx, minimal_docx_with_media, multi_run_docx, table_docx,
+    docx_with_picture, header_footer_docx, minimal_docx, minimal_docx_with_media, multi_run_docx,
+    table_docx,
 };
 pub use format::DocxFormat;
 pub use model::{
-    CommentModel, DocumentModel, HeaderFooterParagraphModel, ParagraphModel, SCHEMA_ID,
-    SCHEMA_VERSION,
+    CommentModel, DocumentModel, HeaderFooterParagraphModel, ParagraphModel, PictureModel,
+    SCHEMA_ID, SCHEMA_VERSION,
 };
 pub use parser::parse_document_bytes;
 
