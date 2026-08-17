@@ -26,6 +26,7 @@ use super::paper_size;
 use super::print_scale;
 use super::shared_strings;
 use super::sheet_zoom;
+use super::show_gridlines;
 use super::structural;
 use super::tab_color;
 use super::workbook;
@@ -129,6 +130,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     }
     if let [XlsxEditOp::SetSheetZoom { sheet, zoom }] = operations.as_slice() {
         return patch_sheet_zoom(&original, sheet, *zoom);
+    }
+    if let [XlsxEditOp::SetShowGridlines { sheet, show }] = operations.as_slice() {
+        return patch_show_gridlines(&original, sheet, *show);
     }
     if let [XlsxEditOp::SetPrintScale { sheet, scale }] = operations.as_slice() {
         return patch_print_scale(&original, sheet, *scale);
@@ -330,6 +334,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetPageMargins { .. }
                 | XlsxEditOp::SetHeaderFooter { .. }
                 | XlsxEditOp::SetSheetZoom { .. }
+                | XlsxEditOp::SetShowGridlines { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -372,7 +377,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
-            | XlsxEditOp::SetSheetZoom { .. } => {
+            | XlsxEditOp::SetSheetZoom { .. }
+            | XlsxEditOp::SetShowGridlines { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -846,6 +852,21 @@ fn patch_sheet_zoom(original: &[u8], sheet: &str, zoom: u32) -> Result<PatchedOu
     let xml = entry_bytes(original, path)?;
     let mut replacements = BTreeMap::new();
     replacements.insert(path.clone(), sheet_zoom::patch(&xml, zoom)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_show_gridlines(original: &[u8], sheet: &str, show: bool) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), show_gridlines::patch(&xml, show)?);
     let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),

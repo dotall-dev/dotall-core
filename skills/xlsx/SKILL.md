@@ -264,6 +264,14 @@ Set worksheet view zoom (`sheetView` `zoomScale` percent 10–400):
 
 Inspect surfaces `zoom` per sheet when present. Freeze panes and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
 
+Show or hide worksheet view gridlines (`sheetView` `showGridLines`; `false` writes `showGridLines="0"`, `true` restores the Excel default by removing the attribute):
+
+```json
+{ "kind": "set_show_gridlines", "payload": { "sheet": "Revenue", "show": false } }
+```
+
+Inspect surfaces `show_gridlines` per sheet (`false` when hidden, `true` when shown). Freeze panes, zoom, and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

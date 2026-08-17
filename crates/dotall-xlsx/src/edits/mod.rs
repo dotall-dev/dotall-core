@@ -114,6 +114,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 zoom: required_sheet_zoom(operation)?,
             }),
+            "set_show_gridlines" => Ok(XlsxEditOp::SetShowGridlines {
+                sheet: required_string(operation, "sheet")?,
+                show: required_bool(operation, "show")?,
+            }),
             "define_name" => Ok(XlsxEditOp::DefineName {
                 name: required_string(operation, "name")?,
                 formula: required_string(operation, "formula")?,

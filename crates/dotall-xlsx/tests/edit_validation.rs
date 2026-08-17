@@ -128,6 +128,7 @@ fn fixture_sheet(name: &str, cells: Vec<CellModel>) -> SheetModel {
         merges: Vec::new(),
         freeze_panes: None,
         zoom: None,
+        show_gridlines: true,
         tab_color: None,
         auto_filter: None,
         print_area: None,

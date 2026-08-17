@@ -80,6 +80,7 @@ impl FormatHandler for XlsxFormat {
                     "merges": sheet.merges,
                     "freeze_panes": sheet.freeze_panes,
                     "zoom": sheet.zoom,
+                    "show_gridlines": sheet.show_gridlines,
                     "tab_color": sheet.tab_color,
                     "auto_filter": sheet.auto_filter,
                     "print_area": sheet.print_area,
@@ -718,6 +719,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "zoom": 75 }
             }),
             safety: "Surgically patches only the target worksheet sheetView zoomScale attribute. Existing freeze-pane children and other sheetView attributes are preserved. Inspect surfaces zoom. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_show_gridlines".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Show or hide worksheet view gridlines via sheetView showGridLines."
+                .into(),
+            example: json!({
+                "kind": "set_show_gridlines",
+                "payload": { "sheet": "Revenue", "show": false }
+            }),
+            safety: "Surgically patches only the target worksheet sheetView showGridLines attribute. false writes showGridLines=\"0\"; true removes the attribute (Excel default shown). Existing freeze-pane children, zoomScale, and other sheetView attributes are preserved. Inspect surfaces show_gridlines. Other sheets stay byte-identical."
                 .into(),
         },
     ]

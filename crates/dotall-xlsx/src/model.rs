@@ -26,6 +26,9 @@ pub struct SheetModel {
     /// Worksheet view zoom percent (10–400) from `sheetView/@zoomScale`. Absent when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zoom: Option<u32>,
+    /// Worksheet view gridlines. `false` when `sheetView/@showGridLines="0"`; default shown is `true`.
+    #[serde(default = "default_show_gridlines")]
+    pub show_gridlines: bool,
     /// Worksheet tab color as OOXML `rgb` AARRGGBB (e.g. `FF4472C4`). Absent when default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_color: Option<String>,
@@ -60,6 +63,10 @@ pub struct SheetModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header_footer: Option<HeaderFooter>,
     pub cells: Vec<CellModel>,
+}
+
+fn default_show_gridlines() -> bool {
+    true
 }
 
 /// Worksheet print header/footer (`headerFooter` oddHeader / oddFooter).

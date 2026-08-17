@@ -44,7 +44,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
-            | XlsxEditOp::SetSheetZoom { .. } => {
+            | XlsxEditOp::SetSheetZoom { .. }
+            | XlsxEditOp::SetShowGridlines { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -164,7 +165,8 @@ pub(super) fn patch(
                 | XlsxEditOp::SetCenterOnPage { .. }
                 | XlsxEditOp::SetPageMargins { .. }
                 | XlsxEditOp::SetHeaderFooter { .. }
-                | XlsxEditOp::SetSheetZoom { .. } => {
+                | XlsxEditOp::SetSheetZoom { .. }
+                | XlsxEditOp::SetShowGridlines { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -207,7 +209,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
-            | XlsxEditOp::SetSheetZoom { .. } => {
+            | XlsxEditOp::SetSheetZoom { .. }
+            | XlsxEditOp::SetShowGridlines { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -350,7 +353,8 @@ fn render_new_cell(
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
-        | XlsxEditOp::SetSheetZoom { .. } => {
+        | XlsxEditOp::SetSheetZoom { .. }
+        | XlsxEditOp::SetShowGridlines { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -538,7 +542,8 @@ fn render_cell_parts(
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
-        | XlsxEditOp::SetSheetZoom { .. } => {
+        | XlsxEditOp::SetSheetZoom { .. }
+        | XlsxEditOp::SetShowGridlines { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

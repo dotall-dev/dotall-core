@@ -86,6 +86,11 @@ pub enum XlsxEditOp {
         /// Worksheet view zoom percent 10–400 (`sheetView/@zoomScale`).
         zoom: u32,
     },
+    SetShowGridlines {
+        sheet: String,
+        /// `false` writes `sheetView/@showGridLines="0"`; `true` removes the attribute (default shown).
+        show: bool,
+    },
     DefineName {
         name: String,
         /// OOXML defined-name formula body (no leading `=`).
