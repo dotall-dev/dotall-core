@@ -421,6 +421,19 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_font_color".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear font color (w:color) on all runs in a body/table paragraph."
+                .into(),
+            example: json!({
+                "kind": "set_paragraph_font_color",
+                "payload": { "index": 1, "color": "#C00000" }
+            }),
+            safety:
+                "Upserts w:color w:val from #RRGGBB/RRGGBB (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

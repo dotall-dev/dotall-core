@@ -161,6 +161,15 @@ Set or clear font name on all runs in a body/table paragraph (`w:rFonts`; `null`
 }
 ```
 
+Set or clear font color on all runs in a body/table paragraph (`w:color`; `null` clears):
+
+```json
+{
+  "kind": "set_paragraph_font_color",
+  "payload": { "index": 1, "color": "#C00000" }
+}
+```
+
 Header / footer:
 
 ```json

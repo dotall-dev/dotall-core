@@ -374,5 +374,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Upserts a:latin/a:ea/a:cs typeface inside each a:rPr (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
+        EditCapability {
+            operation: "set_shape_font_color".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear solid sRGB text color on all runs inside a slide shape (a:solidFill/a:srgbClr)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_font_color",
+                "payload": { "slide": "Slide 1", "shape": "Title", "color": "#FF0000" }
+            }),
+            safety: "Upserts a:solidFill/a:srgbClr val from #RRGGBB/RRGGBB (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
     ]
 }
