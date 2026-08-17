@@ -142,6 +142,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 orientation: required_string(operation, "orientation")?,
             }),
+            "set_page_margins" => Ok(XlsxEditOp::SetPageMargins {
+                sheet: required_string(operation, "sheet")?,
+                margins: required_page_margins(operation)?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
@@ -150,6 +154,59 @@ pub(crate) fn parse_validated_operations(
             ))),
         })
         .collect()
+}
+
+fn required_page_margins(
+    operation: &dotall_core::SemanticOperation,
+) -> dotall_core::Result<crate::model::PageMargins> {
+    let left = required_non_negative_f64(operation, "left")?;
+    let right = required_non_negative_f64(operation, "right")?;
+    let top = required_non_negative_f64(operation, "top")?;
+    let bottom = required_non_negative_f64(operation, "bottom")?;
+    let header = optional_non_negative_f64(operation, "header")?;
+    let footer = optional_non_negative_f64(operation, "footer")?;
+    Ok(crate::model::PageMargins {
+        left,
+        right,
+        top,
+        bottom,
+        header,
+        footer,
+    })
+}
+
+fn required_non_negative_f64(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<f64> {
+    operation
+        .payload
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| {
+            invalid_operation(format!(
+                "validated edit operation requires non-negative `{field}`"
+            ))
+        })
+}
+
+fn optional_non_negative_f64(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<Option<f64>> {
+    match operation.payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .map(Some)
+            .ok_or_else(|| {
+                invalid_operation(format!(
+                    "validated edit operation requires non-negative `{field}` when present"
+                ))
+            }),
+    }
 }
 
 fn required_bool(

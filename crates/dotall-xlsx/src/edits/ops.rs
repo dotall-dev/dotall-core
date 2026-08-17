@@ -120,6 +120,10 @@ pub enum XlsxEditOp {
         /// `portrait` or `landscape`.
         orientation: String,
     },
+    SetPageMargins {
+        sheet: String,
+        margins: crate::model::PageMargins,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

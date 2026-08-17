@@ -94,6 +94,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_page_margins"))
+    {
+        return validate_set_page_margins_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "define_name"))
     {
         return validate_define_name_operations(model, operations);
@@ -199,6 +205,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_page_orientation"))
     {
         return validate_set_page_orientation_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_page_margins"))
+    {
+        return validate_set_page_margins_operations(model, operations);
     }
     if operations
         .iter()
@@ -1261,6 +1273,104 @@ fn validate_set_page_orientation_operations(
     })
 }
 
+fn validate_set_page_margins_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_page_margins edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_page_margins" {
+        return Err(format_error("unsupported set_page_margins edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_page_margins requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet
+        .page_margins
+        .as_ref()
+        .map(|margins| {
+            format!(
+                "L{} R{} T{} B{}",
+                margins.left, margins.right, margins.top, margins.bottom
+            )
+        })
+        .unwrap_or_else(|| "default".into());
+    let left = required_non_negative_margin(&operation.payload, "left")?;
+    let right = required_non_negative_margin(&operation.payload, "right")?;
+    let top = required_non_negative_margin(&operation.payload, "top")?;
+    let bottom = required_non_negative_margin(&operation.payload, "bottom")?;
+    let header = optional_non_negative_margin(&operation.payload, "header")?;
+    let footer = optional_non_negative_margin(&operation.payload, "footer")?;
+    let after = format!("L{left} R{right} T{top} B{bottom}");
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_page_margins".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "left": left,
+                "right": right,
+                "top": top,
+                "bottom": bottom,
+                "header": header,
+                "footer": footer,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!page_margins"),
+            element_id: format!("page_margins:{canonical_sheet}"),
+            change: "set_page_margins".into(),
+            before: Some(before),
+            after: Some(after),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn required_non_negative_margin(payload: &Value, field: &str) -> Result<f64> {
+    payload
+        .get(field)
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| {
+            format_error(format!(
+                "set_page_margins requires non-negative `{field}` margin in inches"
+            ))
+        })
+}
+
+fn optional_non_negative_margin(payload: &Value, field: &str) -> Result<Option<f64>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .map(Some)
+            .ok_or_else(|| {
+                format_error(format!(
+                    "set_page_margins `{field}` must be a non-negative number when present"
+                ))
+            }),
+    }
+}
+
 fn validate_define_name_operations(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
@@ -1975,7 +2085,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::SetAutoFilter { .. }
             | XlsxEditOp::SetPrintArea { .. }
             | XlsxEditOp::SetPrintTitles { .. }
-            | XlsxEditOp::SetPageOrientation { .. } => {
+            | XlsxEditOp::SetPageOrientation { .. }
+                | XlsxEditOp::SetPageMargins { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -2093,7 +2204,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetAutoFilter { .. }
         | XlsxEditOp::SetPrintArea { .. }
         | XlsxEditOp::SetPrintTitles { .. }
-        | XlsxEditOp::SetPageOrientation { .. } => {
+        | XlsxEditOp::SetPageOrientation { .. }
+        | XlsxEditOp::SetPageMargins { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )
@@ -2170,6 +2282,7 @@ mod tests {
             print_area: None,
             print_titles: None,
             page_orientation: None,
+            page_margins: None,
             cells,
         }
     }

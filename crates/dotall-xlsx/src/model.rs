@@ -38,7 +38,23 @@ pub struct SheetModel {
     /// Page orientation (`portrait` / `landscape`). Absent when unset in OOXML.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_orientation: Option<String>,
+    /// Print page margins in inches. Absent when no `pageMargins` element.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_margins: Option<PageMargins>,
     pub cells: Vec<CellModel>,
+}
+
+/// Worksheet print margins (`pageMargins`) in inches.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PageMargins {
+    pub left: f64,
+    pub right: f64,
+    pub top: f64,
+    pub bottom: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer: Option<f64>,
 }
 
 /// Worksheet print titles (`_xlnm.Print_Titles`): repeat rows and/or columns when printing.

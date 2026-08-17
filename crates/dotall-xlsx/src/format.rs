@@ -84,6 +84,7 @@ impl FormatHandler for XlsxFormat {
                     "print_area": sheet.print_area,
                     "print_titles": sheet.print_titles,
                     "page_orientation": sheet.page_orientation,
+                    "page_margins": sheet.page_margins,
                 })
             })
             .collect::<Vec<_>>();
@@ -617,6 +618,26 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "orientation": "landscape" }
             }),
             safety: "Surgically patches only the target worksheet pageSetup orientation attribute. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_page_margins".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet print margins via pageMargins (inches)."
+                .into(),
+            example: json!({
+                "kind": "set_page_margins",
+                "payload": {
+                    "sheet": "Revenue",
+                    "left": 0.5,
+                    "right": 0.5,
+                    "top": 0.75,
+                    "bottom": 0.75,
+                    "header": 0.3,
+                    "footer": 0.3
+                }
+            }),
+            safety: "Surgically patches only the target worksheet pageMargins element. Requires left/right/top/bottom; header/footer optional. Other sheets stay byte-identical."
                 .into(),
         },
     ]

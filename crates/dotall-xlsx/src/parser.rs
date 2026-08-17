@@ -12,8 +12,8 @@ use zip::ZipArchive;
 use crate::FORMAT_ID;
 use crate::ids;
 use crate::model::{
-    CellModel, CellValue, NamedRange, SCHEMA_VERSION, SheetDimensions, SheetModel, StyleEntry,
-    UnmodeledMap, WorkbookModel, column_name,
+    CellModel, CellValue, NamedRange, PageMargins, SCHEMA_VERSION, SheetDimensions, SheetModel,
+    StyleEntry, UnmodeledMap, WorkbookModel, column_name,
 };
 
 /// Parsed `xl/styles.xml` cellXfs + number-format resolution.
@@ -29,6 +29,7 @@ struct WorksheetPart {
     tab_color: Option<String>,
     auto_filter: Option<String>,
     page_orientation: Option<String>,
+    page_margins: Option<PageMargins>,
     cell_styles: BTreeMap<String, u32>,
 }
 
@@ -79,6 +80,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                     tab_color: None,
                     auto_filter: None,
                     page_orientation: None,
+                    page_margins: None,
                     cell_styles: BTreeMap::new(),
                 });
             let print_area = print_areas.get(&name).cloned();
@@ -203,6 +205,7 @@ where
         print_area: print.print_area,
         print_titles: print.print_titles,
         page_orientation: part.page_orientation,
+        page_margins: part.page_margins,
         cells,
     })
 }
@@ -258,6 +261,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
         let tab_color = parse_tab_color(&worksheet, source)?;
         let auto_filter = parse_auto_filter(&worksheet, source)?;
         let page_orientation = parse_page_orientation(&worksheet, source)?;
+        let page_margins = parse_page_margins(&worksheet, source)?;
         let cell_styles = parse_cell_style_indices(&worksheet, source)?;
         parts.insert(
             name,
@@ -267,6 +271,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
                 tab_color,
                 auto_filter,
                 page_orientation,
+                page_margins,
                 cell_styles,
             },
         );
@@ -525,6 +530,60 @@ fn parse_page_orientation(xml: &[u8], source: &Path) -> Result<Option<String>> {
                             return Ok(Some(value));
                         }
                     }
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(None)
+}
+
+fn parse_page_margins(xml: &[u8], source: &Path) -> Result<Option<PageMargins>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if local_name(element.name().as_ref()) == b"pageMargins" =>
+            {
+                let mut left = None;
+                let mut right = None;
+                let mut top = None;
+                let mut bottom = None;
+                let mut header = None;
+                let mut footer = None;
+                for attribute in element.attributes().flatten() {
+                    let value = String::from_utf8_lossy(attribute.value.as_ref())
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|v| v.is_finite() && *v >= 0.0);
+                    match local_name(attribute.key.as_ref()) {
+                        b"left" => left = value,
+                        b"right" => right = value,
+                        b"top" => top = value,
+                        b"bottom" => bottom = value,
+                        b"header" => header = value,
+                        b"footer" => footer = value,
+                        _ => {}
+                    }
+                }
+                if let (Some(left), Some(right), Some(top), Some(bottom)) =
+                    (left, right, top, bottom)
+                {
+                    return Ok(Some(PageMargins {
+                        left,
+                        right,
+                        top,
+                        bottom,
+                        header,
+                        footer,
+                    }));
                 }
             }
             Event::Eof => break,
