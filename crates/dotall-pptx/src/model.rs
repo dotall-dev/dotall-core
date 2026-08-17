@@ -18,12 +18,32 @@ pub struct SlideModel {
     pub index: u32,
     pub part_name: String,
     pub shapes: Vec<ShapeModel>,
+    #[serde(default)]
+    pub tables: Vec<TableModel>,
     pub notes: Option<String>,
+    /// Present when a notes slide part exists (even if notes text is empty).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes_part_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ShapeModel {
     pub element_id: String,
     pub name: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TableModel {
+    pub element_id: String,
+    pub name: String,
+    pub cells: Vec<TableCellModel>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TableCellModel {
+    pub element_id: String,
+    pub row: u32,
+    pub col: u32,
     pub text: String,
 }

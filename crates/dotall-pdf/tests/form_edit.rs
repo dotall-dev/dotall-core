@@ -3,8 +3,112 @@ use std::sync::Arc;
 
 use dotall_core::registry::{FormatHandler, FormatRegistry};
 use dotall_core::{Actor, ActorKind, DotallStore, EditRequest, Engine, SemanticOperation};
-use dotall_pdf::{PdfFormat, minimal_form_pdf, parse_pdf_bytes};
+use dotall_pdf::{
+    PdfFormat, demo_form_pdf, minimal_checkbox_pdf, minimal_form_pdf, minimal_radio_pdf,
+    parse_pdf_bytes,
+};
 use tempfile::tempdir;
+
+#[test]
+fn set_form_field_updates_radio_group_export_value() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("radio.pdf");
+    fs::write(&path, minimal_radio_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Priority"))
+        .expect("Priority radio");
+    assert_eq!(field["field_type"], "btn");
+    assert_eq!(field["value"], "Medium");
+    let export_values = field["export_values"]
+        .as_array()
+        .expect("export_values")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert!(export_values.contains(&"Low"));
+    assert!(export_values.contains(&"Medium"));
+    assert!(export_values.contains(&"High"));
+    assert!(export_values.contains(&"Off"));
+
+    let ambiguous = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Priority", "value": "On" }),
+            }],
+        )
+        .expect_err("On is ambiguous for radio");
+    assert!(
+        ambiguous.to_string().contains("ambiguous radio"),
+        "{ambiguous}"
+    );
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Priority", "value": "High" }),
+            }],
+        )
+        .expect("validate radio");
+    let patched = handler.apply_edit(&path, &edit).expect("apply radio");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let priority = after
+        .fields
+        .iter()
+        .find(|f| f.name == "Priority")
+        .expect("Priority");
+    assert_eq!(priority.value, "High");
+}
+
+#[test]
+fn set_form_field_updates_checkbox_on() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("checkbox.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.first())
+        .expect("checkbox field");
+    assert_eq!(field["name"], "Agree");
+    assert_eq!(field["field_type"], "btn");
+    assert_eq!(field["value"], "Off");
+    let export_values = field["export_values"]
+        .as_array()
+        .expect("export_values")
+        .iter()
+        .filter_map(|value| value.as_str())
+        .collect::<Vec<_>>();
+    assert!(export_values.contains(&"Yes"));
+    assert!(export_values.contains(&"Off"));
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Agree", "value": "On" }),
+            }],
+        )
+        .expect("validate checkbox");
+    let patched = handler.apply_edit(&path, &edit).expect("apply checkbox");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.fields[0].name, "Agree");
+    assert_eq!(after.fields[0].value, "Yes");
+}
 
 #[test]
 fn set_form_field_updates_value() {
@@ -29,6 +133,114 @@ fn set_form_field_updates_value() {
 }
 
 #[test]
+fn clear_form_field_blanks_text_and_turns_checkbox_off() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let filled = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Name", "value": "Grace" }),
+            }],
+        )
+        .expect("validate fill");
+    let after_fill = handler.apply_edit(&path, &filled).expect("apply fill");
+    fs::write(&path, &after_fill.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("reparse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_form_field".into(),
+                payload: serde_json::json!({ "name": "Name" }),
+            }],
+        )
+        .expect("validate clear");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse cleared");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert_eq!(name.value, "");
+    assert_eq!(edit.semantic_diff[0].change, "clear_form_field");
+}
+
+#[test]
+fn clear_form_field_sets_checkbox_off() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("checkbox.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let on = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Agree", "value": "On" }),
+            }],
+        )
+        .expect("validate on");
+    let after_on = handler.apply_edit(&path, &on).expect("apply on");
+    fs::write(&path, &after_on.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("reparse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_form_field".into(),
+                payload: serde_json::json!({ "name": "Agree" }),
+            }],
+        )
+        .expect("validate clear");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let agree = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Agree")
+        .expect("Agree");
+    assert_eq!(agree.value, "Off");
+}
+
+#[test]
+fn clear_form_field_sets_radio_off() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("radio.pdf");
+    fs::write(&path, minimal_radio_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_form_field".into(),
+                payload: serde_json::json!({ "name": "Priority" }),
+            }],
+        )
+        .expect("validate clear radio");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear radio");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let priority = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Priority")
+        .expect("Priority");
+    assert_eq!(priority.value, "Off");
+}
+
+#[test]
 fn rejects_unknown_field() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("form.pdf");
@@ -45,6 +257,811 @@ fn rejects_unknown_field() {
         )
         .expect_err("unknown field");
     assert!(error.to_string().contains("was not found"));
+}
+
+#[test]
+fn set_document_metadata_updates_info_dict() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(model.payload["metadata"]["title"], "Vendor Intake Form");
+    assert_eq!(model.payload["metadata"]["author"], "Dotall Demo");
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_document_metadata".into(),
+                payload: serde_json::json!({
+                    "title": "Updated Intake",
+                    "author": "Wave 4 Agent",
+                    "subject": "Onboarding refresh"
+                }),
+            }],
+        )
+        .expect("validate metadata");
+    let patched = handler.apply_edit(&path, &edit).expect("apply metadata");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.metadata.title.as_deref(), Some("Updated Intake"));
+    assert_eq!(after.metadata.author.as_deref(), Some("Wave 4 Agent"));
+    assert_eq!(
+        after.metadata.subject.as_deref(),
+        Some("Onboarding refresh")
+    );
+    // Creator / Producer from Wave 2 inspect stay untouched when omitted.
+    assert_eq!(after.metadata.creator.as_deref(), Some("dotall-pdf"));
+    assert_eq!(after.metadata.producer.as_deref(), Some("dotall-pdf"));
+}
+
+#[test]
+fn set_document_metadata_creates_info_when_missing() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert!(model.payload["metadata"]["title"].is_null());
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_document_metadata".into(),
+                payload: serde_json::json!({ "title": "Hello Form" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.metadata.title.as_deref(), Some("Hello Form"));
+    assert_eq!(after.fields[0].value, "Ada");
+}
+
+#[test]
+fn set_document_metadata_requires_at_least_one_field() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_document_metadata".into(),
+                payload: serde_json::json!({}),
+            }],
+        )
+        .expect_err("empty payload");
+    assert!(error.to_string().contains("title"), "{error}");
+}
+
+#[test]
+fn clear_document_metadata_clears_title_author_subject() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(model.payload["metadata"]["title"], "Vendor Intake Form");
+    assert_eq!(model.payload["metadata"]["author"], "Dotall Demo");
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_document_metadata".into(),
+                payload: serde_json::json!({}),
+            }],
+        )
+        .expect("validate clear metadata");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    assert!(after.metadata.title.is_none() || after.metadata.title.as_deref() == Some(""));
+    assert!(after.metadata.author.is_none() || after.metadata.author.as_deref() == Some(""));
+    assert!(after.metadata.subject.is_none() || after.metadata.subject.as_deref() == Some(""));
+    // Creator / Producer stay when we only clear Title/Author/Subject.
+    assert_eq!(after.metadata.creator.as_deref(), Some("dotall-pdf"));
+    assert_eq!(edit.semantic_diff[0].change, "clear_document_metadata");
+}
+
+#[test]
+fn capabilities_advertise_clear_document_metadata() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "clear_document_metadata"),
+        "capabilities must advertise clear_document_metadata"
+    );
+}
+
+#[test]
+fn clear_all_form_fields_clears_text_and_checkbox() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    assert_eq!(
+        model.payload["fields"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|field| field["name"] == "Name")
+            .map(|field| field["value"].as_str().unwrap_or("")),
+        Some("Ada Lovelace")
+    );
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_all_form_fields".into(),
+                payload: serde_json::json!({}),
+            }],
+        )
+        .expect("validate clear all");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear all");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    let agree = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Agree")
+        .expect("Agree");
+    assert_eq!(name.value, "");
+    assert_eq!(agree.value, "Off");
+    assert_eq!(edit.semantic_diff[0].change, "clear_all_form_fields");
+}
+
+#[test]
+fn capabilities_advertise_clear_all_form_fields() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "clear_all_form_fields"),
+        "capabilities must advertise clear_all_form_fields"
+    );
+}
+
+#[test]
+fn set_form_fields_sets_multiple_fields_in_one_op() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_fields".into(),
+                payload: serde_json::json!({
+                    "fields": {
+                        "Name": "Grace Hopper",
+                        "Agree": "On"
+                    }
+                }),
+            }],
+        )
+        .expect("validate set_form_fields");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    let agree = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Agree")
+        .expect("Agree");
+    assert_eq!(name.value, "Grace Hopper");
+    assert_eq!(agree.value, "Yes");
+    assert_eq!(edit.semantic_diff[0].change, "set_form_fields");
+}
+
+#[test]
+fn capabilities_advertise_set_form_fields() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_fields"),
+        "capabilities must advertise set_form_fields"
+    );
+}
+
+#[test]
+fn set_form_field_readonly_toggles_ff_and_blocks_value_edits() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["read_only"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_readonly".into(),
+                payload: serde_json::json!({ "name": "Name", "readonly": true }),
+            }],
+        )
+        .expect("validate readonly");
+    let patched = handler.apply_edit(&path, &edit).expect("apply readonly");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.read_only);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_readonly");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["read_only"], true);
+
+    let blocked = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Name", "value": "Blocked" }),
+            }],
+        )
+        .expect_err("read-only blocks value edits");
+    assert!(
+        blocked.to_string().to_lowercase().contains("read-only")
+            || blocked.to_string().to_lowercase().contains("readonly"),
+        "{blocked}"
+    );
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_readonly".into(),
+                payload: serde_json::json!({ "name": "Name", "readonly": false }),
+            }],
+        )
+        .expect("validate clear readonly");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let final_doc = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_doc
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.read_only);
+}
+
+#[test]
+fn set_form_field_required_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["required"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_required".into(),
+                payload: serde_json::json!({ "name": "Name", "required": true }),
+            }],
+        )
+        .expect("validate required");
+    let patched = handler.apply_edit(&path, &edit).expect("apply required");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.required);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_required");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["required"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_required".into(),
+                payload: serde_json::json!({ "name": "Name", "required": false }),
+            }],
+        )
+        .expect("validate clear required");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let final_doc = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_doc
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.required);
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_required() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_required"),
+        "capabilities must advertise set_form_field_required"
+    );
+}
+
+#[test]
+fn set_form_field_multiline_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["multiline"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multiline".into(),
+                payload: serde_json::json!({ "name": "Name", "multiline": true }),
+            }],
+        )
+        .expect("validate multiline");
+    let patched = handler.apply_edit(&path, &edit).expect("apply multiline");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.multiline);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_multiline");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["multiline"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multiline".into(),
+                payload: serde_json::json!({ "name": "Name", "multiline": false }),
+            }],
+        )
+        .expect("validate clear multiline");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let final_doc = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_doc
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.multiline);
+}
+
+#[test]
+fn set_form_field_multiline_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    // Prefer a known non-tx field from the fixture when present.
+    let non_tx = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| {
+            fields.iter().find(|f| {
+                f["field_type"] == "btn" || f["field_type"] == "ch" || f["field_type"] == "sig"
+            })
+        });
+    let Some(field) = non_tx else {
+        return;
+    };
+    let name = field["name"].as_str().expect("name");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multiline".into(),
+                payload: serde_json::json!({ "name": name, "multiline": true }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text") || message.contains("multiline") || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_multiline() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_multiline"),
+        "capabilities must advertise set_form_field_multiline"
+    );
+}
+
+#[test]
+fn set_form_field_password_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["password"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_password".into(),
+                payload: serde_json::json!({ "name": "Name", "password": true }),
+            }],
+        )
+        .expect("validate password");
+    let patched = handler.apply_edit(&path, &edit).expect("apply password");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.password);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_password");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["password"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_password".into(),
+                payload: serde_json::json!({ "name": "Name", "password": false }),
+            }],
+        )
+        .expect("validate clear password");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let final_doc = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_doc
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.password);
+}
+
+#[test]
+fn set_form_field_password_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let non_tx = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| {
+            fields.iter().find(|f| {
+                f["field_type"] == "btn" || f["field_type"] == "ch" || f["field_type"] == "sig"
+            })
+        });
+    let Some(field) = non_tx else {
+        return;
+    };
+    let name = field["name"].as_str().expect("name");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_password".into(),
+                payload: serde_json::json!({ "name": name, "password": true }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text") || message.contains("password") || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_password() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_password"),
+        "capabilities must advertise set_form_field_password"
+    );
+}
+
+#[test]
+fn set_form_field_max_length_sets_and_clears_maxlen() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert!(name_field.get("max_length").is_none() || name_field["max_length"].is_null());
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_max_length".into(),
+                payload: serde_json::json!({ "name": "Name", "max_length": 32 }),
+            }],
+        )
+        .expect("validate max_length");
+    let patched = handler.apply_edit(&path, &edit).expect("apply max_length");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert_eq!(name.max_length, Some(32));
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_max_length");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["max_length"], 32);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_max_length".into(),
+                payload: serde_json::json!({ "name": "Name", "max_length": null }),
+            }],
+        )
+        .expect("validate clear max_length");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let final_doc = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_doc
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert_eq!(name.max_length, None);
+}
+
+#[test]
+fn set_form_field_max_length_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let non_tx = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| {
+            fields.iter().find(|f| {
+                f["field_type"] == "btn" || f["field_type"] == "ch" || f["field_type"] == "sig"
+            })
+        });
+    let Some(field) = non_tx else {
+        return;
+    };
+    let name = field["name"].as_str().expect("name");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_max_length".into(),
+                payload: serde_json::json!({ "name": name, "max_length": 10 }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text") || message.contains("max_length") || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_max_length() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_max_length"),
+        "capabilities must advertise set_form_field_max_length"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_readonly() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_readonly"),
+        "capabilities must advertise set_form_field_readonly"
+    );
+}
+
+#[test]
+fn set_form_fields_rejects_empty_map() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_fields".into(),
+                payload: serde_json::json!({ "fields": {} }),
+            }],
+        )
+        .expect_err("empty fields");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("field") || message.contains("empty") || message.contains("required"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -85,6 +1102,1133 @@ fn revert_after_form_fill_restores_original_bytes() {
     assert_eq!(fs::read(&source).expect("restored"), original);
 }
 
+#[test]
+fn revert_after_checkbox_fill_restores_original_bytes() {
+    let workspace = tempdir().expect("workspace");
+    let source = workspace.path().join("checkbox.pdf");
+    let original = minimal_checkbox_pdf();
+    fs::write(&source, &original).expect("write fixture");
+
+    let store = DotallStore::init(workspace.path()).expect("store");
+    let mut registry = FormatRegistry::default();
+    registry.register(Arc::new(PdfFormat));
+    let mut engine = Engine::new(store, registry);
+
+    let hash = engine.load_model("checkbox.pdf").expect("load").source_hash;
+    engine
+        .edit(
+            "checkbox.pdf",
+            &EditRequest {
+                transaction_id: uuid(3),
+                expected_source_hash: hash,
+                actor: Actor {
+                    kind: ActorKind::Cli,
+                    id: Some("pdf-checkbox".into()),
+                },
+                operations: vec![SemanticOperation {
+                    kind: "set_form_field".into(),
+                    payload: serde_json::json!({ "name": "Agree", "value": "On" }),
+                }],
+            },
+        )
+        .expect("stage");
+    engine.apply("checkbox.pdf", uuid(3)).expect("apply");
+    let after_apply = parse_pdf_bytes(&fs::read(&source).expect("read after")).expect("parse");
+    assert_eq!(after_apply.fields[0].value, "Yes");
+    assert_ne!(fs::read(&source).expect("after apply"), original);
+
+    engine
+        .revert("checkbox.pdf", 1, uuid(4))
+        .expect("stage revert");
+    engine.apply("checkbox.pdf", uuid(4)).expect("apply revert");
+    assert_eq!(fs::read(&source).expect("restored"), original);
+}
+
+#[test]
+fn revert_after_radio_fill_restores_original_bytes() {
+    let workspace = tempdir().expect("workspace");
+    let source = workspace.path().join("radio.pdf");
+    let original = minimal_radio_pdf();
+    fs::write(&source, &original).expect("write fixture");
+
+    let store = DotallStore::init(workspace.path()).expect("store");
+    let mut registry = FormatRegistry::default();
+    registry.register(Arc::new(PdfFormat));
+    let mut engine = Engine::new(store, registry);
+
+    let hash = engine.load_model("radio.pdf").expect("load").source_hash;
+    engine
+        .edit(
+            "radio.pdf",
+            &EditRequest {
+                transaction_id: uuid(5),
+                expected_source_hash: hash,
+                actor: Actor {
+                    kind: ActorKind::Cli,
+                    id: Some("pdf-radio".into()),
+                },
+                operations: vec![SemanticOperation {
+                    kind: "set_form_field".into(),
+                    payload: serde_json::json!({ "name": "Priority", "value": "High" }),
+                }],
+            },
+        )
+        .expect("stage");
+    engine.apply("radio.pdf", uuid(5)).expect("apply");
+    let after_apply = parse_pdf_bytes(&fs::read(&source).expect("read after")).expect("parse");
+    let priority = after_apply
+        .fields
+        .iter()
+        .find(|f| f.name == "Priority")
+        .expect("Priority");
+    assert_eq!(priority.value, "High");
+    assert_ne!(fs::read(&source).expect("after apply"), original);
+
+    engine
+        .revert("radio.pdf", 1, uuid(6))
+        .expect("stage revert");
+    engine.apply("radio.pdf", uuid(6)).expect("apply revert");
+    assert_eq!(fs::read(&source).expect("restored"), original);
+}
+
 fn uuid(n: u8) -> uuid::Uuid {
     uuid::Uuid::parse_str(&format!("00000000-0000-0000-0000-00000000000{n}")).expect("uuid")
+}
+
+#[test]
+fn set_form_field_comb_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["comb"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_comb".into(),
+                payload: serde_json::json!({ "name": "Name", "comb": true }),
+            }],
+        )
+        .expect("validate comb");
+    let patched = handler.apply_edit(&path, &edit).expect("apply comb");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.comb);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_comb");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["comb"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_comb".into(),
+                payload: serde_json::json!({ "name": "Name", "comb": false }),
+            }],
+        )
+        .expect("validate clear comb");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let after = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.comb);
+}
+
+#[test]
+fn set_form_field_comb_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["field_type"] == "btn"))
+        .and_then(|f| f["name"].as_str())
+        .expect("btn field")
+        .to_owned();
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_comb".into(),
+                payload: serde_json::json!({ "name": name, "comb": true }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text") || message.contains("comb") || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_comb() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_comb"),
+        "capabilities must advertise set_form_field_comb"
+    );
+}
+
+#[test]
+fn set_form_field_do_not_scroll_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["do_not_scroll"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_do_not_scroll".into(),
+                payload: serde_json::json!({ "name": "Name", "do_not_scroll": true }),
+            }],
+        )
+        .expect("validate do_not_scroll");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.do_not_scroll);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_do_not_scroll");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["do_not_scroll"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_do_not_scroll".into(),
+                payload: serde_json::json!({ "name": "Name", "do_not_scroll": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    fs::write(&path, &cleared.bytes).expect("rewrite");
+    let final_model = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_model
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.do_not_scroll);
+}
+
+#[test]
+fn set_form_field_do_not_scroll_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["field_type"] == "btn"))
+        .and_then(|f| f["name"].as_str())
+        .expect("btn field")
+        .to_owned();
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_do_not_scroll".into(),
+                payload: serde_json::json!({ "name": name, "do_not_scroll": true }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text") || message.contains("do_not_scroll") || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_do_not_scroll() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_do_not_scroll"),
+        "capabilities must advertise set_form_field_do_not_scroll"
+    );
+}
+
+#[test]
+fn set_form_field_do_not_spell_check_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["do_not_spell_check"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_do_not_spell_check".into(),
+                payload: serde_json::json!({ "name": "Name", "do_not_spell_check": true }),
+            }],
+        )
+        .expect("validate do_not_spell_check");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.do_not_spell_check);
+    assert_eq!(
+        edit.semantic_diff[0].change,
+        "set_form_field_do_not_spell_check"
+    );
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["do_not_spell_check"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_do_not_spell_check".into(),
+                payload: serde_json::json!({ "name": "Name", "do_not_spell_check": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    fs::write(&path, &cleared.bytes).expect("rewrite");
+    let final_model = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_model
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.do_not_spell_check);
+}
+
+#[test]
+fn set_form_field_do_not_spell_check_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["field_type"] == "btn"))
+        .and_then(|f| f["name"].as_str())
+        .expect("btn field")
+        .to_owned();
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_do_not_spell_check".into(),
+                payload: serde_json::json!({ "name": name, "do_not_spell_check": true }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text")
+            || message.contains("do_not_spell_check")
+            || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_do_not_spell_check() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_do_not_spell_check"),
+        "capabilities must advertise set_form_field_do_not_spell_check"
+    );
+}
+
+#[test]
+fn set_form_field_rich_text_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["rich_text"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_rich_text".into(),
+                payload: serde_json::json!({ "name": "Name", "rich_text": true }),
+            }],
+        )
+        .expect("validate rich_text");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.rich_text);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_rich_text");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["rich_text"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_rich_text".into(),
+                payload: serde_json::json!({ "name": "Name", "rich_text": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    fs::write(&path, &cleared.bytes).expect("rewrite");
+    let final_model = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_model
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.rich_text);
+}
+
+#[test]
+fn set_form_field_rich_text_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["field_type"] == "btn"))
+        .and_then(|f| f["name"].as_str())
+        .expect("btn field")
+        .to_owned();
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_rich_text".into(),
+                payload: serde_json::json!({ "name": name, "rich_text": true }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text") || message.contains("rich_text") || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_rich_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_rich_text"),
+        "capabilities must advertise set_form_field_rich_text"
+    );
+}
+
+#[test]
+fn set_form_field_no_export_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["no_export"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_no_export".into(),
+                payload: serde_json::json!({ "name": "Name", "no_export": true }),
+            }],
+        )
+        .expect("validate no_export");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.no_export);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_no_export");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["no_export"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_no_export".into(),
+                payload: serde_json::json!({ "name": "Name", "no_export": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    fs::write(&path, &cleared.bytes).expect("rewrite");
+    let final_model = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_model
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.no_export);
+}
+
+#[test]
+fn set_form_field_no_export_applies_to_checkbox() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["field_type"] == "btn"))
+        .and_then(|f| f["name"].as_str())
+        .expect("btn field")
+        .to_owned();
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_no_export".into(),
+                payload: serde_json::json!({ "name": name, "no_export": true }),
+            }],
+        )
+        .expect("btn fields accept no_export");
+    let patched = handler.apply_edit(&path, &edit).expect("apply btn");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let field = after
+        .fields
+        .iter()
+        .find(|field| field.name == name)
+        .expect("btn");
+    assert!(field.no_export);
+}
+
+#[test]
+fn set_form_field_no_export_rejects_unknown_field() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_no_export".into(),
+                payload: serde_json::json!({ "name": "Missing", "no_export": true }),
+            }],
+        )
+        .expect_err("unknown field");
+    assert!(error.to_string().contains("was not found"));
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_no_export() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_no_export"),
+        "capabilities must advertise set_form_field_no_export"
+    );
+}
+
+#[test]
+fn set_form_field_multi_select_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let dept_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Department"))
+        .expect("Department");
+    assert_eq!(dept_field["field_type"], "ch");
+    assert_eq!(dept_field["multi_select"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Department", "multi_select": true }),
+            }],
+        )
+        .expect("validate multi_select");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let dept = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Department")
+        .expect("Department");
+    assert!(dept.multi_select);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_multi_select");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_dept = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Department")
+        .expect("Department in inspect");
+    assert_eq!(inspect_dept["multi_select"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Department", "multi_select": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    fs::write(&path, &cleared.bytes).expect("rewrite");
+    let final_model = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let dept = final_model
+        .fields
+        .iter()
+        .find(|field| field.name == "Department")
+        .expect("Department");
+    assert!(!dept.multi_select);
+}
+
+#[test]
+fn set_form_field_multi_select_rejects_non_choice() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+
+    let tx_error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Name", "multi_select": true }),
+            }],
+        )
+        .expect_err("tx");
+    let tx_message = tx_error.to_string().to_lowercase();
+    assert!(
+        tx_message.contains("choice")
+            || tx_message.contains("multi_select")
+            || tx_message.contains("ch"),
+        "unexpected tx error: {tx_error}"
+    );
+
+    let btn_error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Agree", "multi_select": true }),
+            }],
+        )
+        .expect_err("btn");
+    let btn_message = btn_error.to_string().to_lowercase();
+    assert!(
+        btn_message.contains("choice")
+            || btn_message.contains("multi_select")
+            || btn_message.contains("ch"),
+        "unexpected btn error: {btn_error}"
+    );
+}
+
+#[test]
+fn set_form_field_multi_select_rejects_unknown_field() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multi_select".into(),
+                payload: serde_json::json!({ "name": "Missing", "multi_select": true }),
+            }],
+        )
+        .expect_err("unknown field");
+    assert!(error.to_string().contains("was not found"));
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_multi_select() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_multi_select"),
+        "capabilities must advertise set_form_field_multi_select"
+    );
+}
+
+#[test]
+fn set_form_field_combo_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let dept_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Department"))
+        .expect("Department");
+    assert_eq!(dept_field["field_type"], "ch");
+    assert_eq!(dept_field["combo"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_combo".into(),
+                payload: serde_json::json!({ "name": "Department", "combo": true }),
+            }],
+        )
+        .expect("validate combo");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let dept = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Department")
+        .expect("Department");
+    assert!(dept.combo);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_combo");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_dept = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Department")
+        .expect("Department in inspect");
+    assert_eq!(inspect_dept["combo"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_combo".into(),
+                payload: serde_json::json!({ "name": "Department", "combo": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    fs::write(&path, &cleared.bytes).expect("rewrite");
+    let final_model = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let dept = final_model
+        .fields
+        .iter()
+        .find(|field| field.name == "Department")
+        .expect("Department");
+    assert!(!dept.combo);
+}
+
+#[test]
+fn set_form_field_combo_rejects_non_choice() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+
+    let tx_error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_combo".into(),
+                payload: serde_json::json!({ "name": "Name", "combo": true }),
+            }],
+        )
+        .expect_err("tx");
+    let tx_message = tx_error.to_string().to_lowercase();
+    assert!(
+        tx_message.contains("choice") || tx_message.contains("combo") || tx_message.contains("ch"),
+        "unexpected tx error: {tx_error}"
+    );
+
+    let btn_error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_combo".into(),
+                payload: serde_json::json!({ "name": "Agree", "combo": true }),
+            }],
+        )
+        .expect_err("btn");
+    let btn_message = btn_error.to_string().to_lowercase();
+    assert!(
+        btn_message.contains("choice")
+            || btn_message.contains("combo")
+            || btn_message.contains("ch"),
+        "unexpected btn error: {btn_error}"
+    );
+}
+
+#[test]
+fn set_form_field_combo_rejects_unknown_field() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_combo".into(),
+                payload: serde_json::json!({ "name": "Missing", "combo": true }),
+            }],
+        )
+        .expect_err("unknown field");
+    assert!(error.to_string().contains("was not found"));
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_combo() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_combo"),
+        "capabilities must advertise set_form_field_combo"
+    );
+}
+
+#[test]
+fn set_form_field_edit_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let dept_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Department"))
+        .expect("Department");
+    assert_eq!(dept_field["field_type"], "ch");
+    assert_eq!(dept_field["edit"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_edit".into(),
+                payload: serde_json::json!({ "name": "Department", "edit": true }),
+            }],
+        )
+        .expect("validate edit");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let dept = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Department")
+        .expect("Department");
+    assert!(dept.edit);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_edit");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_dept = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Department")
+        .expect("Department in inspect");
+    assert_eq!(inspect_dept["edit"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_edit".into(),
+                payload: serde_json::json!({ "name": "Department", "edit": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    fs::write(&path, &cleared.bytes).expect("rewrite");
+    let final_model = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let dept = final_model
+        .fields
+        .iter()
+        .find(|field| field.name == "Department")
+        .expect("Department");
+    assert!(!dept.edit);
+}
+
+#[test]
+fn set_form_field_edit_rejects_non_choice() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+
+    let tx_error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_edit".into(),
+                payload: serde_json::json!({ "name": "Name", "edit": true }),
+            }],
+        )
+        .expect_err("tx");
+    let tx_message = tx_error.to_string().to_lowercase();
+    assert!(
+        tx_message.contains("choice") || tx_message.contains("edit") || tx_message.contains("ch"),
+        "unexpected tx error: {tx_error}"
+    );
+
+    let btn_error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_edit".into(),
+                payload: serde_json::json!({ "name": "Agree", "edit": true }),
+            }],
+        )
+        .expect_err("btn");
+    let btn_message = btn_error.to_string().to_lowercase();
+    assert!(
+        btn_message.contains("choice")
+            || btn_message.contains("edit")
+            || btn_message.contains("ch"),
+        "unexpected btn error: {btn_error}"
+    );
+}
+
+#[test]
+fn set_form_field_edit_rejects_unknown_field() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_edit".into(),
+                payload: serde_json::json!({ "name": "Missing", "edit": true }),
+            }],
+        )
+        .expect_err("unknown field");
+    assert!(error.to_string().contains("was not found"));
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_edit() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, demo_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_edit"),
+        "capabilities must advertise set_form_field_edit"
+    );
 }

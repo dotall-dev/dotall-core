@@ -15,6 +15,22 @@ pub fn shape_id(slide_name: &str, shape_name: &str, schema_version: u32) -> Stri
     opaque_id("sp", schema_version, &[slide_name, shape_name])
 }
 
+pub fn table_id(slide_name: &str, table_name: &str, schema_version: u32) -> String {
+    opaque_id("tb", schema_version, &[slide_name, table_name])
+}
+
+pub fn table_cell_id(
+    slide_name: &str,
+    table_name: &str,
+    row: u32,
+    col: u32,
+    schema_version: u32,
+) -> String {
+    let row = row.to_string();
+    let col = col.to_string();
+    opaque_id("tc", schema_version, &[slide_name, table_name, &row, &col])
+}
+
 fn opaque_id(prefix: &str, schema_version: u32, components: &[&str]) -> String {
     let mut hasher = Hasher::new();
     hasher.update(b"pptx.presentation");

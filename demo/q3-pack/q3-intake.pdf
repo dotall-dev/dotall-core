@@ -1,0 +1,83 @@
+%PDF-1.4
+%âãÏÓ
+1 0 obj<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>endobj
+2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj
+3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 510] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> /Annots [7 0 R 9 0 R 11 0 R 15 0 R 16 0 R 17 0 R 21 0 R 24 0 R 26 0 R] >>endobj
+4 0 obj<< /Length 213 >>stream
+BT
+/F1 18 Tf 20 480 Td (Q3 Vendor Intake) Tj
+0 -28 Td /F1 12 Tf (Name) Tj
+0 -40 Td (Email) Tj
+0 -50 Td (Agree to terms) Tj
+0 -50 Td (Priority) Tj
+0 -50 Td (Department) Tj
+0 -50 Td (Rate) Tj
+0 -40 Td (Owner) Tj
+ET
+endstream
+endobj
+5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj
+6 0 obj<< /Fields [8 0 R 10 0 R 12 0 R 18 0 R 22 0 R 25 0 R 27 0 R] /NeedAppearances true >>endobj
+7 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 420 280 445] /P 3 0 R /Parent 8 0 R /F 4 >>endobj
+8 0 obj<< /FT /Tx /T (Name) /V (Ada Lovelace) /Kids [7 0 R] >>endobj
+9 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 380 280 405] /P 3 0 R /Parent 10 0 R /F 4 >>endobj
+10 0 obj<< /FT /Tx /T (Email) /V (ada@example.com) /Kids [9 0 R] >>endobj
+11 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 330 100 350] /P 3 0 R /Parent 12 0 R /F 4 /AS /Off /AP << /N << /Yes 13 0 R /Off 14 0 R >> >> >>endobj
+12 0 obj<< /FT /Btn /T (Agree) /V /Off /Kids [11 0 R] >>endobj
+13 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream
+endstream
+endobj
+14 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream
+endstream
+endobj
+15 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 280 100 300] /P 3 0 R /Parent 18 0 R /F 4 /AS /Off /AP << /N << /Low 19 0 R /Off 20 0 R >> >> >>endobj
+16 0 obj<< /Type /Annot /Subtype /Widget /Rect [110 280 130 300] /P 3 0 R /Parent 18 0 R /F 4 /AS /Medium /AP << /N << /Medium 19 0 R /Off 20 0 R >> >> >>endobj
+17 0 obj<< /Type /Annot /Subtype /Widget /Rect [140 280 160 300] /P 3 0 R /Parent 18 0 R /F 4 /AS /Off /AP << /N << /High 19 0 R /Off 20 0 R >> >> >>endobj
+18 0 obj<< /FT /Btn /Ff 32768 /T (Priority) /V /Medium /Kids [15 0 R 16 0 R 17 0 R] >>endobj
+19 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream
+endstream
+endobj
+20 0 obj<< /Type /XObject /Subtype /Form /BBox [0 0 20 20] /Length 0 >>stream
+endstream
+endobj
+21 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 220 280 245] /P 3 0 R /Parent 22 0 R /F 4 >>endobj
+22 0 obj<< /FT /Ch /T (Department) /V (Engineering) /Opt [(Engineering) (Sales) (Operations)] /Kids [21 0 R] >>endobj
+23 0 obj<< /Title (Q3 Vendor Intake) /Author (Dotall Demo) /Subject (Q3 board pack) /Creator (dotall-pdf) /Producer (dotall-pdf) >>endobj
+24 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 170 280 195] /P 3 0 R /Parent 25 0 R /F 4 >>endobj
+25 0 obj<< /FT /Tx /T (Rate) /V (10%) /Kids [24 0 R] >>endobj
+26 0 obj<< /Type /Annot /Subtype /Widget /Rect [80 120 280 145] /P 3 0 R /Parent 27 0 R /F 4 >>endobj
+27 0 obj<< /FT /Tx /T (Owner) /V () /Kids [26 0 R] >>endobj
+xref
+0 28
+0000000000 65535 f 
+0000000019 00000 n 
+0000000082 00000 n 
+0000000137 00000 n 
+0000000330 00000 n 
+0000000591 00000 n 
+0000000659 00000 n 
+0000000758 00000 n 
+0000000858 00000 n 
+0000000927 00000 n 
+0000001028 00000 n 
+0000001102 00000 n 
+0000001256 00000 n 
+0000001319 00000 n 
+0000001414 00000 n 
+0000001509 00000 n 
+0000001663 00000 n 
+0000001824 00000 n 
+0000001980 00000 n 
+0000002073 00000 n 
+0000002168 00000 n 
+0000002263 00000 n 
+0000002365 00000 n 
+0000002483 00000 n 
+0000002621 00000 n 
+0000002723 00000 n 
+0000002785 00000 n 
+0000002887 00000 n 
+trailer<< /Size 28 /Root 1 0 R /Info 23 0 R >>
+startxref
+2947
+%%EOF

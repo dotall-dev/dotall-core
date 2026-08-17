@@ -10,9 +10,14 @@ pub mod selector;
 
 pub const FORMAT_ID: &str = "docx";
 
-pub use fixture::{minimal_docx, minimal_docx_with_media};
+pub use fixture::{
+    demo_memo_docx, demo_q3_memo_docx, header_footer_docx, minimal_docx, minimal_docx_with_media,
+    multi_run_docx, table_docx,
+};
 pub use format::DocxFormat;
-pub use model::{DocumentModel, ParagraphModel, SCHEMA_ID, SCHEMA_VERSION};
+pub use model::{
+    DocumentModel, HeaderFooterParagraphModel, ParagraphModel, SCHEMA_ID, SCHEMA_VERSION,
+};
 pub use parser::parse_document_bytes;
 
 #[cfg(test)]

@@ -11,6 +11,22 @@ pub struct PdfDocumentModel {
     pub fields: Vec<PdfFieldModel>,
     pub outline: Vec<String>,
     pub encrypted: bool,
+    #[serde(default)]
+    pub metadata: PdfMetadata,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct PdfMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub producer: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -26,6 +42,45 @@ pub struct PdfFieldModel {
     pub name: String,
     pub field_type: String,
     pub value: String,
+    /// Appearance-state names from `/AP /N` (e.g. `Yes`, `Off`) when discoverable.
+    #[serde(default)]
+    pub export_values: Vec<String>,
+    /// Choice (`/Ch`) options from `/Opt` (export values agents can set).
+    #[serde(default)]
+    pub options: Vec<String>,
     pub page: Option<u32>,
     pub read_only: bool,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub multiline: bool,
+    #[serde(default)]
+    pub password: bool,
+    /// AcroForm Comb flag (`/Ff` bit 25) for text fields.
+    #[serde(default)]
+    pub comb: bool,
+    /// AcroForm DoNotScroll flag (`/Ff` bit 24) for text fields.
+    #[serde(default)]
+    pub do_not_scroll: bool,
+    /// AcroForm DoNotSpellCheck flag (`/Ff` bit 23) for text fields.
+    #[serde(default)]
+    pub do_not_spell_check: bool,
+    /// AcroForm RichText flag (`/Ff` bit 26) for text fields.
+    #[serde(default)]
+    pub rich_text: bool,
+    /// AcroForm NoExport flag (`/Ff` bit 3) for any field type.
+    #[serde(default)]
+    pub no_export: bool,
+    /// AcroForm MultiSelect flag (`/Ff` bit 20) for choice fields.
+    #[serde(default)]
+    pub multi_select: bool,
+    /// AcroForm Combo flag (`/Ff` bit 17) for choice fields.
+    #[serde(default)]
+    pub combo: bool,
+    /// AcroForm Edit flag (`/Ff` bit 18) for choice fields.
+    #[serde(default)]
+    pub edit: bool,
+    /// AcroForm `/MaxLen` for text fields when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
 }

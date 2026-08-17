@@ -1,6 +1,21 @@
+mod auto_filter;
+mod center_on_page;
+mod dimensions;
+mod fit_to_page;
+mod freeze_panes;
+mod header_footer;
+mod merges;
 mod package;
+mod page_margins;
+mod page_orientation;
+mod paper_size;
+mod print_scale;
+mod right_to_left;
 mod shared_strings;
+mod sheet_zoom;
+mod show_gridlines;
 mod structural;
+mod tab_color;
 mod workbook;
 mod worksheet;
 
@@ -23,4 +38,8 @@ pub(crate) fn delete_sheet_references(
     name: &str,
 ) -> Result<workbook::DeleteSheetReferences> {
     workbook::delete_sheet_references(package, name)
+}
+
+pub(crate) fn sheet_visibility(package: &[u8]) -> Result<Vec<(String, bool)>> {
+    workbook::sheet_visibility(package)
 }

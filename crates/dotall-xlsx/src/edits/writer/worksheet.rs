@@ -24,7 +24,29 @@ pub(super) fn patch(
             | XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::DeleteSheet { .. }
-            | XlsxEditOp::SetRange { .. } => {
+            | XlsxEditOp::SetRange { .. }
+            | XlsxEditOp::MergeCells { .. }
+            | XlsxEditOp::UnmergeCells { .. }
+            | XlsxEditOp::SetColumnWidth { .. }
+            | XlsxEditOp::SetRowHeight { .. }
+            | XlsxEditOp::FreezePanes { .. }
+            | XlsxEditOp::DefineName { .. }
+            | XlsxEditOp::DeleteName { .. }
+            | XlsxEditOp::HideSheet { .. }
+            | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. }
+            | XlsxEditOp::SetPrintArea { .. }
+            | XlsxEditOp::SetPrintTitles { .. }
+            | XlsxEditOp::SetPageOrientation { .. }
+            | XlsxEditOp::SetPaperSize { .. }
+            | XlsxEditOp::SetPrintScale { .. }
+            | XlsxEditOp::SetFitToPage { .. }
+            | XlsxEditOp::SetCenterOnPage { .. }
+            | XlsxEditOp::SetPageMargins { .. }
+            | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetSheetZoom { .. }
+            | XlsxEditOp::SetShowGridlines { .. }
+            | XlsxEditOp::SetRightToLeft { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -124,7 +146,29 @@ pub(super) fn patch(
                 | XlsxEditOp::AddSheet { .. }
                 | XlsxEditOp::RenameSheet { .. }
                 | XlsxEditOp::DeleteSheet { .. }
-                | XlsxEditOp::SetRange { .. } => {
+                | XlsxEditOp::SetRange { .. }
+                | XlsxEditOp::MergeCells { .. }
+                | XlsxEditOp::UnmergeCells { .. }
+                | XlsxEditOp::SetColumnWidth { .. }
+                | XlsxEditOp::SetRowHeight { .. }
+                | XlsxEditOp::FreezePanes { .. }
+                | XlsxEditOp::DefineName { .. }
+                | XlsxEditOp::DeleteName { .. }
+                | XlsxEditOp::HideSheet { .. }
+                | XlsxEditOp::SetTabColor { .. }
+                | XlsxEditOp::SetAutoFilter { .. }
+                | XlsxEditOp::SetPrintArea { .. }
+                | XlsxEditOp::SetPrintTitles { .. }
+                | XlsxEditOp::SetPageOrientation { .. }
+                | XlsxEditOp::SetPaperSize { .. }
+                | XlsxEditOp::SetPrintScale { .. }
+                | XlsxEditOp::SetFitToPage { .. }
+                | XlsxEditOp::SetCenterOnPage { .. }
+                | XlsxEditOp::SetPageMargins { .. }
+                | XlsxEditOp::SetHeaderFooter { .. }
+                | XlsxEditOp::SetSheetZoom { .. }
+                | XlsxEditOp::SetShowGridlines { .. }
+                | XlsxEditOp::SetRightToLeft { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -147,7 +191,29 @@ pub(super) fn patch(
             | XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::DeleteSheet { .. }
-            | XlsxEditOp::SetRange { .. } => {
+            | XlsxEditOp::SetRange { .. }
+            | XlsxEditOp::MergeCells { .. }
+            | XlsxEditOp::UnmergeCells { .. }
+            | XlsxEditOp::SetColumnWidth { .. }
+            | XlsxEditOp::SetRowHeight { .. }
+            | XlsxEditOp::FreezePanes { .. }
+            | XlsxEditOp::DefineName { .. }
+            | XlsxEditOp::DeleteName { .. }
+            | XlsxEditOp::HideSheet { .. }
+            | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. }
+            | XlsxEditOp::SetPrintArea { .. }
+            | XlsxEditOp::SetPrintTitles { .. }
+            | XlsxEditOp::SetPageOrientation { .. }
+            | XlsxEditOp::SetPaperSize { .. }
+            | XlsxEditOp::SetPrintScale { .. }
+            | XlsxEditOp::SetFitToPage { .. }
+            | XlsxEditOp::SetCenterOnPage { .. }
+            | XlsxEditOp::SetPageMargins { .. }
+            | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetSheetZoom { .. }
+            | XlsxEditOp::SetShowGridlines { .. }
+            | XlsxEditOp::SetRightToLeft { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -270,7 +336,29 @@ fn render_new_cell(
         | XlsxEditOp::AddSheet { .. }
         | XlsxEditOp::RenameSheet { .. }
         | XlsxEditOp::DeleteSheet { .. }
-        | XlsxEditOp::SetRange { .. } => {
+        | XlsxEditOp::SetRange { .. }
+        | XlsxEditOp::MergeCells { .. }
+        | XlsxEditOp::UnmergeCells { .. }
+        | XlsxEditOp::SetColumnWidth { .. }
+        | XlsxEditOp::SetRowHeight { .. }
+        | XlsxEditOp::FreezePanes { .. }
+        | XlsxEditOp::DefineName { .. }
+        | XlsxEditOp::DeleteName { .. }
+        | XlsxEditOp::HideSheet { .. }
+        | XlsxEditOp::SetTabColor { .. }
+        | XlsxEditOp::SetAutoFilter { .. }
+        | XlsxEditOp::SetPrintArea { .. }
+        | XlsxEditOp::SetPrintTitles { .. }
+        | XlsxEditOp::SetPageOrientation { .. }
+        | XlsxEditOp::SetPaperSize { .. }
+        | XlsxEditOp::SetPrintScale { .. }
+        | XlsxEditOp::SetFitToPage { .. }
+        | XlsxEditOp::SetCenterOnPage { .. }
+        | XlsxEditOp::SetPageMargins { .. }
+        | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetSheetZoom { .. }
+        | XlsxEditOp::SetShowGridlines { .. }
+        | XlsxEditOp::SetRightToLeft { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -438,7 +526,29 @@ fn render_cell_parts(
         | XlsxEditOp::AddSheet { .. }
         | XlsxEditOp::RenameSheet { .. }
         | XlsxEditOp::DeleteSheet { .. }
-        | XlsxEditOp::SetRange { .. } => {
+        | XlsxEditOp::SetRange { .. }
+        | XlsxEditOp::MergeCells { .. }
+        | XlsxEditOp::UnmergeCells { .. }
+        | XlsxEditOp::SetColumnWidth { .. }
+        | XlsxEditOp::SetRowHeight { .. }
+        | XlsxEditOp::FreezePanes { .. }
+        | XlsxEditOp::DefineName { .. }
+        | XlsxEditOp::DeleteName { .. }
+        | XlsxEditOp::HideSheet { .. }
+        | XlsxEditOp::SetTabColor { .. }
+        | XlsxEditOp::SetAutoFilter { .. }
+        | XlsxEditOp::SetPrintArea { .. }
+        | XlsxEditOp::SetPrintTitles { .. }
+        | XlsxEditOp::SetPageOrientation { .. }
+        | XlsxEditOp::SetPaperSize { .. }
+        | XlsxEditOp::SetPrintScale { .. }
+        | XlsxEditOp::SetFitToPage { .. }
+        | XlsxEditOp::SetCenterOnPage { .. }
+        | XlsxEditOp::SetPageMargins { .. }
+        | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetSheetZoom { .. }
+        | XlsxEditOp::SetShowGridlines { .. }
+        | XlsxEditOp::SetRightToLeft { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

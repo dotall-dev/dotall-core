@@ -29,6 +29,14 @@ fn render_slide(slide: &SlideModel) -> String {
     for shape in &slide.shapes {
         content.push_str(&format!("- **{}**: {}\n", shape.name, shape.text));
     }
+    for table in &slide.tables {
+        for cell in &table.cells {
+            content.push_str(&format!(
+                "- **{}[{},{}]**: {}\n",
+                table.name, cell.row, cell.col, cell.text
+            ));
+        }
+    }
     content
 }
 

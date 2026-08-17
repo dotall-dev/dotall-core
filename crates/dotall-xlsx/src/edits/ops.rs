@@ -58,6 +58,115 @@ pub enum XlsxEditOp {
         #[serde(default)]
         dependency_policy: DeleteSheetPolicy,
     },
+    MergeCells {
+        sheet: String,
+        range: String,
+    },
+    UnmergeCells {
+        sheet: String,
+        range: String,
+    },
+    SetColumnWidth {
+        sheet: String,
+        column: String,
+        width: f64,
+    },
+    SetRowHeight {
+        sheet: String,
+        row: u32,
+        height: f64,
+    },
+    FreezePanes {
+        sheet: String,
+        /// Openpyxl-style freeze cell; `None` clears freeze panes.
+        cell: Option<String>,
+    },
+    SetSheetZoom {
+        sheet: String,
+        /// Worksheet view zoom percent 10–400 (`sheetView/@zoomScale`).
+        zoom: u32,
+    },
+    SetShowGridlines {
+        sheet: String,
+        /// `false` writes `sheetView/@showGridLines="0"`; `true` removes the attribute (default shown).
+        show: bool,
+    },
+    SetRightToLeft {
+        sheet: String,
+        /// `true` writes `sheetView/@rightToLeft="1"`; `false` removes the attribute (Excel default LTR).
+        rtl: bool,
+    },
+    DefineName {
+        name: String,
+        /// OOXML defined-name formula body (no leading `=`).
+        formula: String,
+    },
+    DeleteName {
+        name: String,
+    },
+    HideSheet {
+        sheet: String,
+        hidden: bool,
+    },
+    SetTabColor {
+        sheet: String,
+        /// AARRGGBB hex (with or without leading FF); `None` clears tab color.
+        color: Option<String>,
+    },
+    SetAutoFilter {
+        sheet: String,
+        /// A1 range (`A1:D10`); `None` clears the auto filter.
+        range: Option<String>,
+    },
+    SetPrintArea {
+        sheet: String,
+        /// A1 range (`A1:D10`); `None` clears the print area.
+        range: Option<String>,
+    },
+    SetPrintTitles {
+        sheet: String,
+        /// Row span `1:1`; `None` omits/clears rows when paired with cols.
+        rows: Option<String>,
+        /// Column span `A:B`; `None` omits/clears cols when paired with rows.
+        cols: Option<String>,
+    },
+    SetPageOrientation {
+        sheet: String,
+        /// `portrait` or `landscape`.
+        orientation: String,
+    },
+    SetPaperSize {
+        sheet: String,
+        /// OOXML `pageSetup/@paperSize` (positive integer).
+        paper_size: u32,
+    },
+    SetPrintScale {
+        sheet: String,
+        /// Print scale percent 10–400.
+        scale: u32,
+    },
+    SetFitToPage {
+        sheet: String,
+        /// Pages wide; `None` with height `None` clears fit-to-page.
+        width: Option<u32>,
+        /// Pages tall; `None` with width `None` clears fit-to-page.
+        height: Option<u32>,
+    },
+    SetCenterOnPage {
+        sheet: String,
+        center: crate::model::CenterOnPage,
+    },
+    SetPageMargins {
+        sheet: String,
+        margins: crate::model::PageMargins,
+    },
+    SetHeaderFooter {
+        sheet: String,
+        /// Odd-page header; `None` with footer `None` clears `<headerFooter>`.
+        header: Option<String>,
+        /// Odd-page footer; `None` with header `None` clears `<headerFooter>`.
+        footer: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

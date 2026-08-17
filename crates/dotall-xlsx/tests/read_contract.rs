@@ -118,6 +118,28 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "add_sheet",
             "rename_sheet",
             "delete_sheet",
+            "merge_cells",
+            "unmerge_cells",
+            "set_column_width",
+            "set_row_height",
+            "freeze_panes",
+            "define_name",
+            "delete_name",
+            "hide_sheet",
+            "set_tab_color",
+            "set_auto_filter",
+            "set_print_area",
+            "set_print_titles",
+            "set_page_orientation",
+            "set_paper_size",
+            "set_print_scale",
+            "set_fit_to_page",
+            "set_center_on_page",
+            "set_page_margins",
+            "set_header_footer",
+            "set_sheet_zoom",
+            "set_show_gridlines",
+            "set_right_to_left",
         ]
     );
     assert_eq!(
@@ -126,6 +148,189 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
     );
     assert_eq!(inspection.suggested_reads[0].selector.kind, "range");
     assert_eq!(inspection.suggested_reads[1].selector.kind, "ast_range");
+}
+
+#[test]
+fn format_handler_inspects_merges_and_named_range_formulas() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("merges_and_names.xlsx");
+
+    let mut workbook = Workbook::new();
+    let inputs = workbook.add_worksheet().set_name("Inputs").expect("sheet");
+    inputs
+        .merge_range(0, 0, 1, 1, "title", &Format::new())
+        .expect("merge A1:B2");
+    workbook
+        .define_name("Rate", "=Inputs!$B$2")
+        .expect("defined name");
+    workbook.save(&path).expect("workbook fixture");
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&path).expect("parse through handler");
+    let inspection = handler.inspect(&model).expect("inspect workbook");
+
+    let sheets = inspection.summary["sheets"]
+        .as_array()
+        .expect("sheets array");
+    let inputs_sheet = sheets
+        .iter()
+        .find(|sheet| sheet["name"] == "Inputs")
+        .expect("Inputs sheet summary");
+    assert_eq!(inputs_sheet["merges"][0], "A1:B2");
+
+    let named_ranges = inspection.summary["named_ranges"]
+        .as_array()
+        .expect("named_ranges array");
+    let rate = named_ranges
+        .iter()
+        .find(|range| range["name"] == "Rate")
+        .expect("Rate named range");
+    let formula = rate["formula"].as_str().expect("Rate formula");
+    assert!(
+        formula.contains("Inputs!$B$2"),
+        "expected named range formula to reference Inputs!$B$2, got {formula}"
+    );
+
+    let response = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "named_ranges".into(),
+                    value: String::new(),
+                }),
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect("read named_ranges");
+    let named: serde_json::Value =
+        serde_json::from_str(&response.content).expect("named_ranges JSON");
+    assert_eq!(named[0]["name"], "Rate");
+    assert!(
+        named[0]["formula"]
+            .as_str()
+            .expect("formula")
+            .contains("Inputs!$B$2")
+    );
+
+    let merges_response = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "merges".into(),
+                    value: "Inputs".into(),
+                }),
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect("read merges");
+    let merges: serde_json::Value =
+        serde_json::from_str(&merges_response.content).expect("merges JSON");
+    assert_eq!(merges["sheet"], "Inputs");
+    assert_eq!(merges["merges"][0], "A1:B2");
+}
+
+#[test]
+fn format_handler_surfaces_cell_number_format_and_style_id() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("styled.xlsx");
+
+    let percent = Format::new().set_num_format("0%");
+    let currency = Format::new().set_num_format("$#,##0.00");
+
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet().set_name("Inputs").expect("sheet");
+    sheet
+        .write_number_with_format(0, 0, 0.10, &percent)
+        .expect("percent cell");
+    sheet
+        .write_number_with_format(1, 0, 100.0, &currency)
+        .expect("currency cell");
+    workbook.save(&path).expect("workbook fixture");
+
+    let handler = XlsxFormat;
+    let model = handler.parse(&path).expect("parse through handler");
+    let workbook_model = parse_workbook(&path).expect("parse workbook model");
+
+    let percent_cell = workbook_model.sheets[0]
+        .cells
+        .iter()
+        .find(|cell| cell.address == "A1")
+        .expect("percent cell");
+    assert_eq!(percent_cell.number_format.as_deref(), Some("0%"));
+    let percent_style = percent_cell.style_id.as_deref().expect("percent style_id");
+    assert!(
+        percent_style.starts_with("st_"),
+        "expected style_id prefix st_, got {percent_style}"
+    );
+
+    let currency_cell = workbook_model.sheets[0]
+        .cells
+        .iter()
+        .find(|cell| cell.address == "A2")
+        .expect("currency cell");
+    assert_eq!(currency_cell.number_format.as_deref(), Some("$#,##0.00"));
+    assert!(
+        currency_cell
+            .style_id
+            .as_ref()
+            .is_some_and(|id| id.starts_with("st_"))
+    );
+
+    assert!(
+        !workbook_model.style_table.is_empty(),
+        "style_table should list style entries used by the workbook"
+    );
+    assert!(
+        workbook_model
+            .style_table
+            .iter()
+            .any(|entry| entry.style_id == percent_style)
+    );
+
+    let inspection = handler.inspect(&model).expect("inspect workbook");
+    let style_table = inspection.summary["style_table"]
+        .as_array()
+        .expect("inspect style_table");
+    assert!(
+        !style_table.is_empty(),
+        "inspect summary should surface style_table ids"
+    );
+
+    let response = handler
+        .read(
+            &model,
+            &ReadRequest {
+                selector: Some(ReadSelector {
+                    kind: "ast_range".into(),
+                    value: "Inputs!A1:A2".into(),
+                }),
+                max_tokens: 1_000,
+                continuation: None,
+            },
+        )
+        .expect("read ast_range");
+    let slice: serde_json::Value = serde_json::from_str(&response.content).expect("ast_range JSON");
+    let cells = slice["cells"].as_array().expect("cells");
+    let a1 = cells
+        .iter()
+        .find(|cell| cell["address"] == "A1")
+        .expect("A1 in projection");
+    assert_eq!(a1["number_format"], "0%");
+    assert!(
+        a1["style_id"]
+            .as_str()
+            .expect("style_id")
+            .starts_with("st_")
+    );
+    let a2 = cells
+        .iter()
+        .find(|cell| cell["address"] == "A2")
+        .expect("A2 in projection");
+    assert_eq!(a2["number_format"], "$#,##0.00");
 }
 
 #[test]
@@ -410,6 +615,21 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                     cols: 16_384,
                 },
                 merges: Vec::new(),
+                freeze_panes: None,
+                zoom: None,
+                show_gridlines: true,
+                right_to_left: false,
+                tab_color: None,
+                auto_filter: None,
+                print_area: None,
+                print_titles: None,
+                page_orientation: None,
+                paper_size: None,
+                print_scale: None,
+                fit_to_page: None,
+                center_on_page: None,
+                page_margins: None,
+                header_footer: None,
                 cells,
             }],
             named_ranges: Vec::new(),

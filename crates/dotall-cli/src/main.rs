@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use dotall_core::registry::{FormatRegistry, ReadRequest, ReadSelector, SemanticOperation};
 use dotall_core::{
     Actor, ActorKind, AppliedEdit, DotallError, DotallStore, EditRequest, Engine, HistoryRecord,
-    HistorySummary, ObjectStatus, StagedEdit,
+    HistorySummary, ObjectStatus, SearchRequest, StagedEdit, search_store, viz_snapshot,
 };
 use serde::Serialize;
 use uuid::Uuid;
@@ -116,6 +116,21 @@ enum Command {
         version: u64,
         #[arg(long)]
         tx: Option<Uuid>,
+    },
+    Search {
+        query: String,
+        #[arg(long)]
+        glob: Option<String>,
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    Viz {
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        #[arg(long)]
+        no_open: bool,
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
 }
 
@@ -288,8 +303,115 @@ fn run(cli: &Cli) -> dotall_core::Result<()> {
         Command::History { path } => run_history(cli, path)?,
         Command::Diff { path, version } => run_diff(cli, path, *version)?,
         Command::Revert { path, version, tx } => run_revert(cli, path, *version, *tx)?,
+        Command::Search { query, glob, path } => run_search(cli, query, glob, path)?,
+        Command::Viz {
+            port,
+            no_open,
+            path,
+        } => run_viz(path, *port, *no_open)?,
     }
     Ok(())
+}
+
+fn run_search(
+    cli: &Cli,
+    query: &str,
+    glob: &Option<String>,
+    path: &Path,
+) -> dotall_core::Result<()> {
+    let store = DotallStore::open(path)?;
+    let results = search_store(
+        &store,
+        &SearchRequest {
+            query: query.to_string(),
+            glob: glob.clone(),
+        },
+    )?;
+    if cli.json {
+        print_json(&results);
+    } else {
+        for hit in &results.hits {
+            println!(
+                "{}\t{}\t{}\t{}",
+                hit.path,
+                hit.selector_kind.as_deref().unwrap_or(""),
+                hit.selector.as_deref().unwrap_or(""),
+                hit.snippet
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_viz(path: &Path, port: u16, no_open: bool) -> dotall_core::Result<()> {
+    let store = DotallStore::open(path)?;
+    let addr = format!("127.0.0.1:{port}");
+    let server = tiny_http::Server::http(&addr).map_err(|error| DotallError::InvalidArgument {
+        reason: format!("failed to bind viz server on {addr}: {error}"),
+    })?;
+    let bound = server
+        .server_addr()
+        .to_ip()
+        .ok_or_else(|| DotallError::InvalidArgument {
+            reason: "viz server did not bind an IP address".into(),
+        })?;
+    let url = format!("http://127.0.0.1:{}/", bound.port());
+    println!("{url}");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    if !no_open {
+        let _ = webbrowser::open(&url);
+    }
+
+    for request in server.incoming_requests() {
+        let snapshot = match viz_snapshot(&store) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let body = error.to_string();
+                let response = tiny_http::Response::from_data(body.into_bytes())
+                    .with_status_code(500)
+                    .with_header(content_type("text/plain; charset=utf-8"));
+                let _ = request.respond(response);
+                continue;
+            }
+        };
+
+        let url_path = request.url().split('?').next().unwrap_or("/");
+        let response = match (request.method(), url_path) {
+            (&tiny_http::Method::Get, "/") | (&tiny_http::Method::Get, "/index.html") => {
+                let body = include_str!("viz/index.html");
+                tiny_http::Response::from_data(body.as_bytes())
+                    .with_header(content_type("text/html; charset=utf-8"))
+            }
+            (&tiny_http::Method::Get, "/api/tree") => {
+                let body = serde_json::json!({
+                    "tree": snapshot.tree,
+                    "history": snapshot.history,
+                });
+                json_response(&body)
+            }
+            (&tiny_http::Method::Get, "/api/metrics") => json_response(&snapshot.metrics),
+            _ => tiny_http::Response::from_data(b"Not Found".as_slice())
+                .with_status_code(404)
+                .with_header(content_type("text/plain; charset=utf-8")),
+        };
+        let _ = request.respond(response);
+    }
+    Ok(())
+}
+
+fn content_type(value: &str) -> tiny_http::Header {
+    tiny_http::Header::from_bytes(&b"Content-Type"[..], value.as_bytes()).unwrap_or_else(|_| {
+        tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/octet-stream"[..])
+            .expect("fallback content-type header")
+    })
+}
+
+fn json_response<T: Serialize>(value: &T) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
+    let body = serde_json::to_vec(value).unwrap_or_else(|error| {
+        format!(r#"{{"error":"failed to serialize: {error}"}}"#).into_bytes()
+    });
+    tiny_http::Response::from_data(body)
+        .with_header(content_type("application/json; charset=utf-8"))
 }
 
 #[cfg(any(feature = "xlsx", feature = "pptx", feature = "docx", feature = "pdf"))]
@@ -732,6 +854,7 @@ fn render_error(error: &DotallError, json: bool) {
         DotallError::Format { format_id, .. } if format_id == "dotall-cli" => {
             "Rebuild with --features xlsx, pptx, docx, and/or pdf."
         }
+        DotallError::InvalidArgument { .. } => "Fix the argument and retry.",
         _ => "Inspect the path and retry the operation.",
     };
     if json {

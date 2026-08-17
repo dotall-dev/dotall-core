@@ -47,6 +47,12 @@ dotall_capabilities or dotall_inspect
   → dotall_history / dotall_diff / dotall_revert
 ```
 
+## Pack / needle-finding
+
+Pack / needle-finding: call `dotall_search` (query like `10%` or `Rate`) instead
+of unzipping OOXML. Then `read`/`edit` using returned selectors. `dotall viz` is
+for humans inspecting `.all/`, not required in the edit loop.
+
 ### 1. Discover before every edit
 
 Call **`dotall_capabilities`** (lightweight) or **`dotall_inspect`** (full summary)
@@ -55,12 +61,19 @@ before `dotall_read` or `dotall_edit` on a file.
 From the response, capture:
 
 - `format_id` — must be the XLSX handler (typically `xlsx`).
-- `selectors` — valid `dotall_read` selector kinds (`full`, `range`, `sheet`, …).
+- `selectors` — valid `dotall_read` selector kinds (`full`, `range`, `sheet`,
+  `ast_range`, `named_ranges`, `merges`, …).
 - `edit_capabilities[]` — supported operation names, descriptions, **example**
   payloads, and safety notes.
 - `source_hash` — required for `dotall_edit` and `dotall_revert` as
   `expected_source_hash`.
 - `suggested_reads` — good starting selectors when exploring a workbook.
+- Inspect `summary.sheets[].merges` — merged cell refs (e.g. `A1:B2`).
+- Inspect `summary.named_ranges[]` — `{ name, formula }` (not names alone).
+- Inspect `summary.style_table[]` — `{ style_id }` for non-default cell styles
+  used in the workbook (ids only; no full style writer).
+- Inspect `summary.sheets[].freeze_panes` — openpyxl-style freeze cell (e.g. `B2`),
+  or absent/null when panes are not frozen.
 
 Never assume an operation exists because another `.xlsx` supported it — always
 re-check after external edits or a failed apply.
@@ -70,6 +83,11 @@ re-check after external edits or a failed apply.
 - **`dotall_read`**: token-budgeted projections. Use `selector_kind` + `selector`
   from capabilities (e.g. `range` + `Revenue!A1:D20`). Follow `continuation`
   cursors until the slice is complete.
+  - `named_ranges` — JSON list of `{ name, formula, element_id }` (selector value
+    unused).
+  - `merges` — JSON `{ sheet, merges }` for one sheet (selector value = sheet name).
+  - `ast_range` — JSON cells include optional `style_id` and `number_format`
+    (e.g. `0%`, `$#,##0.00`) when the source cell has a non-default style.
 - **`dotall_deps`**: precedents or dependents for a cell (`Sheet1!B2`). Use before
   formula changes, row/column inserts, or sheet renames/deletes.
 
@@ -91,6 +109,176 @@ Build each operation from **`edit_capabilities[].example`**:
   "payload": { "sheet": "Sheet1", "address": "A1", "value": 42 }
 }
 ```
+
+Merge / unmerge (surgical worksheet `mergeCells` patch; overlapping merges are rejected):
+
+```json
+{ "kind": "merge_cells", "payload": { "sheet": "Sheet1", "range": "A1:B2" } }
+```
+
+```json
+{ "kind": "unmerge_cells", "payload": { "sheet": "Sheet1", "range": "A1:B2" } }
+```
+
+Column width / row height (surgical worksheet `cols` / row attrs; other sheets byte-identical):
+
+```json
+{ "kind": "set_column_width", "payload": { "sheet": "Sheet1", "column": "A", "width": 18.5 } }
+```
+
+```json
+{ "kind": "set_row_height", "payload": { "sheet": "Sheet1", "row": 1, "height": 30.0 } }
+```
+
+Freeze panes (surgical worksheet `sheetViews`; `null` or `A1` clears):
+
+```json
+{ "kind": "freeze_panes", "payload": { "sheet": "Sheet1", "cell": "B2" } }
+```
+
+Define or update a workbook-scoped named range (surgical `xl/workbook.xml` only;
+leading `=` on `formula` is optional and stripped):
+
+```json
+{ "kind": "define_name", "payload": { "name": "Rate", "formula": "Inputs!$B$3" } }
+```
+
+Remove a workbook-scoped named range (surgical `xl/workbook.xml` only):
+
+```json
+{ "kind": "delete_name", "payload": { "name": "Rate" } }
+```
+
+Hide or unhide a worksheet (`state="hidden"` on the workbook sheet tag only):
+
+```json
+{ "kind": "hide_sheet", "payload": { "sheet": "Revenue", "hidden": true } }
+```
+
+Rejects hiding the last visible sheet. Worksheets stay byte-identical.
+
+Set or clear a worksheet tab color (`sheetPr`/`tabColor` rgb AARRGGBB; `null` clears):
+
+```json
+{ "kind": "set_tab_color", "payload": { "sheet": "Inputs", "color": "FF4472C4" } }
+```
+
+Inspect surfaces `tab_color` per sheet when present. Other worksheets stay byte-identical.
+
+Set or clear a worksheet AutoFilter range (`null` clears):
+
+```json
+{ "kind": "set_auto_filter", "payload": { "sheet": "Inputs", "range": "A1:B10" } }
+```
+
+Inspect surfaces `auto_filter` per sheet when present. Other worksheets stay byte-identical.
+
+Set or clear a worksheet print area (`_xlnm.Print_Area`; `null` clears):
+
+```json
+{ "kind": "set_print_area", "payload": { "sheet": "Revenue", "range": "A1:B5" } }
+```
+
+Inspect surfaces `print_area` per sheet when present. Worksheets stay byte-identical.
+
+Set or clear print titles / repeat rows+cols (`_xlnm.Print_Titles`; both `null` clears):
+
+```json
+{ "kind": "set_print_titles", "payload": { "sheet": "Revenue", "rows": "1:1", "cols": "A:A" } }
+```
+
+Inspect surfaces `print_titles.rows` / `print_titles.cols` per sheet when present. Worksheets stay byte-identical.
+
+Set worksheet print orientation (`pageSetup`; `portrait` or `landscape`):
+
+```json
+{ "kind": "set_page_orientation", "payload": { "sheet": "Revenue", "orientation": "landscape" } }
+```
+
+Inspect surfaces `page_orientation` per sheet when present. Other worksheets stay byte-identical.
+
+Set worksheet print margins (`pageMargins` in inches; `header`/`footer` optional):
+
+```json
+{
+  "kind": "set_page_margins",
+  "payload": {
+    "sheet": "Revenue",
+    "left": 0.5,
+    "right": 0.5,
+    "top": 0.75,
+    "bottom": 0.75,
+    "header": 0.3,
+    "footer": 0.3
+  }
+}
+```
+
+Inspect surfaces `page_margins` per sheet when present. Other worksheets stay byte-identical.
+
+Set worksheet print scale (`pageSetup` `scale` percent 10–400):
+
+```json
+{ "kind": "set_print_scale", "payload": { "sheet": "Revenue", "scale": 75 } }
+```
+
+Inspect surfaces `print_scale` per sheet when present. Other worksheets stay byte-identical.
+
+Set or clear worksheet fit-to-page (`pageSetup` `fitToWidth`/`fitToHeight` + `pageSetUpPr`; both null clears):
+
+```json
+{ "kind": "set_fit_to_page", "payload": { "sheet": "Revenue", "width": 1, "height": 1 } }
+```
+
+Inspect surfaces `fit_to_page` per sheet when present. Other worksheets stay byte-identical.
+
+Set or clear worksheet print centering (`printOptions` `horizontalCentered`/`verticalCentered`; both false clears):
+
+```json
+{ "kind": "set_center_on_page", "payload": { "sheet": "Revenue", "horizontal": true, "vertical": false } }
+```
+
+Inspect surfaces `center_on_page` per sheet when either axis is centered. Other worksheets stay byte-identical.
+
+Set worksheet print paper size (`pageSetup` `paperSize` positive integer, e.g. `1` Letter / `9` A4):
+
+```json
+{ "kind": "set_paper_size", "payload": { "sheet": "Revenue", "paper_size": 9 } }
+```
+
+Inspect surfaces `paper_size` per sheet when present. Other worksheets stay byte-identical.
+
+Set or clear worksheet print header/footer (`headerFooter`/`oddHeader`/`oddFooter`; both `null` clears). Excel codes (`&C`, `&P`) pass through verbatim:
+
+```json
+{ "kind": "set_header_footer", "payload": { "sheet": "Revenue", "header": "&CBoard pack", "footer": "&P" } }
+```
+
+Inspect surfaces `header_footer` per sheet when present. Other worksheets stay byte-identical.
+
+Set worksheet view zoom (`sheetView` `zoomScale` percent 10–400):
+
+```json
+{ "kind": "set_sheet_zoom", "payload": { "sheet": "Revenue", "zoom": 75 } }
+```
+
+Inspect surfaces `zoom` per sheet when present. Freeze panes and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
+
+Show or hide worksheet view gridlines (`sheetView` `showGridLines`; `false` writes `showGridLines="0"`, `true` restores the Excel default by removing the attribute):
+
+```json
+{ "kind": "set_show_gridlines", "payload": { "sheet": "Revenue", "show": false } }
+```
+
+Inspect surfaces `show_gridlines` per sheet (`false` when hidden, `true` when shown). Freeze panes, zoom, and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
+
+Set or clear worksheet view right-to-left (`sheetView` `rightToLeft`; `true` writes `rightToLeft="1"`, `false` restores LTR by removing the attribute):
+
+```json
+{ "kind": "set_right_to_left", "payload": { "sheet": "Revenue", "rtl": true } }
+```
+
+Inspect surfaces `right_to_left` per sheet when true (omit or false when LTR). Freeze panes, zoom, gridlines, and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
 
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 

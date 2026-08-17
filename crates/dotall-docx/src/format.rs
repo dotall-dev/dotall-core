@@ -13,7 +13,12 @@ use crate::edits;
 use crate::model::{DocumentModel, SCHEMA_ID, SCHEMA_VERSION};
 use crate::{FORMAT_ID, parser, projection, selector};
 
-const AVAILABLE_READS: [&str; 2] = ["read.full", "read.paragraphs"];
+const AVAILABLE_READS: [&str; 4] = [
+    "read.full",
+    "read.paragraphs",
+    "read.headers",
+    "read.footers",
+];
 const MANIFEST_SCHEMA_ID: &str = "docx.snapshot-manifest";
 
 pub struct DocxFormat;
@@ -75,11 +80,38 @@ impl FormatHandler for DocxFormat {
                 })
             })
             .collect::<Vec<_>>();
+        let headers = document
+            .header_paragraphs
+            .iter()
+            .map(|paragraph| {
+                json!({
+                    "part": paragraph.part,
+                    "index": paragraph.index,
+                    "text": paragraph.text,
+                })
+            })
+            .collect::<Vec<_>>();
+        let footers = document
+            .footer_paragraphs
+            .iter()
+            .map(|paragraph| {
+                json!({
+                    "part": paragraph.part,
+                    "index": paragraph.index,
+                    "text": paragraph.text,
+                })
+            })
+            .collect::<Vec<_>>();
         Ok(Inspection {
             format_id: FORMAT_ID.into(),
             summary: json!({
                 "paragraph_count": document.paragraphs.len(),
+                "header_paragraph_count": document.header_paragraphs.len(),
+                "footer_paragraph_count": document.footer_paragraphs.len(),
                 "headings": headings,
+                "headers": headers,
+                "footers": footers,
+                "table_count": document.table_count,
                 "skipped_tables": document.skipped_tables,
             }),
             capabilities: capabilities(),
@@ -121,6 +153,34 @@ impl FormatHandler for DocxFormat {
                 let paragraphs =
                     selector::resolve_range(&document, value).map_err(selector_error)?;
                 Ok(projection::render_paragraphs_read(
+                    &paragraphs,
+                    request.max_tokens,
+                    offset,
+                ))
+            }
+            "headers" => {
+                let value = request
+                    .selector
+                    .as_ref()
+                    .map(|selector| selector.value.as_str())
+                    .unwrap_or("");
+                let paragraphs =
+                    selector::resolve_header_range(&document, value).map_err(selector_error)?;
+                Ok(projection::render_headers_read(
+                    &paragraphs,
+                    request.max_tokens,
+                    offset,
+                ))
+            }
+            "footers" => {
+                let value = request
+                    .selector
+                    .as_ref()
+                    .map(|selector| selector.value.as_str())
+                    .unwrap_or("");
+                let paragraphs =
+                    selector::resolve_footer_range(&document, value).map_err(selector_error)?;
+                Ok(projection::render_footers_read(
                     &paragraphs,
                     request.max_tokens,
                     offset,
@@ -211,20 +271,321 @@ fn capabilities() -> Vec<Capability> {
         Capability::ReadSelector {
             kind: "paragraphs".into(),
         },
+        Capability::ReadSelector {
+            kind: "headers".into(),
+        },
+        Capability::ReadSelector {
+            kind: "footers".into(),
+        },
     ]
 }
 
 fn edit_capabilities() -> Vec<EditCapability> {
-    vec![EditCapability {
-        operation: "set_paragraph_text".into(),
-        schema_version: SCHEMA_VERSION,
-        description: "Replace the text of one body paragraph (tables are skipped in v0).".into(),
-        example: json!({
-            "kind": "set_paragraph_text",
-            "payload": { "index": 1, "text": "Gamma" }
-        }),
-        safety:
-            "Rejects tracked changes, content controls, and fields. Patches only word/document.xml."
+    vec![
+        EditCapability {
+            operation: "set_paragraph_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Replace paragraph text (body or table cell). Plain `text` keeps first-run rPr; optional `runs` clones per-run rPr."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_text",
+                "payload": {
+                    "index": 1,
+                    "runs": [
+                        { "text": "Pilot complete; " },
+                        { "text": "expanding to PPTX and PDF." }
+                    ]
+                }
+            }),
+            safety:
+                "Rejects tracked changes, content controls, and fields. Patches only word/document.xml. Does not steal paragraph-mark rPr from w:pPr."
+                    .into(),
+        },
+        EditCapability {
+            operation: "insert_paragraph".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Insert a new paragraph immediately after the given document-order index (body or table cell)."
+                    .into(),
+            example: json!({
+                "kind": "insert_paragraph",
+                "payload": { "after": 2, "text": "Action: confirm owners before Friday." }
+            }),
+            safety:
+                "Patches only word/document.xml. New paragraph is a single plain run; subsequent indices shift."
+                    .into(),
+        },
+        EditCapability {
+            operation: "delete_paragraph".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Delete a paragraph by document-order index or element_id (body or table cell)."
+                    .into(),
+            example: json!({
+                "kind": "delete_paragraph",
+                "payload": { "index": 3 }
+            }),
+            safety:
+                "Patches only word/document.xml. Removes the entire w:p; subsequent indices shift down."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_style".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set paragraph style_id (w:pStyle) without rewriting styles.xml."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_style",
+                "payload": { "index": 2, "style_id": "Heading1" }
+            }),
+            safety:
+                "Upserts w:pStyle inside w:pPr on the target body/table paragraph. Patches only word/document.xml. Style must already exist in styles.xml for Word to resolve it."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_alignment".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set paragraph alignment (w:jc: left, center, right, both).".into(),
+            example: json!({
+                "kind": "set_paragraph_alignment",
+                "payload": { "index": 1, "alignment": "center" }
+            }),
+            safety:
+                "Upserts w:jc inside w:pPr on the target body/table paragraph. Patches only word/document.xml."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_bold".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear bold (w:b) on all runs in a body/table paragraph.".into(),
+            example: json!({
+                "kind": "set_paragraph_bold",
+                "payload": { "index": 1, "bold": true }
+            }),
+            safety:
+                "Upserts w:b inside each run's w:rPr (or paragraph-mark rPr when empty). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_italic".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear italic (w:i) on all runs in a body/table paragraph.".into(),
+            example: json!({
+                "kind": "set_paragraph_italic",
+                "payload": { "index": 1, "italic": true }
+            }),
+            safety:
+                "Upserts w:i inside each run's w:rPr (or paragraph-mark rPr when empty). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_underline".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear underline (w:u) on all runs in a body/table paragraph."
                 .into(),
-    }]
+            example: json!({
+                "kind": "set_paragraph_underline",
+                "payload": { "index": 1, "underline": true }
+            }),
+            safety:
+                "Upserts w:u w:val=single/none inside each run's w:rPr (or paragraph-mark rPr when empty). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_font_size".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear font size (w:sz / w:szCs) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_font_size",
+                "payload": { "index": 1, "size_pt": 14.0 }
+            }),
+            safety:
+                "Upserts w:sz and w:szCs half-points from size_pt (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_font_name".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear font name (w:rFonts) on all runs in a body/table paragraph."
+                .into(),
+            example: json!({
+                "kind": "set_paragraph_font_name",
+                "payload": { "index": 1, "font": "Arial" }
+            }),
+            safety:
+                "Upserts w:rFonts ascii/hAnsi/cs from font (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_font_color".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear font color (w:color) on all runs in a body/table paragraph."
+                .into(),
+            example: json!({
+                "kind": "set_paragraph_font_color",
+                "payload": { "index": 1, "color": "#C00000" }
+            }),
+            safety:
+                "Upserts w:color w:val from #RRGGBB/RRGGBB (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_highlight".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear highlight (w:highlight) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_highlight",
+                "payload": { "index": 1, "color": "yellow" }
+            }),
+            safety:
+                "Upserts w:highlight w:val from Word highlight names (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_strikethrough".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear strikethrough (w:strike) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_strikethrough",
+                "payload": { "index": 1, "strikethrough": true }
+            }),
+            safety:
+                "Upserts w:strike on each run (w:val=\"0\" clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_vert_align".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear superscript/subscript (w:vertAlign) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_vert_align",
+                "payload": { "index": 1, "vert_align": "superscript" }
+            }),
+            safety:
+                "Upserts w:vertAlign w:val=superscript|subscript (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_caps".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear small-caps/all-caps (w:smallCaps / w:caps) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_caps",
+                "payload": { "index": 1, "caps": "small" }
+            }),
+            safety:
+                "Upserts w:smallCaps or w:caps (null clears both). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_hyperlink".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear an external hyperlink wrapping a body/table paragraph's runs (w:hyperlink r:id plus document.xml.rels)."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_hyperlink",
+                "payload": { "index": 0, "url": "https://example.com" }
+            }),
+            safety:
+                "Wraps existing runs in w:hyperlink r:id (or updates the wrapper) and writes an External hyperlink Relationship (http/https/mailto; empty rejected, null clears both). Patches only word/document.xml and word/_rels/document.xml.rels. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_paragraph_bullet".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear a bullet on a body/table paragraph (w:numPr plus a numbering.xml bullet definition)."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_bullet",
+                "payload": { "index": 0, "bullet": true }
+            }),
+            safety:
+                "Sets w:pPr/w:numPr (ilvl 0 + numId) pointing at a bullet numbering definition; false removes w:numPr only. Creates word/numbering.xml plus document.xml.rels and [Content_Types].xml entries when missing. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_cell_shading".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear table-cell fill (w:tcPr/w:shd w:fill) on the cell containing a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_cell_shading",
+                "payload": { "index": 1, "color": "#FFFF00" }
+            }),
+            safety:
+                "Upserts w:shd w:fill from #RRGGBB/RRGGBB on the enclosing w:tc (null clears). Inserts w:tcPr when missing. Rejects paragraphs that are not inside a table cell. Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "replace_paragraph_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Find/replace a substring inside one body/table paragraph (first-run rewrite like set_paragraph_text)."
+                    .into(),
+            example: json!({
+                "kind": "replace_paragraph_text",
+                "payload": { "index": 1, "find": "draft", "replace": "final" }
+            }),
+            safety:
+                "Rejects empty find and no-match. Replaces all occurrences in the paragraph text model, then surgically patches word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
+            operation: "replace_across_paragraphs".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Find/replace a substring across all editable body/table paragraphs (first-run rewrite like replace_paragraph_text)."
+                    .into(),
+            example: json!({
+                "kind": "replace_across_paragraphs",
+                "payload": { "find": "Monday", "replace": "Tuesday" }
+            }),
+            safety:
+                "Rejects empty find and no-match. Skips non-editable paragraphs (tracked changes / SDT / fields) without failing when others match. Patches only word/document.xml."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_header_paragraph_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Replace the text of one header paragraph (`part` + within-part `index`)."
+                    .into(),
+            example: json!({
+                "kind": "set_header_paragraph_text",
+                "payload": { "part": "header1", "index": 0, "text": "CONFIDENTIAL" }
+            }),
+            safety:
+                "Rejects tracked changes, content controls, and fields. Patches only the target word/header*.xml part."
+                    .into(),
+        },
+        EditCapability {
+            operation: "set_footer_paragraph_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Replace the text of one footer paragraph (`part` + within-part `index`)."
+                    .into(),
+            example: json!({
+                "kind": "set_footer_paragraph_text",
+                "payload": { "part": "footer1", "index": 0, "text": "Page 1" }
+            }),
+            safety:
+                "Rejects tracked changes, content controls, and fields. Patches only the target word/footer*.xml part."
+                    .into(),
+        },
+    ]
 }

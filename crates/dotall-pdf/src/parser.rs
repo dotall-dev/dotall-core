@@ -5,7 +5,7 @@ use lopdf::{Document, Object};
 
 use crate::FORMAT_ID;
 use crate::ids;
-use crate::model::{PdfDocumentModel, PdfFieldModel, PdfPageModel, SCHEMA_VERSION};
+use crate::model::{PdfDocumentModel, PdfFieldModel, PdfMetadata, PdfPageModel, SCHEMA_VERSION};
 
 pub fn parse_pdf(source: &Path) -> Result<PdfDocumentModel> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
@@ -48,6 +48,7 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
     let mut fields = Vec::new();
     collect_fields(&document, &mut fields)?;
     let outline = collect_outline(&document);
+    let metadata = collect_metadata(&document);
 
     Ok(PdfDocumentModel {
         document_id: ids::document_id(&source_hash, SCHEMA_VERSION),
@@ -56,40 +57,12 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
         fields,
         outline,
         encrypted: false,
+        metadata,
     })
 }
 
 fn page_text(document: &Document, page_id: lopdf::ObjectId, number: u32) -> String {
-    let literals = extract_literals(&document.get_page_content(page_id));
-    if !literals.is_empty() {
-        return literals;
-    }
-    document
-        .extract_text(&[number])
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
-}
-
-fn extract_literals(content: &[u8]) -> String {
-    let mut texts = Vec::new();
-    let mut cursor = 0;
-    while cursor < content.len() {
-        if content[cursor] == b'(' {
-            cursor += 1;
-            let mut bytes = Vec::new();
-            while cursor < content.len() && content[cursor] != b')' {
-                if content[cursor] == b'\\' && cursor + 1 < content.len() {
-                    cursor += 1;
-                }
-                bytes.push(content[cursor]);
-                cursor += 1;
-            }
-            texts.push(String::from_utf8_lossy(&bytes).into_owned());
-        }
-        cursor += 1;
-    }
-    texts.join(" ").trim().to_owned()
+    crate::text::page_text(document, page_id, number)
 }
 
 fn encrypted_stub(source_hash: &str) -> PdfDocumentModel {
@@ -100,6 +73,23 @@ fn encrypted_stub(source_hash: &str) -> PdfDocumentModel {
         fields: Vec::new(),
         outline: Vec::new(),
         encrypted: true,
+        metadata: PdfMetadata::default(),
+    }
+}
+
+fn collect_metadata(document: &Document) -> PdfMetadata {
+    let Ok(info_obj) = document.trailer.get(b"Info") else {
+        return PdfMetadata::default();
+    };
+    let Some(dict) = resolve_dict(document, info_obj).ok().flatten() else {
+        return PdfMetadata::default();
+    };
+    PdfMetadata {
+        title: dict.get(b"Title").ok().and_then(object_string),
+        author: dict.get(b"Author").ok().and_then(object_string),
+        subject: dict.get(b"Subject").ok().and_then(object_string),
+        creator: dict.get(b"Creator").ok().and_then(object_string),
+        producer: dict.get(b"Producer").ok().and_then(object_string),
     }
 }
 
@@ -172,14 +162,47 @@ fn walk_field(
         .and_then(|object| object.as_i64().ok())
         .unwrap_or(0);
     let read_only = flags & 1 == 1;
+    let required = flags & 2 == 2;
+    let multiline = flags & 4096 == 4096;
+    let password = flags & 8192 == 8192;
+    let comb = flags & 16_777_216 == 16_777_216;
+    let do_not_scroll = flags & 8_388_608 == 8_388_608;
+    let do_not_spell_check = flags & 4_194_304 == 4_194_304;
+    let rich_text = flags & 33_554_432 == 33_554_432;
+    let no_export = flags & 8 == 8;
+    let multi_select = flags & 1_048_576 == 1_048_576;
+    let combo = flags & 131_072 == 131_072;
+    let edit = flags & 262_144 == 262_144;
+    let max_length = dict
+        .get(b"MaxLen")
+        .ok()
+        .and_then(|object| object.as_i64().ok())
+        .filter(|value| *value > 0)
+        .and_then(|value| u32::try_from(value).ok());
+    let export_values = collect_export_values(document, dict);
+    let options = collect_choice_options(document, dict);
     if let Some(field_type) = field_type.clone() {
         fields.push(PdfFieldModel {
             element_id: ids::field_id(&name, SCHEMA_VERSION),
             name: name.clone(),
             field_type,
             value,
+            export_values,
+            options,
             page: None,
             read_only,
+            required,
+            multiline,
+            password,
+            comb,
+            do_not_scroll,
+            do_not_spell_check,
+            rich_text,
+            no_export,
+            multi_select,
+            combo,
+            edit,
+            max_length,
         });
     }
     if let Ok(kids) = dict.get(b"Kids") {
@@ -187,6 +210,82 @@ fn walk_field(
     }
     let _ = field_type;
     Ok(())
+}
+
+fn collect_export_values(document: &Document, dict: &lopdf::Dictionary) -> Vec<String> {
+    let mut values = Vec::new();
+    append_ap_n_keys(document, dict, &mut values);
+    if let Ok(kids) = dict.get(b"Kids") {
+        let Ok(Object::Array(items)) = dereference(document, kids) else {
+            return finalize_export_values(values);
+        };
+        for item in items {
+            if let Ok(Some(kid)) = resolve_dict(document, item) {
+                append_ap_n_keys(document, kid, &mut values);
+            }
+        }
+    }
+    finalize_export_values(values)
+}
+
+fn append_ap_n_keys(document: &Document, dict: &lopdf::Dictionary, values: &mut Vec<String>) {
+    let Ok(ap) = dict.get(b"AP") else {
+        return;
+    };
+    let Some(ap_dict) = resolve_dict(document, ap).ok().flatten() else {
+        return;
+    };
+    let Ok(normal) = ap_dict.get(b"N") else {
+        return;
+    };
+    let Some(normal_dict) = resolve_dict(document, normal).ok().flatten() else {
+        return;
+    };
+    for (key, _) in normal_dict.iter() {
+        let name = String::from_utf8_lossy(key).into_owned();
+        if !values.iter().any(|existing| existing == &name) {
+            values.push(name);
+        }
+    }
+}
+
+fn finalize_export_values(mut values: Vec<String>) -> Vec<String> {
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn collect_choice_options(document: &Document, dict: &lopdf::Dictionary) -> Vec<String> {
+    let Ok(opt) = dict.get(b"Opt") else {
+        return Vec::new();
+    };
+    let Ok(Object::Array(items)) = dereference(document, opt) else {
+        return Vec::new();
+    };
+    let mut options = Vec::new();
+    for item in items {
+        let Ok(resolved) = dereference(document, item) else {
+            continue;
+        };
+        match resolved {
+            Object::String(_, _) | Object::Name(_) => {
+                if let Some(value) = object_string(resolved) {
+                    options.push(value);
+                }
+            }
+            Object::Array(pair) => {
+                // `/Opt` entries may be `[export display]`; agents set the export value.
+                if let Some(first) = pair.first()
+                    && let Ok(export_obj) = dereference(document, first)
+                    && let Some(export) = object_string(export_obj)
+                {
+                    options.push(export);
+                }
+            }
+            _ => {}
+        }
+    }
+    options
 }
 
 fn collect_outline(document: &Document) -> Vec<String> {

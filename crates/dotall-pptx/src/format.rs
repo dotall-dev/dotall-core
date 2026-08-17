@@ -66,6 +66,7 @@ impl FormatHandler for PptxFormat {
                     "name": slide.name,
                     "index": slide.index,
                     "shape_count": slide.shapes.len(),
+                    "table_count": slide.tables.len(),
                     "preview": slide.shapes.first().map(|shape| shape.text.as_str()).unwrap_or(""),
                 })
             })
@@ -219,14 +220,292 @@ fn capabilities() -> Vec<Capability> {
 }
 
 fn edit_capabilities() -> Vec<EditCapability> {
-    vec![EditCapability {
-        operation: "set_shape_text".into(),
-        schema_version: SCHEMA_VERSION,
-        description: "Replace text in a simple text-frame shape.".into(),
-        example: json!({
-            "kind": "set_shape_text",
-            "payload": { "slide": "Slide 1", "shape": "Title", "text": "World" }
-        }),
-        safety: "Text frames only. Patches the target slide part; rejects SmartArt, charts, and grouped drawingML.".into(),
-    }]
+    vec![
+        EditCapability {
+            operation: "set_shape_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Replace text in a simple text-frame shape.".into(),
+            example: json!({
+                "kind": "set_shape_text",
+                "payload": { "slide": "Slide 1", "shape": "Title", "text": "World" }
+            }),
+            safety: "Text frames only. Patches the target slide part; rejects SmartArt, charts, and grouped drawingML.".into(),
+        },
+        EditCapability {
+            operation: "set_table_cell_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Replace text in one cell of a slide table (a:tbl inside p:graphicFrame).".into(),
+            example: json!({
+                "kind": "set_table_cell_text",
+                "payload": {
+                    "slide": "Slide 1",
+                    "table": "Table 1",
+                    "row": 0,
+                    "col": 1,
+                    "text": "NEW"
+                }
+            }),
+            safety: "Patches only the slide part that owns the table. Rejects out-of-range row/col. Media and other slides stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "set_table_cell_bold".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear bold on all text runs inside one slide table cell (a:rPr b).".into(),
+            example: json!({
+                "kind": "set_table_cell_bold",
+                "payload": {
+                    "slide": "Slide 1",
+                    "table": "Table 1",
+                    "row": 0,
+                    "col": 1,
+                    "bold": true
+                }
+            }),
+            safety: "Upserts a:rPr b on each a:r inside the target a:tc. Patches only the slide part that owns the table. Rejects out-of-range row/col and unknown table/slide. Media and other slides stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "set_notes_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Replace speaker notes text for a slide that already has a notes slide part.".into(),
+            example: json!({
+                "kind": "set_notes_text",
+                "payload": { "slide": "Slide 1", "text": "Updated speaker notes" }
+            }),
+            safety: "Patches only the notes slide part. Rejects slides without notes. Slide XML and media stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "add_slide".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert a blank slide after an existing slide (or at the end when `after` is omitted).".into(),
+            example: json!({
+                "kind": "add_slide",
+                "payload": { "after": "Slide 1" }
+            }),
+            safety: "Updates presentation.xml, presentation.xml.rels, and [Content_Types].xml; duplicates a blank slide template. Prior slide parts stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "delete_slide".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Remove a slide by identity. Rejects deleting the sole remaining slide.".into(),
+            example: json!({
+                "kind": "delete_slide",
+                "payload": { "slide": "Slide 2" }
+            }),
+            safety: "Updates presentation.xml, presentation.xml.rels, and [Content_Types].xml; removes the slide part (and notes/rels when present). Other slides and media stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "move_slide".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Reorder a slide to a 0-based `to_index` by rewriting only presentation.xml sldIdLst order.".into(),
+            example: json!({
+                "kind": "move_slide",
+                "payload": { "slide": "Slide 2", "to_index": 0 }
+            }),
+            safety: "Patches only ppt/presentation.xml (p:sldId order). Slide parts, notes, rels, and Content_Types stay byte-identical. Rejects no-op and single-slide decks.".into(),
+        },
+        EditCapability {
+            operation: "add_textbox".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert a simple text-box shape (p:sp with txBox) onto a slide.".into(),
+            example: json!({
+                "kind": "add_textbox",
+                "payload": { "slide": "Slide 1", "name": "Callout", "text": "Agent note" }
+            }),
+            safety: "Patches only the target slide part. Optional `name` defaults to TextBox N; rejects duplicate names. Other slides and media stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "delete_shape".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Remove a text shape (p:sp) from a slide by name or element_id.".into(),
+            example: json!({
+                "kind": "delete_shape",
+                "payload": { "slide": "Slide 1", "shape": "Callout" }
+            }),
+            safety: "Patches only the target slide part by removing the matching p:sp. Tables (graphicFrame) are not deleted via this op. Other slides and media stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "rename_shape".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Rename a text shape (p:sp cNvPr name) on a slide.".into(),
+            example: json!({
+                "kind": "rename_shape",
+                "payload": { "slide": "Slide 1", "shape": "Title", "name": "Headline" }
+            }),
+            safety: "Patches only the target slide part. Rejects duplicate names on the same slide (including table names). Other slides and media stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_bold".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear bold on all text runs inside a slide shape (a:rPr b).".into(),
+            example: json!({
+                "kind": "set_shape_bold",
+                "payload": { "slide": "Slide 1", "shape": "Title", "bold": true }
+            }),
+            safety: "Upserts a:rPr b on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_italic".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear italic on all text runs inside a slide shape (a:rPr i)."
+                .into(),
+            example: json!({
+                "kind": "set_shape_italic",
+                "payload": { "slide": "Slide 1", "shape": "Title", "italic": true }
+            }),
+            safety: "Upserts a:rPr i on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_underline".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear underline on all text runs inside a slide shape (a:rPr u)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_underline",
+                "payload": { "slide": "Slide 1", "shape": "Title", "underline": true }
+            }),
+            safety: "Upserts a:rPr u=\"sng\"/\"none\" on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_font_size".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear font size on all text runs inside a slide shape (a:rPr sz)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_font_size",
+                "payload": { "slide": "Slide 1", "shape": "Title", "size_pt": 28.0 }
+            }),
+            safety: "Upserts a:rPr sz in hundredths of a point from size_pt (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_font_name".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear font name on all text runs inside a slide shape (a:latin typeface)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_font_name",
+                "payload": { "slide": "Slide 1", "shape": "Title", "font": "Arial" }
+            }),
+            safety: "Upserts a:latin/a:ea/a:cs typeface inside each a:rPr (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_font_color".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear solid sRGB text color on all runs inside a slide shape (a:solidFill/a:srgbClr)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_font_color",
+                "payload": { "slide": "Slide 1", "shape": "Title", "color": "#FF0000" }
+            }),
+            safety: "Upserts a:solidFill/a:srgbClr val from #RRGGBB/RRGGBB (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_highlight".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear text highlight on all runs inside a slide shape (a:highlight/a:srgbClr)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_highlight",
+                "payload": { "slide": "Slide 1", "shape": "Title", "color": "#FFFF00" }
+            }),
+            safety: "Upserts a:highlight/a:srgbClr val from #RRGGBB/RRGGBB (null clears). Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_strikethrough".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear strikethrough on all text runs inside a slide shape (a:rPr strike)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_strikethrough",
+                "payload": { "slide": "Slide 1", "shape": "Title", "strikethrough": true }
+            }),
+            safety: "Upserts a:rPr strike=\"sngStrike\"/\"noStrike\" on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_vert_align".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear superscript/subscript on all text runs inside a slide shape (a:rPr baseline)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_vert_align",
+                "payload": { "slide": "Slide 1", "shape": "Title", "vert_align": "superscript" }
+            }),
+            safety: "Upserts a:rPr baseline=\"30000\" (superscript) / \"-25000\" (subscript); null clears. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_caps".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear small-caps/all-caps on all text runs inside a slide shape (a:rPr cap)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_caps",
+                "payload": { "slide": "Slide 1", "shape": "Title", "caps": "small" }
+            }),
+            safety: "Upserts a:rPr cap=\"small\"|\"all\"; null clears. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_hyperlink".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear an external hyperlink on a slide shape (a:hlinkClick on p:cNvPr plus a slide .rels Relationship)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_hyperlink",
+                "payload": { "slide": "Slide 1", "shape": "Title", "url": "https://example.com" }
+            }),
+            safety: "Writes a:hlinkClick r:id on the shape p:cNvPr and an External hyperlink Relationship (http/https/mailto; null clears both). Patches only the target slide part and that slide's .rels. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "replace_shape_text".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Find/replace a substring inside one slide shape's text (first-run rewrite like set_shape_text)."
+                    .into(),
+            example: json!({
+                "kind": "replace_shape_text",
+                "payload": {
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "find": "Q3",
+                    "replace": "Q4"
+                }
+            }),
+            safety: "Rejects empty find and no-match. Replaces all occurrences in the shape text model, then surgically patches the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "replace_across_shapes".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Find/replace a substring across all text-frame shapes on one slide (first-run rewrite like replace_shape_text)."
+                    .into(),
+            example: json!({
+                "kind": "replace_across_shapes",
+                "payload": {
+                    "slide": "Slide 1",
+                    "find": "Q3",
+                    "replace": "Q4"
+                }
+            }),
+            safety: "Rejects empty find and no-match on the slide. Applies replace_shape_text's first-run rewrite to every matching text-frame shape in one surgical patch of the target slide part. Skips graphicFrame/tables/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "set_shape_bullet".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear a bullet on all paragraphs inside a slide shape text frame (a:buChar / a:buNone)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_bullet",
+                "payload": { "slide": "Slide 1", "shape": "Title", "bullet": true }
+            }),
+            safety: "Upserts a:pPr a:buChar char=\"•\" (true) or a:buNone (false) on each a:p in the shape txBody, replacing existing buNone/buFont/buChar/buAutoNum. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+    ]
 }

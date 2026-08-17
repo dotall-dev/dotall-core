@@ -3,8 +3,10 @@ mod fingerprint;
 pub mod history;
 mod manifest;
 pub mod orchestrate;
+mod search;
 mod status;
 mod store;
+mod viz;
 mod workspace;
 
 pub mod pipeline;
@@ -26,8 +28,10 @@ pub use registry::{
     Actor, ActorKind, ArtifactEnvelope, ArtifactSchema, DependencyImpact, EncodedSnapshot,
     PatchedOutput, ReadResponse, SemanticChange, SemanticOperation, SnapshotPart, ValidatedEdit,
 };
+pub use search::{SearchHit, SearchRequest, SearchResults, search_store};
 pub use status::{ObjectState, ObjectStatus};
 pub use store::DotallStore;
+pub use viz::{VizHistoryEntry, VizMetrics, VizNode, VizSnapshot, viz_snapshot};
 pub use workspace::Workspace;
 
 pub const ALL_DIR_NAME: &str = ".all";

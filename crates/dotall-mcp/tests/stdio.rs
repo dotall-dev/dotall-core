@@ -206,6 +206,7 @@ fn stdio_server_initializes_and_lists_agent_tools() {
             "dotall_inspect",
             "dotall_read",
             "dotall_revert",
+            "dotall_search",
             "dotall_staged",
             "dotall_status",
         ]

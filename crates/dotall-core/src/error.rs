@@ -105,6 +105,9 @@ pub enum DotallError {
         #[source]
         source: Box<DotallError>,
     },
+
+    #[error("{reason}")]
+    InvalidArgument { reason: String },
 }
 
 impl DotallError {

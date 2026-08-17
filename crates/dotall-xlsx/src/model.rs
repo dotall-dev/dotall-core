@@ -20,7 +20,107 @@ pub struct SheetModel {
     pub index: u32,
     pub dimensions: SheetDimensions,
     pub merges: Vec<String>,
+    /// Openpyxl-style freeze cell (`B2` freezes row 1 + col A). Absent when unfrozen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freeze_panes: Option<String>,
+    /// Worksheet view zoom percent (10–400) from `sheetView/@zoomScale`. Absent when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zoom: Option<u32>,
+    /// Worksheet view gridlines. `false` when `sheetView/@showGridLines="0"`; default shown is `true`.
+    #[serde(default = "default_show_gridlines")]
+    pub show_gridlines: bool,
+    /// Worksheet view right-to-left. `true` when `sheetView/@rightToLeft="1"`; omitted/false when LTR.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub right_to_left: bool,
+    /// Worksheet tab color as OOXML `rgb` AARRGGBB (e.g. `FF4472C4`). Absent when default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_color: Option<String>,
+    /// AutoFilter range as A1 (`A1:D10`). Absent when no auto filter is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_filter: Option<String>,
+    /// Print area as A1 (`A1:D10`). Absent when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub print_area: Option<String>,
+    /// Print titles (rows/cols to repeat). Absent when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub print_titles: Option<PrintTitles>,
+    /// Page orientation (`portrait` / `landscape`). Absent when unset in OOXML.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_orientation: Option<String>,
+    /// Print paper size from `pageSetup/@paperSize` (e.g. 1=Letter, 9=A4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper_size: Option<u32>,
+    /// Print scale percent (10–400) from `pageSetup/@scale`. Absent when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub print_scale: Option<u32>,
+    /// Fit-to-page widths/heights from `pageSetup` when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit_to_page: Option<FitToPage>,
+    /// Print centering from `printOptions` when either axis is centered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub center_on_page: Option<CenterOnPage>,
+    /// Print page margins in inches. Absent when no `pageMargins` element.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_margins: Option<PageMargins>,
+    /// Print header/footer (`oddHeader` / `oddFooter`). Absent when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_footer: Option<HeaderFooter>,
     pub cells: Vec<CellModel>,
+}
+
+fn default_show_gridlines() -> bool {
+    true
+}
+
+/// Worksheet print header/footer (`headerFooter` oddHeader / oddFooter).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct HeaderFooter {
+    /// Odd-page header text, including Excel codes such as `&C`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// Odd-page footer text, including Excel codes such as `&P`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer: Option<String>,
+}
+
+/// Worksheet print centering (`printOptions` horizontalCentered / verticalCentered).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct CenterOnPage {
+    pub horizontal: bool,
+    pub vertical: bool,
+}
+
+/// Worksheet fit-to-page (`pageSetup` fitToWidth / fitToHeight).
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct FitToPage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+
+/// Worksheet print margins (`pageMargins`) in inches.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PageMargins {
+    pub left: f64,
+    pub right: f64,
+    pub top: f64,
+    pub bottom: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer: Option<f64>,
+}
+
+/// Worksheet print titles (`_xlnm.Print_Titles`): repeat rows and/or columns when printing.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct PrintTitles {
+    /// Row span like `1:1` (1-based inclusive). Absent when only columns repeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<String>,
+    /// Column span like `A:B`. Absent when only rows repeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cols: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

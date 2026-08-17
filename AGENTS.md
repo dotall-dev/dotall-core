@@ -14,11 +14,16 @@ brainstorming notes live elsewhere.
 - `docs/specs/xlsx-engine-v0.md` — the current milestone: XLSX engine, CLI-first.
 - `docs/superpowers/specs/2026-07-21-mcp-agent-interface-design.md` — MCP tools,
   flush-on-close, capabilities discovery.
+- `docs/superpowers/specs/2026-08-17-killer-demo-design.md` — Dotall vs no-Dotall
+  bake-off: Q3 board-pack brief, `dotall search` / `dotall viz`, filming notes.
 - `skills/xlsx/SKILL.md` — agent workflow for `.xlsx` via Dotall MCP.
 - `skills/pptx/SKILL.md` — agent workflow for `.pptx` via Dotall MCP.
 - `skills/docx/SKILL.md` — agent workflow for `.docx` via Dotall MCP.
 - `skills/pdf/SKILL.md` — agent workflow for `.pdf` form fill via Dotall MCP.
-- `demo/README.md` — sample workbook + CLI/MCP walkthrough.
+- `demo/README.md` — multi-format samples (`financials.xlsx`, `deck.pptx`, `memo.docx`,
+  `form.pdf`) + CLI/MCP walkthroughs. Regenerate with
+  `cargo run -p dotall-cli --example generate_demos`. After each format capability
+  wave, refresh demos + README and CLI-smoke both new ops and prior v0 paths.
 
 Specs are the source of truth. If code and spec disagree, fix one deliberately —
 don't silently drift.
@@ -47,7 +52,7 @@ dotall/
 │   ├── dotall-ooxml/        # shared ZIP part snapshots + package probes (not a format)
 │   ├── dotall-xlsx/         # typed model, processors, views, edits, OOXML writer
 │   ├── dotall-pptx/         # presentation model, slide reads, surgical shape text
-│   ├── dotall-docx/         # document model, paragraph reads, surgical paragraph text
+│   ├── dotall-docx/         # document model, body/table/header/footer reads, surgical paragraph text
 │   ├── dotall-pdf/          # pages, AcroForm fields, form fill (no body edit)
 │   ├── dotall-cli/          # bin: `dotall`
 │   └── dotall-mcp/          # bin: stdio MCP server (`dotall-mcp`)

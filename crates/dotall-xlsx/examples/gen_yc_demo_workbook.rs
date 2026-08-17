@@ -360,7 +360,14 @@ fn build_pnl(
             currency,
         )?;
     }
-    write_formula_result(sheet, 1, 13, "=SUM($B$2:$M$2)", model.fy_revenue, currency_bold)?;
+    write_formula_result(
+        sheet,
+        1,
+        13,
+        "=SUM($B$2:$M$2)",
+        model.fy_revenue,
+        currency_bold,
+    )?;
 
     sheet.write_string_with_format(2, 0, "COGS", label)?;
     for month_col in 1..=12u16 {
@@ -390,7 +397,14 @@ fn build_pnl(
             currency,
         )?;
     }
-    write_formula_result(sheet, 3, 13, "=SUM($B$4:$M$4)", model.fy_gross, currency_bold)?;
+    write_formula_result(
+        sheet,
+        3,
+        13,
+        "=SUM($B$4:$M$4)",
+        model.fy_gross,
+        currency_bold,
+    )?;
 
     sheet.write_string_with_format(4, 0, "OpEx", label)?;
     for month_col in 1..=12u16 {
@@ -504,14 +518,7 @@ fn build_board(
     write_formula_result(sheet, 5, 1, "=Income!$N$8", model.fy_net, currency_bold)?;
 
     sheet.write_string_with_format(6, 0, "List Price", label)?;
-    write_formula_result(
-        sheet,
-        6,
-        1,
-        "=Assumptions!$B$2",
-        LIST_PRICE,
-        currency_bold,
-    )?;
+    write_formula_result(sheet, 6, 1, "=Assumptions!$B$2", LIST_PRICE, currency_bold)?;
 
     // Chart source below the chart; absolute Income refs so every month column works.
     const CHART_CAT_ROW: u32 = 24; // Excel row 25

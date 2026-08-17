@@ -113,19 +113,23 @@ fn inspect_advertises_all_merge_two_edit_capabilities() {
         .iter()
         .filter_map(|capability| capability["operation"].as_str())
         .collect::<Vec<_>>();
-    assert_eq!(
-        operations,
-        vec![
-            "set_cell_value",
-            "set_cell_formula",
-            "set_range",
-            "insert_row",
-            "delete_row",
-            "insert_column",
-            "delete_column",
-            "add_sheet",
-            "rename_sheet",
-            "delete_sheet",
-        ]
-    );
+    for operation in [
+        "set_cell_value",
+        "set_cell_formula",
+        "set_range",
+        "insert_row",
+        "delete_row",
+        "insert_column",
+        "delete_column",
+        "add_sheet",
+        "rename_sheet",
+        "delete_sheet",
+        "merge_cells",
+        "unmerge_cells",
+    ] {
+        assert!(
+            operations.iter().any(|advertised| *advertised == operation),
+            "inspect must advertise {operation}; got {operations:?}"
+        );
+    }
 }

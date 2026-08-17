@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>.all/</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --fg: #e8eaed;
+      --muted: #9aa0a6;
+      --line: #2a2f3a;
+      --accent: #8ab4f8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: var(--bg);
+      color: var(--fg);
+      padding: 1.5rem;
+    }
+    h1 { font-size: 1.4rem; margin: 0 0 1rem; }
+    h2 { font-size: 1rem; margin: 1.5rem 0 0.75rem; color: var(--muted); font-weight: 600; }
+    .note {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin: 0.5rem 0 0;
+      max-width: 52rem;
+    }
+    dl {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.35rem 1rem;
+      margin: 0;
+    }
+    dt { color: var(--muted); }
+    dd { margin: 0; }
+    ul.tree, ul.history {
+      list-style: none;
+      margin: 0;
+      padding-left: 1.1rem;
+      border-left: 1px solid var(--line);
+    }
+    ul.tree > li, ul.history > li { margin: 0.15rem 0; }
+    details > summary {
+      cursor: pointer;
+      list-style: none;
+    }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary::before {
+      content: "▸ ";
+      color: var(--accent);
+    }
+    details[open] > summary::before { content: "▾ "; }
+    .bytes { color: var(--muted); margin-left: 0.5rem; }
+    .err { color: #f28b82; }
+  </style>
+</head>
+<body>
+  <h1>.all/</h1>
+  <h2>Metrics</h2>
+  <dl id="metrics"></dl>
+  <p class="note" id="metrics-note"></p>
+  <h2>Tree</h2>
+  <div id="tree"></div>
+  <h2>History</h2>
+  <ul class="history" id="history"></ul>
+  <script>
+    const PREVIEW_LIMIT = 8 * 1024;
+
+    const METRIC_LABELS = {
+      all_bytes: { label: ".all/ size", unit: "bytes" },
+      snapshot_part_bytes: { label: "Snapshot parts", unit: "bytes" },
+      naive_full_copy_bytes: { label: "Naive full-copy size", unit: "bytes" },
+      model_cache_hits: { label: "Model cache hits", unit: "hits" },
+      view_cache_hits: { label: "View cache hits", unit: "hits" },
+      estimated_tokens_served: { label: "Tokens served (from access log)", unit: "tokens" },
+      estimated_dump_tokens: {
+        label: "Dump tokens (lower bound)",
+        unit: "tokens",
+      },
+    };
+
+    function formatMetric(value, unit) {
+      return String(value) + " " + unit;
+    }
+
+    function formatBytes(n) {
+      return String(n) + " B";
+    }
+
+    function renderMetrics(metrics) {
+      const dl = document.getElementById("metrics");
+      dl.innerHTML = "";
+      const keys = [
+        "all_bytes",
+        "snapshot_part_bytes",
+        "naive_full_copy_bytes",
+        "model_cache_hits",
+        "view_cache_hits",
+        "estimated_tokens_served",
+        "estimated_dump_tokens",
+      ];
+      for (const key of keys) {
+        if (!(key in metrics)) continue;
+        const meta = METRIC_LABELS[key] || { label: key, unit: "" };
+        const dt = document.createElement("dt");
+        dt.textContent = meta.label;
+        const dd = document.createElement("dd");
+        dd.textContent = formatMetric(metrics[key], meta.unit);
+        dl.appendChild(dt);
+        dl.appendChild(dd);
+      }
+      const note = document.getElementById("metrics-note");
+      note.textContent =
+        "Dump tokens are an estimate: compressed source size / 4 (lower bound; packages are not unzipped).";
+    }
+
+    function renderNode(node) {
+      const li = document.createElement("li");
+      const label = document.createElement("span");
+      label.textContent = node.name;
+      const bytes = document.createElement("span");
+      bytes.className = "bytes";
+      bytes.textContent = formatBytes(node.bytes);
+      if (node.children && node.children.length > 0) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.appendChild(label);
+        summary.appendChild(bytes);
+        details.appendChild(summary);
+        const ul = document.createElement("ul");
+        ul.className = "tree";
+        for (const child of node.children) {
+          ul.appendChild(renderNode(child));
+        }
+        details.appendChild(ul);
+        li.appendChild(details);
+      } else {
+        li.appendChild(label);
+        li.appendChild(bytes);
+      }
+      return li;
+    }
+
+    function renderTree(tree) {
+      const root = document.getElementById("tree");
+      root.innerHTML = "";
+      const ul = document.createElement("ul");
+      ul.className = "tree";
+      ul.appendChild(renderNode(tree));
+      root.appendChild(ul);
+    }
+
+    function renderHistory(history) {
+      const ul = document.getElementById("history");
+      ul.innerHTML = "";
+      for (const entry of history) {
+        const li = document.createElement("li");
+        const summary = entry.summary.length > PREVIEW_LIMIT
+          ? entry.summary.slice(0, PREVIEW_LIMIT) + "…"
+          : entry.summary;
+        li.textContent = entry.path + " v" + entry.version + " (" + entry.op_count + " ops): " + summary;
+        ul.appendChild(li);
+      }
+      if (history.length === 0) {
+        const li = document.createElement("li");
+        li.textContent = "(none)";
+        ul.appendChild(li);
+      }
+    }
+
+    async function load() {
+      try {
+        const [metricsRes, treeRes] = await Promise.all([
+          fetch("/api/metrics"),
+          fetch("/api/tree"),
+        ]);
+        if (!metricsRes.ok || !treeRes.ok) {
+          throw new Error("API request failed");
+        }
+        const metrics = await metricsRes.json();
+        const payload = await treeRes.json();
+        renderMetrics(metrics);
+        renderTree(payload.tree);
+        renderHistory(payload.history || []);
+      } catch (err) {
+        const dl = document.getElementById("metrics");
+        dl.innerHTML = "<dt class='err'>error</dt><dd class='err'>" + String(err) + "</dd>";
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

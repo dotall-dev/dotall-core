@@ -11,6 +11,17 @@ pub fn paragraph_id(index: u32, text: &str, schema_version: u32) -> String {
     opaque_id("p", schema_version, &[&index, text])
 }
 
+pub fn header_footer_paragraph_id(
+    kind: &str,
+    part: &str,
+    index: u32,
+    text: &str,
+    schema_version: u32,
+) -> String {
+    let index = index.to_string();
+    opaque_id("p", schema_version, &[kind, part, &index, text])
+}
+
 fn opaque_id(prefix: &str, schema_version: u32, components: &[&str]) -> String {
     let mut hasher = Hasher::new();
     hasher.update(b"docx.document");

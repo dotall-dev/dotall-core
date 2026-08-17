@@ -13,7 +13,14 @@ use crate::edits;
 use crate::model::{SCHEMA_ID, SCHEMA_VERSION, WorkbookModel};
 use crate::{FORMAT_ID, parser, projection, selector, structure};
 
-const AVAILABLE_READS: [&str; 4] = ["read.full", "read.sheet", "read.range", "read.ast_range"];
+const AVAILABLE_READS: [&str; 6] = [
+    "read.full",
+    "read.sheet",
+    "read.range",
+    "read.ast_range",
+    "read.named_ranges",
+    "read.merges",
+];
 const PREVIEW_SHEET_LIMIT: usize = 3;
 const PREVIEW_ROW_LIMIT: u32 = 10;
 const PREVIEW_CELL_LIMIT: usize = 200;
@@ -70,6 +77,22 @@ impl FormatHandler for XlsxFormat {
                     "rows": sheet.dimensions.rows,
                     "cols": sheet.dimensions.cols,
                     "formula_count": sheet.cells.iter().filter(|cell| cell.formula.is_some()).count(),
+                    "merges": sheet.merges,
+                    "freeze_panes": sheet.freeze_panes,
+                    "zoom": sheet.zoom,
+                    "show_gridlines": sheet.show_gridlines,
+                    "right_to_left": sheet.right_to_left,
+                    "tab_color": sheet.tab_color,
+                    "auto_filter": sheet.auto_filter,
+                    "print_area": sheet.print_area,
+                    "print_titles": sheet.print_titles,
+                    "page_orientation": sheet.page_orientation,
+                    "paper_size": sheet.paper_size,
+                    "print_scale": sheet.print_scale,
+                    "fit_to_page": sheet.fit_to_page,
+                    "center_on_page": sheet.center_on_page,
+                    "page_margins": sheet.page_margins,
+                    "header_footer": sheet.header_footer,
                 })
             })
             .collect::<Vec<_>>();
@@ -101,7 +124,13 @@ impl FormatHandler for XlsxFormat {
             format_id: FORMAT_ID.into(),
             summary: json!({
                 "sheets": sheets,
-                "named_ranges": workbook.named_ranges.iter().map(|range| &range.name).collect::<Vec<_>>(),
+                "named_ranges": workbook.named_ranges.iter().map(|range| json!({
+                    "name": range.name,
+                    "formula": range.formula,
+                })).collect::<Vec<_>>(),
+                "style_table": workbook.style_table.iter().map(|entry| json!({
+                    "style_id": entry.style_id,
+                })).collect::<Vec<_>>(),
                 "preserved": ["charts", "pivots", "vba", "other_ooxml_parts"],
                 "structure": structure,
             }),
@@ -119,7 +148,7 @@ impl FormatHandler for XlsxFormat {
                 .as_ref()
                 .map_or(Ok(selector::Selector::Preview), |selector| {
                     match selector.kind.as_str() {
-                        "full" | "sheet" | "range" | "ast_range" => {
+                        "full" | "sheet" | "range" | "ast_range" | "named_ranges" | "merges" => {
                             selector::parse(&selector.kind, &selector.value).map_err(selector_error)
                         }
                         _ => Err(unsupported(&selector.kind)),
@@ -179,6 +208,36 @@ impl FormatHandler for XlsxFormat {
                         address(start),
                         address(end)
                     )],
+                )
+            }
+            selector::Selector::NamedRanges => (
+                serde_json::to_string_pretty(&projection::named_ranges(&workbook)).map_err(
+                    |source| DotallError::Serialization {
+                        context: "XLSX named ranges projection".into(),
+                        source,
+                    },
+                )?,
+                vec![
+                    "Use `merges` with a sheet name for worksheet merge refs".into(),
+                    "Use `range` or `ast_range` for cell values".into(),
+                ],
+            ),
+            selector::Selector::Merges { name } => {
+                let sheet = find_sheet(&workbook, &name)?;
+                (
+                    serde_json::to_string_pretty(&projection::merges(sheet)).map_err(|source| {
+                        DotallError::Serialization {
+                            context: "XLSX merges projection".into(),
+                            source,
+                        }
+                    })?,
+                    vec![
+                        "Use `named_ranges` for defined name formulas".into(),
+                        format!(
+                            "Use `range` with `{}` for a Markdown table",
+                            used_range(sheet)
+                        ),
+                    ],
                 )
             }
         };
@@ -305,6 +364,12 @@ fn capabilities() -> Vec<Capability> {
         Capability::ReadSelector {
             kind: "ast_range".into(),
         },
+        Capability::ReadSelector {
+            kind: "named_ranges".into(),
+        },
+        Capability::ReadSelector {
+            kind: "merges".into(),
+        },
     ]
 }
 
@@ -410,6 +475,275 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 }
             }),
             safety: "Rejects the last visible sheet; either lists inbound references or rewrites them to #REF! while removing only orphaned drawings and charts."
+                .into(),
+        },
+        EditCapability {
+            operation: "merge_cells".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Merge a rectangular worksheet range.".into(),
+            example: json!({
+                "kind": "merge_cells",
+                "payload": { "sheet": "Sheet1", "range": "A1:B2" }
+            }),
+            safety: "Rejects overlapping merges; surgically patches only the target worksheet mergeCells."
+                .into(),
+        },
+        EditCapability {
+            operation: "unmerge_cells".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Remove an existing worksheet merge by exact range ref.".into(),
+            example: json!({
+                "kind": "unmerge_cells",
+                "payload": { "sheet": "Sheet1", "range": "A1:B2" }
+            }),
+            safety: "Removes the matching mergeCell ref; surgically patches only the target worksheet."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_column_width".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set a worksheet column width (character units).".into(),
+            example: json!({
+                "kind": "set_column_width",
+                "payload": { "sheet": "Sheet1", "column": "A", "width": 18.5 }
+            }),
+            safety: "Surgically patches only the target worksheet cols; other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_row_height".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set a worksheet row height (points).".into(),
+            example: json!({
+                "kind": "set_row_height",
+                "payload": { "sheet": "Sheet1", "row": 1, "height": 30.0 }
+            }),
+            safety: "Surgically patches only the target worksheet row attributes; other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "freeze_panes".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Freeze worksheet panes at a cell (openpyxl-style), or clear with null/A1."
+                .into(),
+            example: json!({
+                "kind": "freeze_panes",
+                "payload": { "sheet": "Sheet1", "cell": "B2" }
+            }),
+            safety: "Surgically patches only the target worksheet sheetViews; other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "define_name".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Create or update a workbook-scoped defined name formula.".into(),
+            example: json!({
+                "kind": "define_name",
+                "payload": { "name": "Rate", "formula": "Inputs!$B$3" }
+            }),
+            safety: "Surgically patches only xl/workbook.xml definedNames; worksheets and other parts stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "delete_name".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Remove a workbook-scoped defined name from xl/workbook.xml."
+                .into(),
+            example: json!({
+                "kind": "delete_name",
+                "payload": { "name": "Rate" }
+            }),
+            safety: "Surgically patches only xl/workbook.xml definedNames; worksheets and other parts stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "hide_sheet".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Hide or unhide a worksheet via workbook sheet state=\"hidden\"."
+                .into(),
+            example: json!({
+                "kind": "hide_sheet",
+                "payload": { "sheet": "Revenue", "hidden": true }
+            }),
+            safety: "Surgically patches only xl/workbook.xml sheet state. Rejects hiding the last visible sheet. Worksheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_tab_color".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear a worksheet tab color (sheetPr/tabColor rgb)."
+                .into(),
+            example: json!({
+                "kind": "set_tab_color",
+                "payload": { "sheet": "Inputs", "color": "FF4472C4" }
+            }),
+            safety: "Surgically patches only the target worksheet sheetPr/tabColor. Pass null color to clear. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_auto_filter".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear a worksheet AutoFilter range.".into(),
+            example: json!({
+                "kind": "set_auto_filter",
+                "payload": { "sheet": "Inputs", "range": "A1:B10" }
+            }),
+            safety: "Surgically patches only the target worksheet autoFilter element. Pass null range to clear. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_print_area".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear a worksheet print area via workbook _xlnm.Print_Area."
+                .into(),
+            example: json!({
+                "kind": "set_print_area",
+                "payload": { "sheet": "Revenue", "range": "A1:B5" }
+            }),
+            safety: "Surgically patches only xl/workbook.xml definedNames for _xlnm.Print_Area. Pass null range to clear. Worksheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_print_titles".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description:
+                "Set or clear worksheet print titles (repeat rows/cols) via _xlnm.Print_Titles."
+                    .into(),
+            example: json!({
+                "kind": "set_print_titles",
+                "payload": { "sheet": "Revenue", "rows": "1:1", "cols": "A:A" }
+            }),
+            safety: "Surgically patches only xl/workbook.xml definedNames for _xlnm.Print_Titles. Pass null rows and cols to clear. Worksheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_page_orientation".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet print orientation via pageSetup (portrait or landscape)."
+                .into(),
+            example: json!({
+                "kind": "set_page_orientation",
+                "payload": { "sheet": "Revenue", "orientation": "landscape" }
+            }),
+            safety: "Surgically patches only the target worksheet pageSetup orientation attribute. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_paper_size".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet print paper size via pageSetup paperSize (positive integer)."
+                .into(),
+            example: json!({
+                "kind": "set_paper_size",
+                "payload": { "sheet": "Revenue", "paper_size": 9 }
+            }),
+            safety: "Surgically patches only the target worksheet pageSetup paperSize attribute (e.g. 1=Letter, 9=A4). Inspect surfaces paper_size. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_print_scale".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet print scale via pageSetup (percent 10–400).".into(),
+            example: json!({
+                "kind": "set_print_scale",
+                "payload": { "sheet": "Revenue", "scale": 75 }
+            }),
+            safety: "Surgically patches only the target worksheet pageSetup scale attribute. Inspect surfaces print_scale. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_fit_to_page".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description:
+                "Set or clear worksheet fit-to-page via pageSetup fitToWidth/Height and pageSetUpPr."
+                    .into(),
+            example: json!({
+                "kind": "set_fit_to_page",
+                "payload": { "sheet": "Revenue", "width": 1, "height": 1 }
+            }),
+            safety: "Surgically patches only the target worksheet sheetPr/pageSetUpPr and pageSetup fit attrs. Pass null width and height to clear. Inspect surfaces fit_to_page. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_center_on_page".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description:
+                "Set or clear worksheet print centering via printOptions horizontalCentered/verticalCentered."
+                    .into(),
+            example: json!({
+                "kind": "set_center_on_page",
+                "payload": { "sheet": "Revenue", "horizontal": true, "vertical": false }
+            }),
+            safety: "Surgically patches only the target worksheet printOptions. Both false clears centering. Inspect surfaces center_on_page when either axis is centered. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_page_margins".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet print margins via pageMargins (inches)."
+                .into(),
+            example: json!({
+                "kind": "set_page_margins",
+                "payload": {
+                    "sheet": "Revenue",
+                    "left": 0.5,
+                    "right": 0.5,
+                    "top": 0.75,
+                    "bottom": 0.75,
+                    "header": 0.3,
+                    "footer": 0.3
+                }
+            }),
+            safety: "Surgically patches only the target worksheet pageMargins element. Requires left/right/top/bottom; header/footer optional. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_header_footer".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description:
+                "Set or clear worksheet print header/footer via headerFooter oddHeader/oddFooter."
+                    .into(),
+            example: json!({
+                "kind": "set_header_footer",
+                "payload": { "sheet": "Revenue", "header": "&CBoard pack", "footer": "&P" }
+            }),
+            safety: "Surgically patches only the target worksheet headerFooter/oddHeader/oddFooter. Pass null header and footer to clear. Excel codes (&C, &P) are stored verbatim (XML-escaped). Inspect surfaces header_footer when present. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_sheet_zoom".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet view zoom via sheetView zoomScale (percent 10–400)."
+                .into(),
+            example: json!({
+                "kind": "set_sheet_zoom",
+                "payload": { "sheet": "Revenue", "zoom": 75 }
+            }),
+            safety: "Surgically patches only the target worksheet sheetView zoomScale attribute. Existing freeze-pane children and other sheetView attributes are preserved. Inspect surfaces zoom. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_show_gridlines".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Show or hide worksheet view gridlines via sheetView showGridLines."
+                .into(),
+            example: json!({
+                "kind": "set_show_gridlines",
+                "payload": { "sheet": "Revenue", "show": false }
+            }),
+            safety: "Surgically patches only the target worksheet sheetView showGridLines attribute. false writes showGridLines=\"0\"; true removes the attribute (Excel default shown). Existing freeze-pane children, zoomScale, and other sheetView attributes are preserved. Inspect surfaces show_gridlines. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_right_to_left".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear worksheet view right-to-left via sheetView rightToLeft."
+                .into(),
+            example: json!({
+                "kind": "set_right_to_left",
+                "payload": { "sheet": "Revenue", "rtl": true }
+            }),
+            safety: "Surgically patches only the target worksheet sheetView rightToLeft attribute. true writes rightToLeft=\"1\"; false removes the attribute (Excel default LTR). Existing freeze-pane children, zoomScale, showGridLines, and other sheetView attributes are preserved. Inspect surfaces right_to_left when true. Other sheets stay byte-identical."
                 .into(),
         },
     ]

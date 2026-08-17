@@ -258,6 +258,15 @@ pub fn tool_error_typed<T>(error: DotallError) -> ToolResponse<T> {
                 "schema_version": schema_version,
             }),
         },
+        DotallError::InvalidArgument { reason } => ToolResponse::Error {
+            code: "invalid_argument".into(),
+            message: reason.clone(),
+            retryable: false,
+            next_actions: vec!["Correct the request payload and retry.".into()],
+            details: serde_json::json!({
+                "reason": reason,
+            }),
+        },
     }
 }
 

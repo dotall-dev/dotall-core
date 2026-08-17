@@ -13,8 +13,23 @@ use crate::FORMAT_ID;
 use crate::edits::transform::{Axis, AxisChange};
 use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
+use super::auto_filter;
+use super::center_on_page;
+use super::dimensions;
+use super::fit_to_page;
+use super::freeze_panes;
+use super::header_footer;
+use super::merges;
+use super::page_margins;
+use super::page_orientation;
+use super::paper_size;
+use super::print_scale;
+use super::right_to_left;
 use super::shared_strings;
+use super::sheet_zoom;
+use super::show_gridlines;
 use super::structural;
+use super::tab_color;
 use super::workbook;
 use super::worksheet;
 
@@ -28,6 +43,169 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
 
     let original = fs::read(source).map_err(|error| source_error(source, error))?;
     let operations = parse_validated_operations(&edit.operations)?;
+    if let [XlsxEditOp::MergeCells { sheet, range }] = operations.as_slice() {
+        return patch_merge(
+            &original,
+            sheet,
+            &merges::MergeEdit::Merge {
+                range: range.clone(),
+            },
+        );
+    }
+    if let [XlsxEditOp::UnmergeCells { sheet, range }] = operations.as_slice() {
+        return patch_merge(
+            &original,
+            sheet,
+            &merges::MergeEdit::Unmerge {
+                range: range.clone(),
+            },
+        );
+    }
+    if let [
+        XlsxEditOp::SetColumnWidth {
+            sheet,
+            column,
+            width,
+        },
+    ] = operations.as_slice()
+    {
+        return patch_dimension(
+            &original,
+            sheet,
+            &dimensions::DimensionEdit::ColumnWidth {
+                column: column.clone(),
+                width: *width,
+            },
+        );
+    }
+    if let [XlsxEditOp::SetRowHeight { sheet, row, height }] = operations.as_slice() {
+        return patch_dimension(
+            &original,
+            sheet,
+            &dimensions::DimensionEdit::RowHeight {
+                row: *row,
+                height: *height,
+            },
+        );
+    }
+    if let [XlsxEditOp::FreezePanes { sheet, cell }] = operations.as_slice() {
+        return patch_freeze_panes(&original, sheet, cell.as_deref());
+    }
+    if let [XlsxEditOp::SetTabColor { sheet, color }] = operations.as_slice() {
+        return patch_tab_color(&original, sheet, color.as_deref());
+    }
+    if let [XlsxEditOp::SetAutoFilter { sheet, range }] = operations.as_slice() {
+        return patch_auto_filter(&original, sheet, range.as_deref());
+    }
+    if let [XlsxEditOp::SetPrintArea { sheet, range }] = operations.as_slice() {
+        let patch = workbook::set_print_area(&original, sheet, range.as_deref())?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [XlsxEditOp::SetPrintTitles { sheet, rows, cols }] = operations.as_slice() {
+        let patch = workbook::set_print_titles(&original, sheet, rows.as_deref(), cols.as_deref())?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [XlsxEditOp::SetPageOrientation { sheet, orientation }] = operations.as_slice() {
+        return patch_page_orientation(&original, sheet, orientation);
+    }
+    if let [XlsxEditOp::SetPaperSize { sheet, paper_size }] = operations.as_slice() {
+        return patch_paper_size(&original, sheet, *paper_size);
+    }
+    if let [XlsxEditOp::SetSheetZoom { sheet, zoom }] = operations.as_slice() {
+        return patch_sheet_zoom(&original, sheet, *zoom);
+    }
+    if let [XlsxEditOp::SetShowGridlines { sheet, show }] = operations.as_slice() {
+        return patch_show_gridlines(&original, sheet, *show);
+    }
+    if let [XlsxEditOp::SetRightToLeft { sheet, rtl }] = operations.as_slice() {
+        return patch_right_to_left(&original, sheet, *rtl);
+    }
+    if let [XlsxEditOp::SetPrintScale { sheet, scale }] = operations.as_slice() {
+        return patch_print_scale(&original, sheet, *scale);
+    }
+    if let [
+        XlsxEditOp::SetFitToPage {
+            sheet,
+            width,
+            height,
+        },
+    ] = operations.as_slice()
+    {
+        return patch_fit_to_page(&original, sheet, *width, *height);
+    }
+    if let [XlsxEditOp::SetCenterOnPage { sheet, center }] = operations.as_slice() {
+        return patch_center_on_page(&original, sheet, center);
+    }
+    if let [XlsxEditOp::SetPageMargins { sheet, margins }] = operations.as_slice() {
+        return patch_page_margins(&original, sheet, margins);
+    }
+    if let [
+        XlsxEditOp::SetHeaderFooter {
+            sheet,
+            header,
+            footer,
+        },
+    ] = operations.as_slice()
+    {
+        return patch_header_footer(&original, sheet, header.as_deref(), footer.as_deref());
+    }
+    if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
+        let patch = workbook::define_name(&original, name, formula)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [XlsxEditOp::DeleteName { name }] = operations.as_slice() {
+        let patch = workbook::delete_name(&original, name)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [XlsxEditOp::HideSheet { sheet, hidden }] = operations.as_slice() {
+        let patch = workbook::hide_sheet(&original, sheet, *hidden)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
     if let [XlsxEditOp::AddSheet { name, after }] = operations.as_slice() {
         let patch = workbook::add_sheet(&original, name, after.as_deref())?;
         let bytes = rebuild_package(
@@ -140,6 +318,28 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::RenameSheet { .. }
                 | XlsxEditOp::DeleteSheet { .. }
                 | XlsxEditOp::SetRange { .. }
+                | XlsxEditOp::MergeCells { .. }
+                | XlsxEditOp::UnmergeCells { .. }
+                | XlsxEditOp::SetColumnWidth { .. }
+                | XlsxEditOp::SetRowHeight { .. }
+                | XlsxEditOp::FreezePanes { .. }
+                | XlsxEditOp::DefineName { .. }
+                | XlsxEditOp::DeleteName { .. }
+                | XlsxEditOp::HideSheet { .. }
+                | XlsxEditOp::SetTabColor { .. }
+                | XlsxEditOp::SetAutoFilter { .. }
+                | XlsxEditOp::SetPrintArea { .. }
+                | XlsxEditOp::SetPrintTitles { .. }
+                | XlsxEditOp::SetPageOrientation { .. }
+                | XlsxEditOp::SetPaperSize { .. }
+                | XlsxEditOp::SetPrintScale { .. }
+                | XlsxEditOp::SetFitToPage { .. }
+                | XlsxEditOp::SetCenterOnPage { .. }
+                | XlsxEditOp::SetPageMargins { .. }
+                | XlsxEditOp::SetHeaderFooter { .. }
+                | XlsxEditOp::SetSheetZoom { .. }
+                | XlsxEditOp::SetShowGridlines { .. }
+                | XlsxEditOp::SetRightToLeft { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -162,7 +362,29 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::AddSheet { .. }
             | XlsxEditOp::RenameSheet { .. }
             | XlsxEditOp::DeleteSheet { .. }
-            | XlsxEditOp::SetRange { .. } => {
+            | XlsxEditOp::SetRange { .. }
+            | XlsxEditOp::MergeCells { .. }
+            | XlsxEditOp::UnmergeCells { .. }
+            | XlsxEditOp::SetColumnWidth { .. }
+            | XlsxEditOp::SetRowHeight { .. }
+            | XlsxEditOp::FreezePanes { .. }
+            | XlsxEditOp::DefineName { .. }
+            | XlsxEditOp::DeleteName { .. }
+            | XlsxEditOp::HideSheet { .. }
+            | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. }
+            | XlsxEditOp::SetPrintArea { .. }
+            | XlsxEditOp::SetPrintTitles { .. }
+            | XlsxEditOp::SetPageOrientation { .. }
+            | XlsxEditOp::SetPaperSize { .. }
+            | XlsxEditOp::SetPrintScale { .. }
+            | XlsxEditOp::SetFitToPage { .. }
+            | XlsxEditOp::SetCenterOnPage { .. }
+            | XlsxEditOp::SetPageMargins { .. }
+            | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetSheetZoom { .. }
+            | XlsxEditOp::SetShowGridlines { .. }
+            | XlsxEditOp::SetRightToLeft { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -515,6 +737,256 @@ fn rewrite_calc_pr_tag(tag: &str) -> Result<String> {
     }
 }
 
+fn patch_merge(original: &[u8], sheet: &str, edit: &merges::MergeEdit) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), merges::patch(&xml, edit)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_dimension(
+    original: &[u8],
+    sheet: &str,
+    edit: &dimensions::DimensionEdit,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), dimensions::patch(&xml, edit)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_freeze_panes(original: &[u8], sheet: &str, cell: Option<&str>) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), freeze_panes::patch(&xml, cell)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_tab_color(original: &[u8], sheet: &str, color: Option<&str>) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), tab_color::patch(&xml, color)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_auto_filter(original: &[u8], sheet: &str, range: Option<&str>) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), auto_filter::patch(&xml, range)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_page_orientation(
+    original: &[u8],
+    sheet: &str,
+    orientation: &str,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), page_orientation::patch(&xml, orientation)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_paper_size(original: &[u8], sheet: &str, paper_size: u32) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), paper_size::patch(&xml, paper_size)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_sheet_zoom(original: &[u8], sheet: &str, zoom: u32) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), sheet_zoom::patch(&xml, zoom)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_show_gridlines(original: &[u8], sheet: &str, show: bool) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), show_gridlines::patch(&xml, show)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_right_to_left(original: &[u8], sheet: &str, rtl: bool) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), right_to_left::patch(&xml, rtl)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_print_scale(original: &[u8], sheet: &str, scale: u32) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), print_scale::patch(&xml, scale)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_fit_to_page(
+    original: &[u8],
+    sheet: &str,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), fit_to_page::patch(&xml, width, height)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_center_on_page(
+    original: &[u8],
+    sheet: &str,
+    center: &crate::model::CenterOnPage,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), center_on_page::patch(&xml, center)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_page_margins(
+    original: &[u8],
+    sheet: &str,
+    margins: &crate::model::PageMargins,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), page_margins::patch(&xml, margins)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_header_footer(
+    original: &[u8],
+    sheet: &str,
+    header: Option<&str>,
+    footer: Option<&str>,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), header_footer::patch(&xml, header, footer)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
 fn shared_strings_path(package: &[u8]) -> Result<Option<String>> {
     let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
     if let Some(target) = parse_shared_strings_target(&relationships)? {

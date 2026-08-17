@@ -88,6 +88,101 @@ pub(crate) fn parse_validated_operations(
                     }
                 },
             }),
+            "merge_cells" => Ok(XlsxEditOp::MergeCells {
+                sheet: required_string(operation, "sheet")?,
+                range: required_string(operation, "range")?,
+            }),
+            "unmerge_cells" => Ok(XlsxEditOp::UnmergeCells {
+                sheet: required_string(operation, "sheet")?,
+                range: required_string(operation, "range")?,
+            }),
+            "set_column_width" => Ok(XlsxEditOp::SetColumnWidth {
+                sheet: required_string(operation, "sheet")?,
+                column: required_string(operation, "column")?,
+                width: required_positive_f64(operation, "width")?,
+            }),
+            "set_row_height" => Ok(XlsxEditOp::SetRowHeight {
+                sheet: required_string(operation, "sheet")?,
+                row: required_positive_u32(operation, "row")?,
+                height: required_positive_f64(operation, "height")?,
+            }),
+            "freeze_panes" => Ok(XlsxEditOp::FreezePanes {
+                sheet: required_string(operation, "sheet")?,
+                cell: optional_string(operation, "cell")?,
+            }),
+            "set_sheet_zoom" => Ok(XlsxEditOp::SetSheetZoom {
+                sheet: required_string(operation, "sheet")?,
+                zoom: required_sheet_zoom(operation)?,
+            }),
+            "set_show_gridlines" => Ok(XlsxEditOp::SetShowGridlines {
+                sheet: required_string(operation, "sheet")?,
+                show: required_bool(operation, "show")?,
+            }),
+            "set_right_to_left" => Ok(XlsxEditOp::SetRightToLeft {
+                sheet: required_string(operation, "sheet")?,
+                rtl: required_bool(operation, "rtl")?,
+            }),
+            "define_name" => Ok(XlsxEditOp::DefineName {
+                name: required_string(operation, "name")?,
+                formula: required_string(operation, "formula")?,
+            }),
+            "delete_name" => Ok(XlsxEditOp::DeleteName {
+                name: required_string(operation, "name")?,
+            }),
+            "hide_sheet" => Ok(XlsxEditOp::HideSheet {
+                sheet: required_string(operation, "sheet")?,
+                hidden: required_bool(operation, "hidden")?,
+            }),
+            "set_tab_color" => Ok(XlsxEditOp::SetTabColor {
+                sheet: required_string(operation, "sheet")?,
+                color: optional_string(operation, "color")?,
+            }),
+            "set_auto_filter" => Ok(XlsxEditOp::SetAutoFilter {
+                sheet: required_string(operation, "sheet")?,
+                range: optional_string(operation, "range")?,
+            }),
+            "set_print_area" => Ok(XlsxEditOp::SetPrintArea {
+                sheet: required_string(operation, "sheet")?,
+                range: optional_string(operation, "range")?,
+            }),
+            "set_print_titles" => Ok(XlsxEditOp::SetPrintTitles {
+                sheet: required_string(operation, "sheet")?,
+                rows: optional_string(operation, "rows")?,
+                cols: optional_string(operation, "cols")?,
+            }),
+            "set_page_orientation" => Ok(XlsxEditOp::SetPageOrientation {
+                sheet: required_string(operation, "sheet")?,
+                orientation: required_string(operation, "orientation")?,
+            }),
+            "set_paper_size" => Ok(XlsxEditOp::SetPaperSize {
+                sheet: required_string(operation, "sheet")?,
+                paper_size: required_positive_u32(operation, "paper_size")?,
+            }),
+            "set_print_scale" => Ok(XlsxEditOp::SetPrintScale {
+                sheet: required_string(operation, "sheet")?,
+                scale: required_print_scale(operation)?,
+            }),
+            "set_fit_to_page" => Ok(XlsxEditOp::SetFitToPage {
+                sheet: required_string(operation, "sheet")?,
+                width: optional_u32(operation, "width")?,
+                height: optional_u32(operation, "height")?,
+            }),
+            "set_center_on_page" => Ok(XlsxEditOp::SetCenterOnPage {
+                sheet: required_string(operation, "sheet")?,
+                center: crate::model::CenterOnPage {
+                    horizontal: required_bool(operation, "horizontal")?,
+                    vertical: required_bool(operation, "vertical")?,
+                },
+            }),
+            "set_page_margins" => Ok(XlsxEditOp::SetPageMargins {
+                sheet: required_string(operation, "sheet")?,
+                margins: required_page_margins(operation)?,
+            }),
+            "set_header_footer" => Ok(XlsxEditOp::SetHeaderFooter {
+                sheet: required_string(operation, "sheet")?,
+                header: optional_nullable_string(operation, "header")?,
+                footer: optional_nullable_string(operation, "footer")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
@@ -96,6 +191,108 @@ pub(crate) fn parse_validated_operations(
             ))),
         })
         .collect()
+}
+
+fn required_page_margins(
+    operation: &dotall_core::SemanticOperation,
+) -> dotall_core::Result<crate::model::PageMargins> {
+    let left = required_non_negative_f64(operation, "left")?;
+    let right = required_non_negative_f64(operation, "right")?;
+    let top = required_non_negative_f64(operation, "top")?;
+    let bottom = required_non_negative_f64(operation, "bottom")?;
+    let header = optional_non_negative_f64(operation, "header")?;
+    let footer = optional_non_negative_f64(operation, "footer")?;
+    Ok(crate::model::PageMargins {
+        left,
+        right,
+        top,
+        bottom,
+        header,
+        footer,
+    })
+}
+
+fn required_sheet_zoom(operation: &dotall_core::SemanticOperation) -> dotall_core::Result<u32> {
+    operation
+        .payload
+        .get("zoom")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_f64().map(|f| f as u64))
+                .and_then(|v| u32::try_from(v).ok())
+        })
+        .filter(|zoom| (10..=400).contains(zoom))
+        .ok_or_else(|| {
+            invalid_operation("validated edit operation requires `zoom` integer between 10 and 400")
+        })
+}
+
+fn required_print_scale(operation: &dotall_core::SemanticOperation) -> dotall_core::Result<u32> {
+    operation
+        .payload
+        .get("scale")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_f64().map(|f| f as u64))
+                .and_then(|v| u32::try_from(v).ok())
+        })
+        .filter(|scale| (10..=400).contains(scale))
+        .ok_or_else(|| {
+            invalid_operation(
+                "validated edit operation requires `scale` integer between 10 and 400",
+            )
+        })
+}
+
+fn required_non_negative_f64(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<f64> {
+    operation
+        .payload
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| {
+            invalid_operation(format!(
+                "validated edit operation requires non-negative `{field}`"
+            ))
+        })
+}
+
+fn optional_non_negative_f64(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<Option<f64>> {
+    match operation.payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .map(Some)
+            .ok_or_else(|| {
+                invalid_operation(format!(
+                    "validated edit operation requires non-negative `{field}` when present"
+                ))
+            }),
+    }
+}
+
+fn required_bool(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<bool> {
+    operation
+        .payload
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| {
+            invalid_operation(format!(
+                "validated edit operation requires boolean `{field}`"
+            ))
+        })
 }
 
 fn required_positive_u32(
@@ -108,6 +305,41 @@ fn required_positive_u32(
         .and_then(serde_json::Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
         .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            invalid_operation(format!(
+                "validated edit operation requires positive `{field}`"
+            ))
+        })
+}
+
+fn optional_u32(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<Option<u32>> {
+    match operation.payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .or_else(|| value.as_f64().map(|f| f as u64))
+            .and_then(|v| u32::try_from(v).ok())
+            .map(Some)
+            .ok_or_else(|| {
+                invalid_operation(format!(
+                    "validated edit operation requires non-negative integer `{field}` when present"
+                ))
+            }),
+    }
+}
+
+fn required_positive_f64(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<f64> {
+    operation
+        .payload
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite() && *value > 0.0)
         .ok_or_else(|| {
             invalid_operation(format!(
                 "validated edit operation requires positive `{field}`"
@@ -137,6 +369,19 @@ fn optional_string(
         Some(serde_json::Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
         _ => Err(invalid_operation(format!(
             "validated edit operation requires `{field}` to be a non-empty string when present"
+        ))),
+    }
+}
+
+fn optional_nullable_string(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<Option<String>> {
+    match operation.payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(value)) => Ok(Some(value.clone())),
+        _ => Err(invalid_operation(format!(
+            "validated edit operation requires `{field}` to be a string or null when present"
         ))),
     }
 }
