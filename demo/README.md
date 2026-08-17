@@ -171,6 +171,13 @@ $DOTALL apply demo/financials.xlsx --all
 $DOTALL inspect demo/financials.xlsx
 # expect sheets[].page_margins left=0.5 for Revenue
 
+# Wave 15: set_print_scale (pageSetup scale percent)
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_print_scale","payload":{"sheet":"Revenue","scale":75}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect sheets[].print_scale 75 for Revenue
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -278,9 +285,16 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_shape_highlight","payload":{"slide":"Slide 2","shape":"Title","color":"#FFFF00"}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 15 — find/replace inside Title text (content-on-slide)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"replace_shape_text","payload":{"slide":"Slide 1","shape":"Title","find":"Q3","replace":"Q4"}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 1'
+# expect Title contains Q4
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `replace_shape_text` patch only the target slide part.
 
 ---
 
@@ -380,6 +394,13 @@ $DOTALL apply demo/memo.docx --all
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_highlight","payload":{"index":2,"color":"yellow"}}]'
 $DOTALL apply demo/memo.docx --all
+
+# Wave 15 — find/replace inside a body paragraph
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"replace_paragraph_text","payload":{"index":2,"find":"Friday","replace":"Monday"}}]'
+$DOTALL apply demo/memo.docx --all
+$DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:3'
+# expect paragraph 2 mentions Monday
 ```
 
 ---
@@ -522,6 +543,16 @@ $DOTALL inspect demo/form.pdf
 # expect fields[].max_length 32 for Name
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field_max_length","payload":{"name":"Name","max_length":null}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 15 — mark Name comb (Ff Comb), then clear
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_comb","payload":{"name":"Name","comb":true}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect fields[].comb true for Name
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_comb","payload":{"name":"Name","comb":false}}]'
 $DOTALL apply demo/form.pdf --all
 ```
 
