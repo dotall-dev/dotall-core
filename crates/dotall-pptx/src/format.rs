@@ -435,6 +435,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Upserts a:rPr cap=\"small\"|\"all\"; null clears. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
         EditCapability {
+            operation: "set_shape_hyperlink".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear an external hyperlink on a slide shape (a:hlinkClick on p:cNvPr plus a slide .rels Relationship)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_hyperlink",
+                "payload": { "slide": "Slide 1", "shape": "Title", "url": "https://example.com" }
+            }),
+            safety: "Writes a:hlinkClick r:id on the shape p:cNvPr and an External hyperlink Relationship (http/https/mailto; null clears both). Patches only the target slide part and that slide's .rels. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
             operation: "replace_shape_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

@@ -1611,6 +1611,191 @@ fn capabilities_advertise_set_shape_caps() {
     );
 }
 
+#[test]
+fn capabilities_advertise_set_shape_hyperlink() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_shape_hyperlink"),
+        "capabilities must advertise set_shape_hyperlink"
+    );
+}
+
+#[test]
+fn set_shape_hyperlink_writes_hlink_click_and_rel_leaving_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_with_notes();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_hyperlink".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "url": "https://example.com",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let entries = zip_entries(&patched.bytes);
+    let slide_xml = String::from_utf8(entries["ppt/slides/slide1.xml"].clone()).expect("slide xml");
+    let rels =
+        String::from_utf8(entries["ppt/slides/_rels/slide1.xml.rels"].clone()).expect("slide rels");
+    assert!(
+        slide_xml.contains(r#"<a:hlinkClick r:id=""#),
+        "expected a:hlinkClick on p:cNvPr, got: {slide_xml}"
+    );
+    let rid_start = slide_xml
+        .find(r#"<a:hlinkClick r:id=""#)
+        .expect("hlinkClick r:id")
+        + r#"<a:hlinkClick r:id=""#.len();
+    let rid_end = slide_xml[rid_start..].find('"').expect("rid close") + rid_start;
+    let rid = &slide_xml[rid_start..rid_end];
+    assert!(
+        rels.contains(&format!(
+            r#"Id="{rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com" TargetMode="External""#
+        )),
+        "expected hyperlink Relationship for {rid}, got: {rels}"
+    );
+    assert!(
+        rels.contains("notesSlide"),
+        "existing notes relationship must be left in place: {rels}"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "set_shape_hyperlink");
+    assert_eq!(
+        edit.semantic_diff[0].after.as_deref(),
+        Some("https://example.com")
+    );
+    assert_untouched_entries_identical(
+        &before,
+        &patched.bytes,
+        &["ppt/slides/slide1.xml", "ppt/slides/_rels/slide1.xml.rels"],
+    );
+}
+
+#[test]
+fn set_shape_hyperlink_null_clears_hlink_and_rel() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_notes()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_hyperlink".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "url": "https://example.com",
+                }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_hyperlink".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "url": null,
+                }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let entries = zip_entries(&cleared.bytes);
+    let slide_xml = String::from_utf8(entries["ppt/slides/slide1.xml"].clone()).expect("slide xml");
+    let rels =
+        String::from_utf8(entries["ppt/slides/_rels/slide1.xml.rels"].clone()).expect("slide rels");
+    assert!(
+        !slide_xml.contains("hlinkClick"),
+        "expected a:hlinkClick cleared, got: {slide_xml}"
+    );
+    assert!(
+        !rels.contains("relationships/hyperlink"),
+        "expected hyperlink Relationship removed, got: {rels}"
+    );
+    assert!(
+        rels.contains("notesSlide"),
+        "existing notes relationship must remain: {rels}"
+    );
+    assert_eq!(clear.semantic_diff[0].after.as_deref(), Some("cleared"));
+}
+
+#[test]
+fn set_shape_hyperlink_rejects_bad_url_and_missing_shape() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    for url in ["javascript:alert(1)", "file:///tmp/x", ""] {
+        let error = handler
+            .validate_edit(
+                &model,
+                &[SemanticOperation {
+                    kind: "set_shape_hyperlink".into(),
+                    payload: serde_json::json!({
+                        "slide": "Slide 1",
+                        "shape": "Title",
+                        "url": url,
+                    }),
+                }],
+            )
+            .expect_err("bad url");
+        let message = error.to_string().to_lowercase();
+        assert!(
+            message.contains("url")
+                || message.contains("http")
+                || message.contains("mailto")
+                || message.contains("empty"),
+            "unexpected error for `{url}`: {error}"
+        );
+    }
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_hyperlink".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Missing",
+                    "url": "https://example.com",
+                }),
+            }],
+        )
+        .expect_err("missing shape");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("not found") || message.contains("missing"),
+        "unexpected error: {error}"
+    );
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);

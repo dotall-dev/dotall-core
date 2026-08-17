@@ -16,6 +16,11 @@ use crate::selector;
 /// Blank slide template duplicated into new `ppt/slides/slideN.xml` parts.
 const BLANK_SLIDE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld></p:sld>"#;
 
+const HYPERLINK_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
+
+const EMPTY_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#;
+
 struct PackagePatch {
     replacements: BTreeMap<String, Vec<u8>>,
     additions: BTreeMap<String, Vec<u8>>,
@@ -52,9 +57,10 @@ pub fn validate(
         "set_shape_strikethrough" => validate_set_shape_strikethrough(model, operation),
         "set_shape_vert_align" => validate_set_shape_vert_align(model, operation),
         "set_shape_caps" => validate_set_shape_caps(model, operation),
+        "set_shape_hyperlink" => validate_set_shape_hyperlink(model, operation),
         "replace_shape_text" => validate_replace_shape_text(model, operation),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, set_table_cell_text, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_hyperlink, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -399,6 +405,51 @@ fn validate_set_shape_caps(
             change: "set_shape_caps".into(),
             before: None,
             after: Some(match caps {
+                Some(value) => value.to_owned(),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_shape_hyperlink(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let shape_ref = required_str(&operation.payload, "shape")?;
+    let url = optional_hyperlink_url(&operation.payload, "url")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let shape = slide
+        .shapes
+        .iter()
+        .find(|shape| shape.name == shape_ref || shape.element_id == shape_ref)
+        .ok_or_else(|| format_error(format!("shape `{shape_ref}` was not found")))?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_shape_hyperlink".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "shape": shape.name,
+                "url": url,
+                "part_name": slide.part_name,
+                "element_id": shape.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, shape.name),
+            element_id: shape.element_id.clone(),
+            change: "set_shape_hyperlink".into(),
+            before: None,
+            after: Some(match url {
                 Some(value) => value.to_owned(),
                 None => "cleared".into(),
             }),
@@ -1167,6 +1218,12 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 removals: BTreeSet::new(),
             }
         }
+        "set_shape_hyperlink" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let shape = required_str(&operation.payload, "shape")?;
+            let url = optional_hyperlink_url(&operation.payload, "url")?;
+            set_shape_hyperlink_patch(package, part_name, shape, url)?
+        }
         other => {
             return Err(format_error(format!(
                 "cannot apply unsupported pptx edit `{other}`"
@@ -1517,6 +1574,208 @@ pub fn patch_shape_caps(xml: &[u8], shape: &str, caps: Option<&str>) -> Result<V
         ))),
         None => patch_shape_clear_run_attr(xml, shape, "cap"),
     }
+}
+
+fn set_shape_hyperlink_patch(
+    package: &[u8],
+    part_name: &str,
+    shape: &str,
+    url: Option<&str>,
+) -> Result<PackagePatch> {
+    let slide_xml = entry_bytes(package, part_name)?;
+    let rels_name = slide_relationship_part(part_name);
+    let rels_exist = has_entry(package, &rels_name)?;
+    let rels_xml = if rels_exist {
+        entry_bytes(package, &rels_name)?
+    } else {
+        EMPTY_RELATIONSHIPS.to_vec()
+    };
+    let existing_rid = existing_hlink_rid(&slide_xml, shape)?;
+
+    let (patched_slide, patched_rels, write_rels) = match url {
+        Some(url) => {
+            let rid = match existing_rid {
+                Some(rid) => rid,
+                None => {
+                    let used = relationship_id_numbers(&rels_xml)?;
+                    format!("rId{}", lowest_unused_number(&used))
+                }
+            };
+            let patched_slide = patch_shape_hlink_click(&slide_xml, shape, Some(&rid))?;
+            let patched_rels = upsert_hyperlink_relationship(&rels_xml, &rid, url)?;
+            (patched_slide, patched_rels, true)
+        }
+        None => {
+            let patched_slide = patch_shape_hlink_click(&slide_xml, shape, None)?;
+            let patched_rels = if let Some(rid) = existing_rid {
+                remove_relationship(&rels_xml, &rid)?
+            } else {
+                rels_xml
+            };
+            (patched_slide, patched_rels, rels_exist)
+        }
+    };
+
+    let mut replacements = BTreeMap::from([(part_name.to_owned(), patched_slide)]);
+    let mut additions = BTreeMap::new();
+    if write_rels {
+        if rels_exist {
+            replacements.insert(rels_name, patched_rels);
+        } else {
+            additions.insert(rels_name, patched_rels);
+        }
+    }
+
+    Ok(PackagePatch {
+        replacements,
+        additions,
+        removals: BTreeSet::new(),
+    })
+}
+
+fn upsert_hyperlink_relationship(xml: &[u8], rid: &str, url: &str) -> Result<Vec<u8>> {
+    let without = remove_relationship(xml, rid)?;
+    insert_before_close(
+        &without,
+        "Relationships",
+        &hyperlink_relationship_tag(rid, url),
+    )
+}
+
+fn hyperlink_relationship_tag(rid: &str, url: &str) -> String {
+    format!(
+        r#"<Relationship Id="{rid}" Type="{HYPERLINK_REL_TYPE}" Target="{}" TargetMode="External"/>"#,
+        escape_xml_attr(url)
+    )
+}
+
+fn existing_hlink_rid(xml: &[u8], shape: &str) -> Result<Option<String>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let (sp_start, sp_end) = shape_sp_span(source, shape)?;
+    let sp = &source[sp_start..sp_end];
+    let (cnv_start, cnv_end) = c_nv_pr_span(sp, shape)?;
+    let cnv = &sp[cnv_start..cnv_end];
+    let Some(at) = find_tag(cnv, 0, "a:hlinkClick") else {
+        return Ok(None);
+    };
+    let tag_end = cnv[at..]
+        .find('>')
+        .map(|offset| at + offset + 1)
+        .ok_or_else(|| format_error("unterminated a:hlinkClick"))?;
+    Ok(tag_attribute(&cnv[at..tag_end], "r:id"))
+}
+
+fn patch_shape_hlink_click(xml: &[u8], shape: &str, rid: Option<&str>) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let (sp_start, sp_end) = shape_sp_span(source, shape)?;
+    let sp = &source[sp_start..sp_end];
+    let patched_sp = match rid {
+        Some(rid) => set_c_nv_pr_hlink(sp, shape, rid)?,
+        None => clear_c_nv_pr_hlink(sp, shape)?,
+    };
+    Ok(format!("{}{}{}", &source[..sp_start], patched_sp, &source[sp_end..]).into_bytes())
+}
+
+fn shape_sp_span(source: &str, shape: &str) -> Result<(usize, usize)> {
+    let needle = format!("name=\"{shape}\"");
+    let name_at = source
+        .find(&needle)
+        .ok_or_else(|| format_error(format!("shape `{shape}` was not found in slide XML")))?;
+    let sp_start = source[..name_at]
+        .rfind("<p:sp")
+        .ok_or_else(|| format_error("shape is missing a p:sp wrapper"))?;
+    let rel_end = source[name_at..]
+        .find("</p:sp>")
+        .ok_or_else(|| format_error("shape is missing a closing p:sp"))?;
+    let sp_end = name_at + rel_end + "</p:sp>".len();
+    let sp = &source[sp_start..sp_end];
+    if sp.contains("<p:graphicFrame")
+        || sp.contains("<a:graphic")
+        || sp.contains("<mc:AlternateContent")
+    {
+        return Err(format_error("cannot edit non-text shape"));
+    }
+    Ok((sp_start, sp_end))
+}
+
+fn c_nv_pr_span(sp: &str, shape: &str) -> Result<(usize, usize)> {
+    let needle = format!("name=\"{shape}\"");
+    let name_at = sp
+        .find(&needle)
+        .ok_or_else(|| format_error(format!("shape `{shape}` is missing p:cNvPr")))?;
+    let start = sp[..name_at]
+        .rfind("<p:cNvPr")
+        .ok_or_else(|| format_error("shape is missing p:cNvPr"))?;
+    let open_end = sp[start..]
+        .find('>')
+        .map(|offset| start + offset + 1)
+        .ok_or_else(|| format_error("unterminated p:cNvPr"))?;
+    if sp[start..open_end].ends_with("/>") {
+        return Ok((start, open_end));
+    }
+    let close = "</p:cNvPr>";
+    let end = sp[open_end..]
+        .find(close)
+        .map(|offset| open_end + offset + close.len())
+        .ok_or_else(|| format_error("shape is missing closing p:cNvPr"))?;
+    Ok((start, end))
+}
+
+fn set_c_nv_pr_hlink(sp: &str, shape: &str, rid: &str) -> Result<String> {
+    let (start, end) = c_nv_pr_span(sp, shape)?;
+    let element = &sp[start..end];
+    let hlink = format!(r#"<a:hlinkClick r:id="{rid}"/>"#);
+    let patched_element = if let Some(open) = element.strip_suffix("/>") {
+        format!("{open}>{hlink}</p:cNvPr>")
+    } else {
+        let inner_start = element
+            .find('>')
+            .map(|offset| offset + 1)
+            .ok_or_else(|| format_error("unterminated p:cNvPr"))?;
+        let close = "</p:cNvPr>";
+        let inner_end = element
+            .len()
+            .checked_sub(close.len())
+            .filter(|end| *end >= inner_start)
+            .ok_or_else(|| format_error("unterminated p:cNvPr"))?;
+        let inner = strip_hlink_click(&element[inner_start..inner_end])?;
+        format!("{}{hlink}{inner}{close}", &element[..inner_start])
+    };
+    Ok(format!("{}{}{}", &sp[..start], patched_element, &sp[end..]))
+}
+
+fn clear_c_nv_pr_hlink(sp: &str, shape: &str) -> Result<String> {
+    let (start, end) = c_nv_pr_span(sp, shape)?;
+    let element = &sp[start..end];
+    if element.ends_with("/>") {
+        return Ok(sp.to_owned());
+    }
+    let inner_start = element
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated p:cNvPr"))?;
+    let close = "</p:cNvPr>";
+    let inner_end = element
+        .len()
+        .checked_sub(close.len())
+        .filter(|end| *end >= inner_start)
+        .ok_or_else(|| format_error("unterminated p:cNvPr"))?;
+    let inner = strip_hlink_click(&element[inner_start..inner_end])?;
+    let patched_element = if inner.trim().is_empty() {
+        let open = &element[..inner_start - 1];
+        format!("{open}/>")
+    } else {
+        format!("{}{inner}{close}", &element[..inner_start])
+    };
+    Ok(format!("{}{}{}", &sp[..start], patched_element, &sp[end..]))
+}
+
+fn strip_hlink_click(xml: &str) -> Result<String> {
+    let bytes = remove_matching_tag(xml.as_bytes(), "a:hlinkClick", |_| true)?;
+    String::from_utf8(bytes)
+        .map_err(|error| format_error(format!("hlinkClick strip is not UTF-8: {error}")))
 }
 
 pub fn patch_shape_font_size(xml: &[u8], shape: &str, size_pt: Option<f64>) -> Result<Vec<u8>> {
@@ -2693,6 +2952,39 @@ fn optional_caps<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option
             }
         }
     }
+}
+
+fn optional_hyperlink_url<'a>(
+    payload: &'a serde_json::Value,
+    key: &str,
+) -> Result<Option<&'a str>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => {
+            let text = value
+                .as_str()
+                .filter(|text| !text.is_empty())
+                .ok_or_else(|| format_error(format!("`{key}` must be a non-empty string")))?;
+            if is_allowed_external_url(text) {
+                Ok(Some(text))
+            } else {
+                Err(format_error(format!(
+                    "`{key}` must start with http://, https://, or mailto:"
+                )))
+            }
+        }
+    }
+}
+
+fn is_allowed_external_url(url: &str) -> bool {
+    starts_with_ignore_ascii_case(url, "http://")
+        || starts_with_ignore_ascii_case(url, "https://")
+        || starts_with_ignore_ascii_case(url, "mailto:")
+}
+
+fn starts_with_ignore_ascii_case(haystack: &str, prefix: &str) -> bool {
+    haystack.len() >= prefix.len()
+        && haystack.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
 }
 
 fn optional_srgb_color(payload: &serde_json::Value, key: &str) -> Result<Option<String>> {
