@@ -108,6 +108,13 @@ pub enum XlsxEditOp {
         /// A1 range (`A1:D10`); `None` clears the print area.
         range: Option<String>,
     },
+    SetPrintTitles {
+        sheet: String,
+        /// Row span `1:1`; `None` omits/clears rows when paired with cols.
+        rows: Option<String>,
+        /// Column span `A:B`; `None` omits/clears cols when paired with rows.
+        cols: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

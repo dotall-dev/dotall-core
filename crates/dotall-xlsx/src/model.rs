@@ -32,7 +32,21 @@ pub struct SheetModel {
     /// Print area as A1 (`A1:D10`). Absent when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub print_area: Option<String>,
+    /// Print titles (rows/cols to repeat). Absent when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub print_titles: Option<PrintTitles>,
     pub cells: Vec<CellModel>,
+}
+
+/// Worksheet print titles (`_xlnm.Print_Titles`): repeat rows and/or columns when printing.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct PrintTitles {
+    /// Row span like `1:1` (1-based inclusive). Absent when only columns repeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<String>,
+    /// Column span like `A:B`. Absent when only rows repeat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cols: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

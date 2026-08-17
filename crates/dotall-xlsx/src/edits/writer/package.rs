@@ -100,6 +100,19 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             bytes,
         });
     }
+    if let [XlsxEditOp::SetPrintTitles { sheet, rows, cols }] = operations.as_slice() {
+        let patch = workbook::set_print_titles(&original, sheet, rows.as_deref(), cols.as_deref())?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
     if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
         let patch = workbook::define_name(&original, name, formula)?;
         let bytes = rebuild_package(
@@ -262,6 +275,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetTabColor { .. }
                 | XlsxEditOp::SetAutoFilter { .. }
                 | XlsxEditOp::SetPrintArea { .. }
+                | XlsxEditOp::SetPrintTitles { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -295,7 +309,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::HideSheet { .. }
             | XlsxEditOp::SetTabColor { .. }
             | XlsxEditOp::SetAutoFilter { .. }
-            | XlsxEditOp::SetPrintArea { .. } => {
+            | XlsxEditOp::SetPrintArea { .. }
+            | XlsxEditOp::SetPrintTitles { .. } => {
                 unreachable!("structural operations return above")
             }
         };

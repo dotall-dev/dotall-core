@@ -35,7 +35,8 @@ pub(super) fn patch(
             | XlsxEditOp::HideSheet { .. }
             | XlsxEditOp::SetTabColor { .. }
             | XlsxEditOp::SetAutoFilter { .. }
-            | XlsxEditOp::SetPrintArea { .. } => {
+            | XlsxEditOp::SetPrintArea { .. }
+            | XlsxEditOp::SetPrintTitles { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -146,7 +147,8 @@ pub(super) fn patch(
                 | XlsxEditOp::HideSheet { .. }
                 | XlsxEditOp::SetTabColor { .. }
                 | XlsxEditOp::SetAutoFilter { .. }
-                | XlsxEditOp::SetPrintArea { .. } => {
+                | XlsxEditOp::SetPrintArea { .. }
+                | XlsxEditOp::SetPrintTitles { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -180,7 +182,8 @@ pub(super) fn patch(
             | XlsxEditOp::HideSheet { .. }
             | XlsxEditOp::SetTabColor { .. }
             | XlsxEditOp::SetAutoFilter { .. }
-            | XlsxEditOp::SetPrintArea { .. } => {
+            | XlsxEditOp::SetPrintArea { .. }
+            | XlsxEditOp::SetPrintTitles { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -314,7 +317,8 @@ fn render_new_cell(
         | XlsxEditOp::HideSheet { .. }
         | XlsxEditOp::SetTabColor { .. }
         | XlsxEditOp::SetAutoFilter { .. }
-        | XlsxEditOp::SetPrintArea { .. } => {
+        | XlsxEditOp::SetPrintArea { .. }
+        | XlsxEditOp::SetPrintTitles { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -493,7 +497,8 @@ fn render_cell_parts(
         | XlsxEditOp::HideSheet { .. }
         | XlsxEditOp::SetTabColor { .. }
         | XlsxEditOp::SetAutoFilter { .. }
-        | XlsxEditOp::SetPrintArea { .. } => {
+        | XlsxEditOp::SetPrintArea { .. }
+        | XlsxEditOp::SetPrintTitles { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

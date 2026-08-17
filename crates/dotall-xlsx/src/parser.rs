@@ -60,6 +60,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
 
     let worksheet_parts = parse_worksheet_parts(&source_bytes, source)?;
     let print_areas = parse_print_areas(&source_bytes, source)?;
+    let print_titles_map = parse_print_titles(&source_bytes, source)?;
     let style_catalog = parse_style_catalog(&source_bytes, source)?;
     let mut used_style_indices = BTreeSet::new();
 
@@ -79,13 +80,17 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                     cell_styles: BTreeMap::new(),
                 });
             let print_area = print_areas.get(&name).cloned();
+            let print_titles = print_titles_map.get(&name).cloned();
             parse_sheet(
                 &mut workbook,
                 source,
                 name,
                 index as u32,
                 part,
-                print_area,
+                PrintExtras {
+                    print_area,
+                    print_titles,
+                },
                 SheetStyleContext {
                     catalog: &style_catalog,
                     used_indices: &mut used_style_indices,
@@ -116,7 +121,7 @@ fn parse_sheet<RS, R>(
     name: String,
     index: u32,
     part: WorksheetPart,
-    print_area: Option<String>,
+    print: PrintExtras,
     styles: SheetStyleContext<'_>,
 ) -> Result<SheetModel>
 where
@@ -193,9 +198,15 @@ where
         freeze_panes: part.freeze_panes,
         tab_color: part.tab_color,
         auto_filter: part.auto_filter,
-        print_area,
+        print_area: print.print_area,
+        print_titles: print.print_titles,
         cells,
     })
+}
+
+struct PrintExtras {
+    print_area: Option<String>,
+    print_titles: Option<crate::model::PrintTitles>,
 }
 
 fn resolve_cell_style(
@@ -572,6 +583,111 @@ fn normalize_print_area_formula(raw: &str) -> Option<String> {
         return None;
     }
     Some(range_part.to_ascii_uppercase())
+}
+
+fn parse_print_titles(
+    package: &[u8],
+    source: &Path,
+) -> Result<BTreeMap<String, crate::model::PrintTitles>> {
+    let workbook = entry_bytes(package, "xl/workbook.xml", source)?;
+    let sheet_names: Vec<String> = parse_workbook_sheets(&workbook, source)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let mut titles = BTreeMap::new();
+    let mut reader = XmlReader::from_reader(workbook.as_slice());
+    let mut buffer = Vec::new();
+    let mut current_local_sheet: Option<u32> = None;
+    let mut in_print_titles = false;
+    let mut formula = String::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid workbook XML: {error}")))?
+        {
+            Event::Start(element) if local_name(element.name().as_ref()) == b"definedName" => {
+                let mut name = None;
+                let mut local_sheet_id = None;
+                for attribute in element.attributes().flatten() {
+                    match local_name(attribute.key.as_ref()) {
+                        b"name" => {
+                            name = Some(
+                                String::from_utf8_lossy(attribute.value.as_ref()).into_owned(),
+                            );
+                        }
+                        b"localSheetId" => {
+                            local_sheet_id = parse_u32_attr(attribute.value.as_ref());
+                        }
+                        _ => {}
+                    }
+                }
+                if name.as_deref() == Some("_xlnm.Print_Titles") {
+                    in_print_titles = true;
+                    current_local_sheet = local_sheet_id;
+                    formula.clear();
+                }
+            }
+            Event::Text(text) if in_print_titles => {
+                let decoded = String::from_utf8_lossy(text.as_ref());
+                match quick_xml::escape::unescape(&decoded) {
+                    Ok(unescaped) => formula.push_str(&unescaped),
+                    Err(_) => formula.push_str(&decoded),
+                }
+            }
+            Event::End(element)
+                if in_print_titles && local_name(element.name().as_ref()) == b"definedName" =>
+            {
+                if let Some(local_id) = current_local_sheet
+                    && let Some(sheet_name) = sheet_names.get(local_id as usize)
+                    && let Some(parsed) = normalize_print_titles_formula(&formula)
+                {
+                    titles.insert(sheet_name.clone(), parsed);
+                }
+                in_print_titles = false;
+                current_local_sheet = None;
+                formula.clear();
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(titles)
+}
+
+fn normalize_print_titles_formula(raw: &str) -> Option<crate::model::PrintTitles> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut rows = None;
+    let mut cols = None;
+    for part in trimmed.split(',') {
+        let range_part = part
+            .rsplit_once('!')
+            .map(|(_, range)| range)
+            .unwrap_or(part)
+            .trim()
+            .replace('$', "");
+        if range_part.is_empty() {
+            continue;
+        }
+        let upper = range_part.to_ascii_uppercase();
+        if upper
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+        {
+            rows = Some(upper);
+        } else {
+            cols = Some(upper);
+        }
+    }
+    if rows.is_none() && cols.is_none() {
+        return None;
+    }
+    Some(crate::model::PrintTitles { rows, cols })
 }
 
 fn parse_freeze_panes(xml: &[u8], source: &Path) -> Result<Option<String>> {

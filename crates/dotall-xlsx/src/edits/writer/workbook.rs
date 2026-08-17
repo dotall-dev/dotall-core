@@ -115,9 +115,37 @@ pub(super) fn set_print_area(
     let patched = match range {
         Some(a1) => {
             let formula = print_area_formula(&sheet.name, a1);
-            upsert_print_area_defined_name(&workbook, local_sheet_id, &formula)?
+            upsert_local_defined_name(&workbook, "_xlnm.Print_Area", local_sheet_id, &formula)?
         }
-        None => remove_print_area_defined_name(&workbook, local_sheet_id)?,
+        None => remove_local_defined_name(&workbook, "_xlnm.Print_Area", local_sheet_id)?,
+    };
+    Ok(PackagePatch {
+        replacements: BTreeMap::from([("xl/workbook.xml".into(), patched)]),
+        additions: BTreeMap::new(),
+        removals: BTreeSet::new(),
+    })
+}
+
+/// Set or clear sheet print titles (`_xlnm.Print_Titles`). Patches only workbook.xml.
+pub(super) fn set_print_titles(
+    package: &[u8],
+    sheet_name: &str,
+    rows: Option<&str>,
+    cols: Option<&str>,
+) -> Result<PackagePatch> {
+    let workbook = entry_bytes(package, "xl/workbook.xml")?;
+    let sheets = sheets(&workbook)?;
+    let sheet = find_sheet(&sheets, sheet_name)?;
+    let local_sheet_id = sheets
+        .iter()
+        .position(|candidate| candidate.name.eq_ignore_ascii_case(&sheet.name))
+        .ok_or_else(|| writer_error(format!("worksheet `{}` was not found", sheet.name)))?;
+    let patched = match (rows, cols) {
+        (None, None) => remove_local_defined_name(&workbook, "_xlnm.Print_Titles", local_sheet_id)?,
+        _ => {
+            let formula = print_titles_formula(&sheet.name, rows, cols);
+            upsert_local_defined_name(&workbook, "_xlnm.Print_Titles", local_sheet_id, &formula)?
+        }
     };
     Ok(PackagePatch {
         replacements: BTreeMap::from([("xl/workbook.xml".into(), patched)]),
@@ -133,6 +161,35 @@ fn print_area_formula(sheet: &str, a1: &str) -> String {
     } else {
         format!("{sheet}!{absolute}")
     }
+}
+
+fn print_titles_formula(sheet: &str, rows: Option<&str>, cols: Option<&str>) -> String {
+    let mut parts = Vec::new();
+    if let Some(rows) = rows {
+        let absolute = rows
+            .split(':')
+            .map(|part| format!("${part}"))
+            .collect::<Vec<_>>()
+            .join(":");
+        parts.push(if sheet_needs_quotes(sheet) {
+            format!("'{}'!{absolute}", sheet.replace('\'', "''"))
+        } else {
+            format!("{sheet}!{absolute}")
+        });
+    }
+    if let Some(cols) = cols {
+        let absolute = cols
+            .split(':')
+            .map(|part| format!("${part}"))
+            .collect::<Vec<_>>()
+            .join(":");
+        parts.push(if sheet_needs_quotes(sheet) {
+            format!("'{}'!{absolute}", sheet.replace('\'', "''"))
+        } else {
+            format!("{sheet}!{absolute}")
+        });
+    }
+    parts.join(",")
 }
 
 fn a1_to_absolute(a1: &str) -> String {
@@ -155,8 +212,9 @@ fn sheet_needs_quotes(name: &str) -> bool {
         || name.is_empty()
 }
 
-fn upsert_print_area_defined_name(
+fn upsert_local_defined_name(
     xml: &[u8],
+    defined_name: &str,
     local_sheet_id: usize,
     formula: &str,
 ) -> Result<Vec<u8>> {
@@ -164,10 +222,10 @@ fn upsert_print_area_defined_name(
         .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
     let escaped_formula = escape_xml(formula);
     let tag = format!(
-        r#"<definedName name="_xlnm.Print_Area" localSheetId="{local_sheet_id}">{escaped_formula}</definedName>"#
+        r#"<definedName name="{defined_name}" localSheetId="{local_sheet_id}">{escaped_formula}</definedName>"#
     );
     if let Some((open_start, _open_end, close_end)) =
-        find_print_area_defined_name(text, local_sheet_id)?
+        find_local_defined_name(text, defined_name, local_sheet_id)?
     {
         return Ok(format!("{}{}{}", &text[..open_start], tag, &text[close_end..]).into_bytes());
     }
@@ -193,11 +251,15 @@ fn upsert_print_area_defined_name(
     .into_bytes())
 }
 
-fn remove_print_area_defined_name(xml: &[u8], local_sheet_id: usize) -> Result<Vec<u8>> {
+fn remove_local_defined_name(
+    xml: &[u8],
+    defined_name: &str,
+    local_sheet_id: usize,
+) -> Result<Vec<u8>> {
     let text = std::str::from_utf8(xml)
         .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
     let Some((open_start, _open_end, close_end)) =
-        find_print_area_defined_name(text, local_sheet_id)?
+        find_local_defined_name(text, defined_name, local_sheet_id)?
     else {
         return Ok(xml.to_vec());
     };
@@ -222,12 +284,13 @@ fn remove_print_area_defined_name(xml: &[u8], local_sheet_id: usize) -> Result<V
     Ok(patched.into_bytes())
 }
 
-fn find_print_area_defined_name(
+fn find_local_defined_name(
     text: &str,
+    defined_name: &str,
     local_sheet_id: usize,
 ) -> Result<Option<(usize, usize, usize)>> {
     let mut cursor = 0;
-    let needle = r#"name="_xlnm.Print_Area""#;
+    let needle = format!(r#"name="{defined_name}""#);
     let local_needle = format!(r#"localSheetId="{local_sheet_id}""#);
     while let Some(offset) = text[cursor..].find("<definedName") {
         let start = cursor + offset;
@@ -245,7 +308,7 @@ fn find_print_area_defined_name(
             .map(|rel| open_end + rel)
             .ok_or_else(|| writer_error("unterminated definedName"))?;
         let close_end = close + "</definedName>".len();
-        if open_tag.contains(needle) && open_tag.contains(&local_needle) {
+        if open_tag.contains(&needle) && open_tag.contains(&local_needle) {
             return Ok(Some((start, open_end, close_end)));
         }
         cursor = close_end;

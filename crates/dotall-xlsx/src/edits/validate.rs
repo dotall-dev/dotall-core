@@ -82,6 +82,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_print_titles"))
+    {
+        return validate_set_print_titles_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "define_name"))
     {
         return validate_define_name_operations(model, operations);
@@ -175,6 +181,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_print_area"))
     {
         return validate_set_print_area_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_print_titles"))
+    {
+        return validate_set_print_titles_operations(model, operations);
     }
     if operations
         .iter()
@@ -1024,6 +1036,151 @@ fn validate_set_print_area_operations(
     })
 }
 
+fn normalize_print_title_rows(raw: &str) -> Result<String> {
+    let trimmed = raw.trim().to_ascii_uppercase();
+    let (start, end) = trimmed
+        .split_once(':')
+        .ok_or_else(|| format_error("set_print_titles `rows` must look like `1:1`"))?;
+    let start_row: u32 = start.parse().map_err(|_| {
+        format_error("set_print_titles `rows` is invalid: expected numeric row span")
+    })?;
+    let end_row: u32 = end.parse().map_err(|_| {
+        format_error("set_print_titles `rows` is invalid: expected numeric row span")
+    })?;
+    if start_row == 0 || end_row == 0 || start_row > end_row {
+        return Err(format_error(
+            "set_print_titles `rows` is invalid: row span must be 1-based and ascending",
+        ));
+    }
+    Ok(format!("{start_row}:{end_row}"))
+}
+
+fn normalize_print_title_cols(raw: &str) -> Result<String> {
+    let trimmed = raw.trim().to_ascii_uppercase();
+    let (start, end) = trimmed
+        .split_once(':')
+        .ok_or_else(|| format_error("set_print_titles `cols` must look like `A:A`"))?;
+    if start.is_empty()
+        || end.is_empty()
+        || !start.chars().all(|c| c.is_ascii_uppercase())
+        || !end.chars().all(|c| c.is_ascii_uppercase())
+    {
+        return Err(format_error(
+            "set_print_titles `cols` is invalid: expected column letters like `A:B`",
+        ));
+    }
+    // Lexicographic compare is wrong for AA vs B; compare via column indices.
+    let start_idx = column_letters_to_index(start)?;
+    let end_idx = column_letters_to_index(end)?;
+    if start_idx > end_idx {
+        return Err(format_error(
+            "set_print_titles `cols` is invalid: column span must be ascending",
+        ));
+    }
+    Ok(format!("{start}:{end}"))
+}
+
+fn column_letters_to_index(letters: &str) -> Result<u32> {
+    let mut value = 0_u32;
+    for ch in letters.chars() {
+        if !ch.is_ascii_uppercase() {
+            return Err(format_error(
+                "set_print_titles `cols` is invalid: expected column letters",
+            ));
+        }
+        value = value
+            .checked_mul(26)
+            .and_then(|v| v.checked_add((ch as u32) - ('A' as u32) + 1))
+            .ok_or_else(|| format_error("set_print_titles `cols` is invalid"))?;
+    }
+    if value == 0 {
+        return Err(format_error("set_print_titles `cols` is invalid"));
+    }
+    Ok(value)
+}
+
+fn optional_print_title_field(
+    payload: &Value,
+    key: &str,
+    normalize: fn(&str) -> Result<String>,
+) -> Result<Option<String>> {
+    match payload.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(normalize(value)?)),
+        _ => Err(format_error(format!(
+            "set_print_titles `{key}` must be a string or null"
+        ))),
+    }
+}
+
+fn validate_set_print_titles_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_print_titles edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_print_titles" {
+        return Err(format_error("unsupported set_print_titles edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_print_titles requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.print_titles.clone().map(|titles| {
+        format!(
+            "rows={},cols={}",
+            titles.rows.as_deref().unwrap_or(""),
+            titles.cols.as_deref().unwrap_or("")
+        )
+    });
+    let rows = optional_print_title_field(&operation.payload, "rows", normalize_print_title_rows)?;
+    let cols = optional_print_title_field(&operation.payload, "cols", normalize_print_title_cols)?;
+    let after = if rows.is_none() && cols.is_none() {
+        None
+    } else {
+        Some(format!(
+            "rows={},cols={}",
+            rows.as_deref().unwrap_or(""),
+            cols.as_deref().unwrap_or("")
+        ))
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_print_titles".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "rows": rows,
+                "cols": cols,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!print_titles"),
+            element_id: format!("print_titles:{canonical_sheet}"),
+            change: "set_print_titles".into(),
+            before,
+            after,
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_define_name_operations(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
@@ -1736,7 +1893,7 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::DeleteName { .. }
             | XlsxEditOp::HideSheet { .. } | XlsxEditOp::SetTabColor { .. }
             | XlsxEditOp::SetAutoFilter { .. }
-            | XlsxEditOp::SetPrintArea { .. } => {
+            | XlsxEditOp::SetPrintArea { .. } | XlsxEditOp::SetPrintTitles { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -1852,7 +2009,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::HideSheet { .. }
         | XlsxEditOp::SetTabColor { .. }
         | XlsxEditOp::SetAutoFilter { .. }
-        | XlsxEditOp::SetPrintArea { .. } => {
+        | XlsxEditOp::SetPrintArea { .. }
+        | XlsxEditOp::SetPrintTitles { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )
@@ -1927,6 +2085,7 @@ mod tests {
             tab_color: None,
             auto_filter: None,
             print_area: None,
+            print_titles: None,
             cells,
         }
     }

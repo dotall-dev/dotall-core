@@ -129,6 +129,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_tab_color",
             "set_auto_filter",
             "set_print_area",
+            "set_print_titles",
         ]
     );
     assert_eq!(
@@ -608,6 +609,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                 tab_color: None,
                 auto_filter: None,
                 print_area: None,
+                print_titles: None,
                 cells,
             }],
             named_ranges: Vec::new(),

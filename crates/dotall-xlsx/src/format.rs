@@ -82,6 +82,7 @@ impl FormatHandler for XlsxFormat {
                     "tab_color": sheet.tab_color,
                     "auto_filter": sheet.auto_filter,
                     "print_area": sheet.print_area,
+                    "print_titles": sheet.print_titles,
                 })
             })
             .collect::<Vec<_>>();
@@ -590,6 +591,19 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "range": "A1:B5" }
             }),
             safety: "Surgically patches only xl/workbook.xml definedNames for _xlnm.Print_Area. Pass null range to clear. Worksheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_print_titles".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description:
+                "Set or clear worksheet print titles (repeat rows/cols) via _xlnm.Print_Titles."
+                    .into(),
+            example: json!({
+                "kind": "set_print_titles",
+                "payload": { "sheet": "Revenue", "rows": "1:1", "cols": "A:A" }
+            }),
+            safety: "Surgically patches only xl/workbook.xml definedNames for _xlnm.Print_Titles. Pass null rows and cols to clear. Worksheets stay byte-identical."
                 .into(),
         },
     ]
