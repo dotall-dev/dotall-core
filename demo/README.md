@@ -106,6 +106,14 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"define_name","payload":{"name":"Rate","formula":"Inputs!$B$2"}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 8: hide_sheet (workbook.xml only), then unhide for demos
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"hide_sheet","payload":{"sheet":"Revenue","hidden":true}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"hide_sheet","payload":{"sheet":"Revenue","hidden":false}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -178,9 +186,14 @@ $DOTALL read demo/deck.pptx --selector-kind slide --selector 'Slide 2'
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"rename_shape","payload":{"slide":"Slide 2","shape":"Headline","name":"Title"}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 8 — bold Title text on the title slide (content-on-slide)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_shape_bold","payload":{"slide":"Slide 2","shape":"Title","bold":true}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` patch only the target slide part.
 
 ---
 
@@ -244,6 +257,11 @@ $DOTALL read demo/memo.docx --selector-kind paragraphs --selector '2:3'
 # Wave 7 — paragraph alignment (w:jc)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_alignment","payload":{"index":2,"alignment":"center"}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 8 — paragraph bold (w:b on runs)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_bold","payload":{"index":2,"bold":true}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
@@ -324,6 +342,13 @@ $DOTALL inspect demo/form.pdf
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_document_metadata","payload":{"title":"Vendor Intake Form","author":"Dotall Demo","subject":"Vendor onboarding"}}]'
 $DOTALL apply demo/form.pdf --all
+
+# Wave 8 — clear every editable AcroForm field
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"clear_all_form_fields","payload":{}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL read demo/form.pdf --selector-kind field --selector Name
+# expect blank Name; Agree/Priority Off
 ```
 
 ---
