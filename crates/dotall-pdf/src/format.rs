@@ -11,7 +11,8 @@ use serde_json::json;
 use crate::detection;
 use crate::edits;
 use crate::model::{
-    PdfCommentModel, PdfDocumentModel, PdfFieldModel, PdfMetadata, SCHEMA_ID, SCHEMA_VERSION,
+    PdfCommentModel, PdfDocumentModel, PdfFieldModel, PdfMetadata, PdfPictureModel, SCHEMA_ID,
+    SCHEMA_VERSION,
 };
 use crate::{FORMAT_ID, parser, projection, selector};
 
@@ -65,6 +66,7 @@ impl FormatHandler for PdfFormat {
                 "field_names": document.fields.iter().map(|field| &field.name).collect::<Vec<_>>(),
                 "fields": document.fields.iter().map(field_summary).collect::<Vec<_>>(),
                 "comments": document.comments.iter().map(comment_summary).collect::<Vec<_>>(),
+                "pictures": document.pictures.iter().map(picture_summary).collect::<Vec<_>>(),
                 "charts": serde_json::Value::Array(Vec::new()),
                 "encrypted": document.encrypted,
                 "has_signature": document.fields.iter().any(|field| field.field_type == "sig"),
@@ -194,6 +196,14 @@ fn comment_summary(comment: &PdfCommentModel) -> serde_json::Value {
         "subtype": comment.subtype,
         "contents": comment.contents,
         "author": comment.author,
+    })
+}
+
+fn picture_summary(picture: &PdfPictureModel) -> serde_json::Value {
+    json!({
+        "element_id": picture.element_id,
+        "page": picture.page,
+        "subtype": picture.subtype,
     })
 }
 
@@ -468,6 +478,21 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 }
             }),
             safety: "Adds a new /Annot /Subtype /Text object and appends it to the page /Annots array. Does not rewrite page content streams or mutate existing annot dictionaries. Rejects encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "insert_picture".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert a new stamp annotation with an image appearance on a page."
+                .into(),
+            example: json!({
+                "kind": "insert_picture",
+                "payload": {
+                    "page": 1,
+                    "bytes_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+                    "content_type": "image/png"
+                }
+            }),
+            safety: "Adds a new /Annot /Subtype /Stamp with annot-owned /AP Form XObject wrapping an Image XObject. Does not rewrite page /Contents or mutate existing annot dictionaries (including Widgets). PNG is limited to IHDR 8-bit RGB (1×1 in v0); JPEG uses DCTDecode. Rejects draw_image/replace_picture and encrypted/signed PDFs.".into(),
         },
     ]
 }

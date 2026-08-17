@@ -3,22 +3,23 @@ name: pdf
 description: >-
   Work with .pdf files through Dotall MCP. Use when inspecting pages, listing
   AcroForm fields, filling or clearing a text/checkbox/choice/radio field,
-  inserting a sticky/text comment annotation, setting /Info metadata, or
-  reverting a PDF in a Dotall workspace. Do not rewrite page content streams.
+  inserting a sticky/text comment annotation, inserting a stamp/picture
+  annotation, setting /Info metadata, or reverting a PDF in a Dotall workspace.
+  Do not rewrite page content streams.
 ---
 
 # PDF via Dotall MCP
 
-v0 is **form fill + document metadata + comment annotations**. Do not unzip,
-reprint, or rewrite page operators. Charts are N/A for PDF (`summary.charts` is
-omit or `[]`).
+v0 is **form fill + document metadata + comment annotations + stamp pictures**.
+Do not unzip, reprint, or rewrite page operators. Charts are N/A for PDF
+(`summary.charts` is omit or `[]`).
 
 ## Workflow
 
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | set_form_field_edit | clear_form_field | clear_all_form_fields | set_document_metadata | insert_comment (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | set_form_field_edit | clear_form_field | clear_all_form_fields | set_document_metadata | insert_comment | insert_picture (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -46,9 +47,11 @@ Inspect surfaces `no_export` per field from `/Ff` bit 3.
 Inspect surfaces `multi_select` per choice field from `/Ff` bit 20.
 Inspect surfaces `combo` per choice field from `/Ff` bit 17.
 
-Inspect `comments[]` lists non-Widget page annotations (`/Text`, `/FreeText`)
-with `element_id`, `page`, `subtype`, `contents`, and `author`. AcroForm
-`/Widget` annots are form fields, not comments. `charts` is omit or `[]`.
+Inspect `comments[]` lists sticky/text annotations (`/Text`, `/FreeText`) with
+`element_id`, `page`, `subtype`, `contents`, and `author`. Inspect `pictures[]`
+lists stamp annotations (`/Stamp`) with `element_id`, `page`, and `subtype` —
+always present (possibly `[]`). AcroForm `/Widget` annots are form fields, not
+comments or pictures. `charts` is omit or `[]`.
 
 ### Edit
 
@@ -274,6 +277,27 @@ Insert a sticky/text comment annotation (new object only; no content-stream draw
 Does **not** rewrite page `/Contents` streams or mutate existing annot dicts
 (including Widget form fields). Rejected: `set_comment`, `delete_comment`,
 `replace_comment`, and any draw-text-on-page kind.
+
+Insert a stamp/picture annotation (new object only; never page content-stream
+rewrite):
+
+```json
+{
+  "kind": "insert_picture",
+  "payload": {
+    "page": 1,
+    "bytes_base64": "<standard base64 of png or jpeg bytes>",
+    "content_type": "image/png",
+    "rect": [400, 700, 500, 780]
+  }
+}
+```
+
+`page` is 1-based. `content_type` defaults to `image/png`. `rect` defaults to
+`[400, 700, 500, 780]`. Creates `/Type /Annot /Subtype /Stamp` with annot-owned
+`/AP` Form XObject wrapping an Image XObject, then appends to `/Annots`. PNG is
+limited to IHDR 8-bit RGB (1×1 in v0); JPEG uses `/Filter /DCTDecode`. Rejected:
+`draw_image`, `replace_picture`, `delete_picture`, and content-stream drawing.
 
 Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios
 without an export value, empty metadata payloads.

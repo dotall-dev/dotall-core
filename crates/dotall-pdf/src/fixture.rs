@@ -34,6 +34,26 @@ pub fn minimal_text_annot_pdf() -> Vec<u8> {
     )
 }
 
+/// Widget + `/Text` comment + `/Stamp` (no `/AP` required for inspect).
+pub fn minimal_stamp_annot_pdf() -> Vec<u8> {
+    let content = content_object(4, "BT /F1 24 Tf 10 150 Td (Hello) Tj ET\n");
+    assemble(
+        &[
+            "1 0 obj<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>endobj\n",
+            "2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n",
+            "3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R /Resources<< /Font<< /F1 5 0 R >> >> /Annots [7 0 R 9 0 R 10 0 R] >>endobj\n",
+            content.as_str(),
+            "5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n",
+            "6 0 obj<< /Fields [8 0 R] /NeedAppearances true >>endobj\n",
+            "7 0 obj<< /Type /Annot /Subtype /Widget /Rect [10 10 120 40] /P 3 0 R /Parent 8 0 R /F 4 >>endobj\n",
+            "8 0 obj<< /FT /Tx /T (Name) /V (Ada) /Kids [7 0 R] >>endobj\n",
+            "9 0 obj<< /Type /Annot /Subtype /Text /Rect [150 170 180 200] /P 3 0 R /Contents (Check Name field) /T (Dotall) /C [1 1 0] /Open false /Name /Comment >>endobj\n",
+            "10 0 obj<< /Type /Annot /Subtype /Stamp /Rect [20 120 60 160] /P 3 0 R >>endobj\n",
+        ],
+        None,
+    )
+}
+
 /// Checkbox (`/Btn`) with export values `Yes` / `Off`, initially Off.
 pub fn minimal_checkbox_pdf() -> Vec<u8> {
     let content = content_object(4, "BT /F1 24 Tf 10 150 Td (Hello) Tj ET\n");

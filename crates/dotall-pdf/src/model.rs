@@ -11,6 +11,8 @@ pub struct PdfDocumentModel {
     pub fields: Vec<PdfFieldModel>,
     #[serde(default)]
     pub comments: Vec<PdfCommentModel>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pictures: Vec<PdfPictureModel>,
     pub outline: Vec<String>,
     pub encrypted: bool,
     #[serde(default)]
@@ -25,6 +27,13 @@ pub struct PdfCommentModel {
     pub contents: String,
     #[serde(default)]
     pub author: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PdfPictureModel {
+    pub element_id: String,
+    pub page: u32,
+    pub subtype: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]

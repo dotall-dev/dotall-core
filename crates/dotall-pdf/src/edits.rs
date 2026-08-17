@@ -1,10 +1,12 @@
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 
+use base64::Engine;
 use dotall_core::{
     DependencyImpact, DotallError, PatchedOutput, Result, SemanticChange, SemanticOperation,
     ValidatedEdit,
 };
-use lopdf::{Dictionary, Document, Object, ObjectId};
+use flate2::read::ZlibDecoder;
+use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
 
 use crate::FORMAT_ID;
 use crate::model::{PdfDocumentModel, PdfFieldModel, SCHEMA_ID, SCHEMA_VERSION};
@@ -48,12 +50,17 @@ pub fn validate(
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         "insert_comment" => validate_insert_comment(model, operation),
+        "insert_picture" => validate_insert_picture(model, operation),
         "set_comment" | "delete_comment" | "replace_comment" => Err(format_error(format!(
             "unsupported pdf edit `{}`; mutate-existing comment ops are rejected — use insert_comment",
             operation.kind
         ))),
+        "draw_image" | "replace_picture" | "delete_picture" => Err(format_error(format!(
+            "unsupported pdf edit `{}`; mutate/draw picture ops are rejected — use insert_picture (stamp annotation)",
+            operation.kind
+        ))),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_form_field_rich_text, set_form_field_no_export, set_form_field_multi_select, set_form_field_combo, set_form_field_edit, set_document_metadata, clear_document_metadata, or insert_comment"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_form_field_rich_text, set_form_field_no_export, set_form_field_multi_select, set_form_field_combo, set_form_field_edit, set_document_metadata, clear_document_metadata, insert_comment, or insert_picture"
         ))),
     }
 }
@@ -1002,6 +1009,61 @@ fn validate_insert_comment(
     })
 }
 
+fn validate_insert_picture(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let page = required_page(&operation.payload)?;
+    if page == 0 || page > model.page_count {
+        return Err(format_error(format!(
+            "page `{page}` is out of range (1..={})",
+            model.page_count
+        )));
+    }
+    let encoded = required_str(&operation.payload, "bytes_base64")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| format_error(format!("invalid bytes_base64: {error}")))?;
+    if bytes.is_empty() {
+        return Err(format_error("`bytes_base64` must not be empty"));
+    }
+    let content_type = optional_str(&operation.payload, "content_type")?.unwrap_or("image/png");
+    let content_type = normalize_image_content_type(content_type)?;
+    // Validate decode early so agents get a clear error before apply.
+    let _image = decode_stamp_image(&bytes, content_type)?;
+    let rect = optional_rect(&operation.payload)?.unwrap_or([400.0, 700.0, 500.0, 780.0]);
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_picture".into(),
+            payload: serde_json::json!({
+                "page": page,
+                "bytes_base64": encoded,
+                "content_type": content_type,
+                "rect": rect,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("page:{page}"),
+            element_id: model
+                .pages
+                .iter()
+                .find(|p| p.number == page)
+                .map(|p| p.element_id.clone())
+                .unwrap_or_else(|| model.document_id.clone()),
+            change: "insert_picture".into(),
+            before: None,
+            after: Some(format!("stamp:{content_type}")),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 pub fn apply(source: &std::path::Path, edit: &ValidatedEdit) -> Result<PatchedOutput> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
         path: source.to_path_buf(),
@@ -1199,6 +1261,18 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let contents = required_str(&operation.payload, "contents")?;
             let author = optional_str(&operation.payload, "author")?.unwrap_or("Dotall");
             insert_text_annot(&mut document, page, contents, author)?;
+        }
+        "insert_picture" => {
+            let page = required_page(&operation.payload)?;
+            let encoded = required_str(&operation.payload, "bytes_base64")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .map_err(|error| format_error(format!("invalid bytes_base64: {error}")))?;
+            let content_type =
+                optional_str(&operation.payload, "content_type")?.unwrap_or("image/png");
+            let content_type = normalize_image_content_type(content_type)?;
+            let rect = optional_rect(&operation.payload)?.unwrap_or([400.0, 700.0, 500.0, 780.0]);
+            insert_stamp_annot(&mut document, page, &bytes, content_type, rect)?;
         }
         other => {
             return Err(format_error(format!(
@@ -1582,7 +1656,84 @@ fn insert_text_annot(
     annot.set("Open", Object::Boolean(false));
     annot.set("Name", Object::Name(b"Comment".to_vec()));
     let annot_id = document.add_object(Object::Dictionary(annot));
+    append_page_annot(document, page_id, annot_id)
+}
 
+fn insert_stamp_annot(
+    document: &mut Document,
+    page_number: u32,
+    image_bytes: &[u8],
+    content_type: &str,
+    rect: [f32; 4],
+) -> Result<()> {
+    let pages = document.get_pages();
+    let page_id = pages
+        .get(&page_number)
+        .copied()
+        .ok_or_else(|| format_error(format!("page `{page_number}` was not found in the PDF")))?;
+    let image = decode_stamp_image(image_bytes, content_type)?;
+    let width = (rect[2] - rect[0]).abs().max(1.0);
+    let height = (rect[3] - rect[1]).abs().max(1.0);
+
+    let mut image_dict = Dictionary::new();
+    image_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    image_dict.set("Subtype", Object::Name(b"Image".to_vec()));
+    image_dict.set("Width", Object::Integer(i64::from(image.width)));
+    image_dict.set("Height", Object::Integer(i64::from(image.height)));
+    image_dict.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+    image_dict.set("BitsPerComponent", Object::Integer(8));
+    if image.dct_decode {
+        image_dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
+    }
+    let image_id = document.add_object(Object::Stream(Stream::new(image_dict, image.pixels)));
+
+    let mut resources = Dictionary::new();
+    let mut xobjects = Dictionary::new();
+    xobjects.set("Im0", Object::Reference(image_id));
+    resources.set("XObject", Object::Dictionary(xobjects));
+
+    let form_content = format!("q {width} 0 0 {height} 0 0 cm /Im0 Do Q\n");
+    let mut form_dict = Dictionary::new();
+    form_dict.set("Type", Object::Name(b"XObject".to_vec()));
+    form_dict.set("Subtype", Object::Name(b"Form".to_vec()));
+    form_dict.set(
+        "BBox",
+        Object::Array(vec![
+            Object::Real(0.0),
+            Object::Real(0.0),
+            Object::Real(width),
+            Object::Real(height),
+        ]),
+    );
+    form_dict.set("Resources", Object::Dictionary(resources));
+    let form_id = document.add_object(Object::Stream(Stream::new(
+        form_dict,
+        form_content.into_bytes(),
+    )));
+
+    let mut ap = Dictionary::new();
+    ap.set("N", Object::Reference(form_id));
+
+    let mut annot = Dictionary::new();
+    annot.set("Type", Object::Name(b"Annot".to_vec()));
+    annot.set("Subtype", Object::Name(b"Stamp".to_vec()));
+    annot.set(
+        "Rect",
+        Object::Array(vec![
+            Object::Real(rect[0]),
+            Object::Real(rect[1]),
+            Object::Real(rect[2]),
+            Object::Real(rect[3]),
+        ]),
+    );
+    annot.set("P", Object::Reference(page_id));
+    annot.set("AP", Object::Dictionary(ap));
+    annot.set("F", Object::Integer(4));
+    let annot_id = document.add_object(Object::Dictionary(annot));
+    append_page_annot(document, page_id, annot_id)
+}
+
+fn append_page_annot(document: &mut Document, page_id: ObjectId, annot_id: ObjectId) -> Result<()> {
     // Resolve /Annots when stored as an indirect array so we only append a ref.
     let annots_target = {
         let page_obj = document
@@ -1637,6 +1788,174 @@ fn insert_text_annot(
 enum AnnotsTarget {
     Inline,
     Indirect(ObjectId),
+}
+
+struct DecodedStampImage {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    dct_decode: bool,
+}
+
+fn normalize_image_content_type(content_type: &str) -> Result<&'static str> {
+    match content_type {
+        "image/png" | "png" => Ok("image/png"),
+        "image/jpeg" | "image/jpg" | "jpeg" | "jpg" => Ok("image/jpeg"),
+        other => Err(format_error(format!(
+            "insert_picture supports PNG IHDR 8-bit RGB / JPEG; unsupported content_type `{other}`"
+        ))),
+    }
+}
+
+fn decode_stamp_image(bytes: &[u8], content_type: &str) -> Result<DecodedStampImage> {
+    match content_type {
+        "image/png" => decode_png_ihdr_8bit_rgb_1x1(bytes),
+        "image/jpeg" => decode_jpeg_dct(bytes),
+        other => Err(format_error(format!(
+            "insert_picture supports PNG IHDR 8-bit RGB / JPEG; unsupported content_type `{other}`"
+        ))),
+    }
+}
+
+/// Tiny PNG decoder: only 1×1 8-bit RGB (color type 2), non-interlaced.
+fn decode_png_ihdr_8bit_rgb_1x1(bytes: &[u8]) -> Result<DecodedStampImage> {
+    const SIG: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    if bytes.len() < 8 || &bytes[..8] != SIG {
+        return Err(format_error(
+            "insert_picture supports PNG IHDR 8-bit RGB / JPEG; invalid PNG signature",
+        ));
+    }
+    let mut offset = 8;
+    let mut width = 0u32;
+    let mut height = 0u32;
+    let mut bit_depth = 0u8;
+    let mut color_type = 0u8;
+    let mut interlace = 0u8;
+    let mut saw_ihdr = false;
+    let mut idat = Vec::new();
+    while offset + 8 <= bytes.len() {
+        let len = u32::from_be_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as usize;
+        let chunk_type = &bytes[offset + 4..offset + 8];
+        let data_start = offset + 8;
+        let data_end = data_start
+            .checked_add(len)
+            .ok_or_else(|| format_error("invalid PNG chunk length"))?;
+        if data_end + 4 > bytes.len() {
+            return Err(format_error("truncated PNG chunk"));
+        }
+        let data = &bytes[data_start..data_end];
+        match chunk_type {
+            b"IHDR" => {
+                if len < 13 {
+                    return Err(format_error(
+                        "insert_picture supports PNG IHDR 8-bit RGB / JPEG; invalid IHDR",
+                    ));
+                }
+                width = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                height = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+                bit_depth = data[8];
+                color_type = data[9];
+                interlace = data[12];
+                saw_ihdr = true;
+            }
+            b"IDAT" => idat.extend_from_slice(data),
+            b"IEND" => break,
+            _ => {}
+        }
+        offset = data_end + 4;
+    }
+    if !saw_ihdr {
+        return Err(format_error(
+            "insert_picture supports PNG IHDR 8-bit RGB / JPEG; missing IHDR",
+        ));
+    }
+    if width != 1 || height != 1 || bit_depth != 8 || color_type != 2 || interlace != 0 {
+        return Err(format_error(
+            "insert_picture supports PNG IHDR 8-bit RGB (1×1 non-interlaced) / JPEG",
+        ));
+    }
+    if idat.is_empty() {
+        return Err(format_error(
+            "insert_picture supports PNG IHDR 8-bit RGB / JPEG; missing IDAT",
+        ));
+    }
+    let mut decoder = ZlibDecoder::new(idat.as_slice());
+    let mut inflated = Vec::new();
+    decoder
+        .read_to_end(&mut inflated)
+        .map_err(|error| format_error(format!("invalid PNG IDAT: {error}")))?;
+    // Filter byte + RGB
+    if inflated.len() < 4 {
+        return Err(format_error(
+            "insert_picture supports PNG IHDR 8-bit RGB / JPEG; truncated scanline",
+        ));
+    }
+    let pixels = inflated[1..4].to_vec();
+    Ok(DecodedStampImage {
+        width: 1,
+        height: 1,
+        pixels,
+        dct_decode: false,
+    })
+}
+
+fn decode_jpeg_dct(bytes: &[u8]) -> Result<DecodedStampImage> {
+    if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
+        return Err(format_error(
+            "insert_picture supports PNG IHDR 8-bit RGB / JPEG; invalid JPEG SOI",
+        ));
+    }
+    let (width, height) = jpeg_dimensions(bytes)?;
+    Ok(DecodedStampImage {
+        width,
+        height,
+        pixels: bytes.to_vec(),
+        dct_decode: true,
+    })
+}
+
+fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32)> {
+    let mut i = 2usize;
+    while i + 9 < bytes.len() {
+        if bytes[i] != 0xFF {
+            i += 1;
+            continue;
+        }
+        let marker = bytes[i + 1];
+        if marker == 0xD8 || marker == 0xD9 || (0xD0..=0xD7).contains(&marker) {
+            i += 2;
+            continue;
+        }
+        if i + 4 > bytes.len() {
+            break;
+        }
+        let seg_len = u16::from_be_bytes([bytes[i + 2], bytes[i + 3]]) as usize;
+        if seg_len < 2 || i + 2 + seg_len > bytes.len() {
+            return Err(format_error(
+                "insert_picture supports PNG IHDR 8-bit RGB / JPEG; truncated JPEG segment",
+            ));
+        }
+        // SOF0 / SOF1 / SOF2
+        if matches!(marker, 0xC0..=0xC2) && seg_len >= 7 {
+            let height = u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]) as u32;
+            let width = u16::from_be_bytes([bytes[i + 7], bytes[i + 8]]) as u32;
+            if width == 0 || height == 0 {
+                return Err(format_error(
+                    "insert_picture supports PNG IHDR 8-bit RGB / JPEG; invalid JPEG dimensions",
+                ));
+            }
+            return Ok((width, height));
+        }
+        i += 2 + seg_len;
+    }
+    Err(format_error(
+        "insert_picture supports PNG IHDR 8-bit RGB / JPEG; missing JPEG SOF",
+    ))
 }
 
 fn sticky_rect_for_page(document: &Document, page_id: ObjectId) -> Vec<Object> {
@@ -1717,6 +2036,23 @@ fn optional_positive_u32(payload: &serde_json::Value, key: &str) -> Result<Optio
             .and_then(|v| u32::try_from(v).ok())
             .map(Some)
             .ok_or_else(|| format_error(format!("`{key}` must be a positive integer or null"))),
+    }
+}
+
+fn optional_rect(payload: &serde_json::Value) -> Result<Option<[f32; 4]>> {
+    match payload.get("rect") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Array(items)) if items.len() == 4 => {
+            let mut rect = [0.0f32; 4];
+            for (index, item) in items.iter().enumerate() {
+                let Some(number) = item.as_f64() else {
+                    return Err(format_error("`rect` must be an array of 4 numbers"));
+                };
+                rect[index] = number as f32;
+            }
+            Ok(Some(rect))
+        }
+        Some(_) => Err(format_error("`rect` must be an array of 4 numbers")),
     }
 }
 

@@ -6,7 +6,8 @@ use lopdf::{Document, Object};
 use crate::FORMAT_ID;
 use crate::ids;
 use crate::model::{
-    PdfCommentModel, PdfDocumentModel, PdfFieldModel, PdfMetadata, PdfPageModel, SCHEMA_VERSION,
+    PdfCommentModel, PdfDocumentModel, PdfFieldModel, PdfMetadata, PdfPageModel, PdfPictureModel,
+    SCHEMA_VERSION,
 };
 
 pub fn parse_pdf(source: &Path) -> Result<PdfDocumentModel> {
@@ -49,7 +50,7 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
 
     let mut fields = Vec::new();
     collect_fields(&document, &mut fields)?;
-    let comments = collect_comments(&document, &pages_map)?;
+    let (comments, pictures) = collect_annots(&document, &pages_map)?;
     let outline = collect_outline(&document);
     let metadata = collect_metadata(&document);
 
@@ -59,6 +60,7 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
         pages,
         fields,
         comments,
+        pictures,
         outline,
         encrypted: false,
         metadata,
@@ -76,6 +78,7 @@ fn encrypted_stub(source_hash: &str) -> PdfDocumentModel {
         pages: Vec::new(),
         fields: Vec::new(),
         comments: Vec::new(),
+        pictures: Vec::new(),
         outline: Vec::new(),
         encrypted: true,
         metadata: PdfMetadata::default(),
@@ -115,11 +118,12 @@ fn collect_fields(document: &Document, fields: &mut Vec<PdfFieldModel>) -> Resul
     walk_field_list(document, list, "", fields)
 }
 
-fn collect_comments(
+fn collect_annots(
     document: &Document,
     pages_map: &std::collections::BTreeMap<u32, lopdf::ObjectId>,
-) -> Result<Vec<PdfCommentModel>> {
+) -> Result<(Vec<PdfCommentModel>, Vec<PdfPictureModel>)> {
     let mut comments = Vec::new();
+    let mut pictures = Vec::new();
     let mut page_numbers: Vec<_> = pages_map.keys().copied().collect();
     page_numbers.sort_unstable();
     for number in page_numbers {
@@ -152,6 +156,16 @@ fn collect_comments(
             if subtype == "Widget" {
                 continue;
             }
+            let object_key = format!("{}:{}", object_id.0, object_id.1);
+            let element_id = ids::annot_id(&object_key, SCHEMA_VERSION);
+            if subtype == "Stamp" {
+                pictures.push(PdfPictureModel {
+                    element_id,
+                    page: number,
+                    subtype,
+                });
+                continue;
+            }
             if subtype != "Text" && subtype != "FreeText" {
                 continue;
             }
@@ -165,9 +179,8 @@ fn collect_comments(
                 .ok()
                 .and_then(object_string)
                 .unwrap_or_default();
-            let object_key = format!("{}:{}", object_id.0, object_id.1);
             comments.push(PdfCommentModel {
-                element_id: ids::annot_id(&object_key, SCHEMA_VERSION),
+                element_id,
                 page: number,
                 subtype,
                 contents,
@@ -175,7 +188,7 @@ fn collect_comments(
             });
         }
     }
-    Ok(comments)
+    Ok((comments, pictures))
 }
 
 fn walk_field_list(
