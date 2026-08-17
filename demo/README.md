@@ -238,6 +238,15 @@ $DOTALL apply demo/financials.xlsx --all
 $DOTALL inspect demo/financials.xlsx
 # expect sheets[].right_to_left true for Revenue
 
+# Wave 23: insert_comment (legacy Excel Note: comments.xml + VML)
+$DOTALL inspect demo/financials.xlsx
+# expect summary.comments[] (empty) and summary.charts[]
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"insert_comment","payload":{"sheet":"Inputs","address":"B2","text":"Review Rate","author":"Dotall"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect comments[] sheet=Inputs cell=B2 text=Review Rate (Excel Review → Notes)
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -387,6 +396,15 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_table_cell_bold","payload":{"slide":"Slide 1","table":"Metrics","row":1,"col":1,"bold":true}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 23 — insert_comment (classic ISO commentAuthors + comments/commentN.xml)
+$DOTALL inspect demo/deck.pptx
+# expect summary.comments[] and summary.charts[]
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"insert_comment","payload":{"slide":"Slide 1","text":"Check KPI","author":"Dotall"}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL inspect demo/deck.pptx
+# expect comments[] slide=Slide 1 text=Check KPI
 ```
 
 Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `set_shape_strikethrough` / `set_shape_vert_align` / `set_shape_caps` / `replace_shape_text` / `replace_across_shapes` / `set_shape_bullet` / `set_table_cell_text` / `set_table_cell_bold` patch only the target slide part. `set_shape_hyperlink` also patches that slide’s `.rels`.
@@ -531,6 +549,15 @@ $DOTALL apply demo/memo.docx --all
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_cell_shading","payload":{"index":3,"color":"#FFFF00"}}]'
 $DOTALL apply demo/memo.docx --all
+
+# Wave 23 — insert_comment (word/comments.xml + commentRange on a paragraph)
+$DOTALL inspect demo/memo.docx
+# expect summary.comments[] and summary.charts []
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"insert_comment","payload":{"index":1,"text":"Confirm owners","author":"Dotall"}}]'
+$DOTALL apply demo/memo.docx --all
+$DOTALL inspect demo/memo.docx
+# expect comments[] index=1 text=Confirm owners
 ```
 
 ---
@@ -754,6 +781,15 @@ $DOTALL inspect demo/form.pdf
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field_edit","payload":{"name":"Department","edit":false}}]'
 $DOTALL apply demo/form.pdf --all
+
+# Wave 23 — insert_comment (sticky /Text annotation; not a content-stream rewrite)
+$DOTALL inspect demo/form.pdf
+# expect summary.comments[] (Widget fields are not comments) and summary.charts []
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"insert_comment","payload":{"page":1,"contents":"Check Name field","author":"Dotall"}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect comments[] page=1 subtype=Text contents=Check Name field
 ```
 
 ---
