@@ -30,7 +30,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetColumnWidth { .. }
             | XlsxEditOp::SetRowHeight { .. }
             | XlsxEditOp::FreezePanes { .. }
-            | XlsxEditOp::DefineName { .. } => {
+            | XlsxEditOp::DefineName { .. }
+            | XlsxEditOp::DeleteName { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -136,7 +137,8 @@ pub(super) fn patch(
                 | XlsxEditOp::SetColumnWidth { .. }
                 | XlsxEditOp::SetRowHeight { .. }
                 | XlsxEditOp::FreezePanes { .. }
-                | XlsxEditOp::DefineName { .. } => {
+                | XlsxEditOp::DefineName { .. }
+                | XlsxEditOp::DeleteName { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -165,7 +167,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetColumnWidth { .. }
             | XlsxEditOp::SetRowHeight { .. }
             | XlsxEditOp::FreezePanes { .. }
-            | XlsxEditOp::DefineName { .. } => {
+            | XlsxEditOp::DefineName { .. }
+            | XlsxEditOp::DeleteName { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -294,7 +297,8 @@ fn render_new_cell(
         | XlsxEditOp::SetColumnWidth { .. }
         | XlsxEditOp::SetRowHeight { .. }
         | XlsxEditOp::FreezePanes { .. }
-        | XlsxEditOp::DefineName { .. } => {
+        | XlsxEditOp::DefineName { .. }
+        | XlsxEditOp::DeleteName { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -468,7 +472,8 @@ fn render_cell_parts(
         | XlsxEditOp::SetColumnWidth { .. }
         | XlsxEditOp::SetRowHeight { .. }
         | XlsxEditOp::FreezePanes { .. }
-        | XlsxEditOp::DefineName { .. } => {
+        | XlsxEditOp::DefineName { .. }
+        | XlsxEditOp::DeleteName { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

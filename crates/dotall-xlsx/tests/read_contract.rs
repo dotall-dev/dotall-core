@@ -123,6 +123,8 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_column_width",
             "set_row_height",
             "freeze_panes",
+            "define_name",
+            "delete_name",
         ]
     );
     assert_eq!(

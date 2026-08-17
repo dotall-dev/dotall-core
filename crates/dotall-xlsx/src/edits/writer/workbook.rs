@@ -99,6 +99,17 @@ pub(super) fn define_name(package: &[u8], name: &str, formula: &str) -> Result<P
     })
 }
 
+/// Remove a workbook-scoped defined name. Patches only `xl/workbook.xml`.
+pub(super) fn delete_name(package: &[u8], name: &str) -> Result<PackagePatch> {
+    let workbook = entry_bytes(package, "xl/workbook.xml")?;
+    let patched = remove_defined_name(&workbook, name)?;
+    Ok(PackagePatch {
+        replacements: BTreeMap::from([("xl/workbook.xml".into(), patched)]),
+        additions: BTreeMap::new(),
+        removals: BTreeSet::new(),
+    })
+}
+
 pub(super) fn rename_sheet(package: &[u8], from: &str, to: &str) -> Result<PackagePatch> {
     let workbook = entry_bytes(package, "xl/workbook.xml")?;
     let sheets = sheets(&workbook)?;
@@ -588,6 +599,34 @@ fn upsert_defined_name(xml: &[u8], name: &str, formula: &str) -> Result<Vec<u8>>
         &text[sheets_close..]
     )
     .into_bytes())
+}
+
+fn remove_defined_name(xml: &[u8], name: &str) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
+    let Some((open_start, _open_end, close_end)) = find_defined_name(text, name)? else {
+        return Err(writer_error(format!("named range `{name}` was not found")));
+    };
+    let mut patched = format!("{}{}", &text[..open_start], &text[close_end..]);
+    // Drop empty <definedNames>...</definedNames> container when last name is removed.
+    if let Some(start) = patched.find("<definedNames") {
+        let open_end = patched[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| writer_error("unterminated definedNames"))?;
+        if !patched[start..open_end].ends_with("/>") {
+            let close = patched[open_end..]
+                .find("</definedNames>")
+                .map(|offset| open_end + offset)
+                .ok_or_else(|| writer_error("unterminated definedNames"))?;
+            let close_end = close + "</definedNames>".len();
+            let inner = patched[open_end..close].trim();
+            if inner.is_empty() {
+                patched = format!("{}{}", &patched[..start], &patched[close_end..]);
+            }
+        }
+    }
+    Ok(patched.into_bytes())
 }
 
 fn find_defined_name(text: &str, name: &str) -> Result<Option<(usize, usize, usize)>> {

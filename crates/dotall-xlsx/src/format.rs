@@ -530,6 +530,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Surgically patches only xl/workbook.xml definedNames; worksheets and other parts stay byte-identical."
                 .into(),
         },
+        EditCapability {
+            operation: "delete_name".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Remove a workbook-scoped defined name from xl/workbook.xml."
+                .into(),
+            example: json!({
+                "kind": "delete_name",
+                "payload": { "name": "Rate" }
+            }),
+            safety: "Surgically patches only xl/workbook.xml definedNames; worksheets and other parts stay byte-identical."
+                .into(),
+        },
     ]
 }
 

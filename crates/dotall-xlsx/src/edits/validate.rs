@@ -68,6 +68,12 @@ pub fn validate(
     {
         return validate_define_name_operations(model, operations);
     }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "delete_name"))
+    {
+        return validate_delete_name_operations(model, operations);
+    }
 
     let workbook = decode(model)?;
     let graph = build(&workbook);
@@ -131,6 +137,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "define_name"))
     {
         return validate_define_name_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "delete_name"))
+    {
+        return validate_delete_name_operations(model, operations);
     }
     if operations.iter().all(|operation| {
         !matches!(
@@ -817,6 +829,59 @@ fn validate_define_name_operations(
     })
 }
 
+fn validate_delete_name_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "delete_name edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "delete_name" {
+        return Err(format_error("unsupported delete_name edit"));
+    }
+    let name = operation
+        .payload
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format_error("delete_name requires a non-empty `name` field"))?
+        .to_owned();
+    let existing = workbook
+        .named_ranges
+        .iter()
+        .find(|range| range.name.eq_ignore_ascii_case(&name))
+        .ok_or_else(|| format_error(format!("named range `{name}` was not found")))?;
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "delete_name".into(),
+            payload: serde_json::json!({
+                "name": existing.name,
+                "element_id": existing.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("name:{}", existing.name),
+            element_id: existing.element_id.clone(),
+            change: "delete_name".into(),
+            before: Some(existing.formula.clone()),
+            after: None,
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn normalize_defined_name_formula(formula: &str) -> Result<String> {
     let trimmed = formula.trim();
     let body = trimmed.strip_prefix('=').unwrap_or(trimmed).trim();
@@ -1328,7 +1393,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::SetColumnWidth { .. }
             | XlsxEditOp::SetRowHeight { .. }
             | XlsxEditOp::FreezePanes { .. }
-            | XlsxEditOp::DefineName { .. } => {
+            | XlsxEditOp::DefineName { .. }
+            | XlsxEditOp::DeleteName { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -1439,7 +1505,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetColumnWidth { .. }
         | XlsxEditOp::SetRowHeight { .. }
         | XlsxEditOp::FreezePanes { .. }
-        | XlsxEditOp::DefineName { .. } => {
+        | XlsxEditOp::DefineName { .. }
+        | XlsxEditOp::DeleteName { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )

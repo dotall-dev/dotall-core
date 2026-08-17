@@ -92,6 +92,19 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             bytes,
         });
     }
+    if let [XlsxEditOp::DeleteName { name }] = operations.as_slice() {
+        let patch = workbook::delete_name(&original, name)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
     if let [XlsxEditOp::AddSheet { name, after }] = operations.as_slice() {
         let patch = workbook::add_sheet(&original, name, after.as_deref())?;
         let bytes = rebuild_package(
@@ -210,6 +223,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetRowHeight { .. }
                 | XlsxEditOp::FreezePanes { .. }
                 | XlsxEditOp::DefineName { .. }
+                | XlsxEditOp::DeleteName { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -238,7 +252,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetColumnWidth { .. }
             | XlsxEditOp::SetRowHeight { .. }
             | XlsxEditOp::FreezePanes { .. }
-            | XlsxEditOp::DefineName { .. } => {
+            | XlsxEditOp::DefineName { .. }
+            | XlsxEditOp::DeleteName { .. } => {
                 unreachable!("structural operations return above")
             }
         };

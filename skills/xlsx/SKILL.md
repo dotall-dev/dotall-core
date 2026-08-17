@@ -137,6 +137,12 @@ leading `=` on `formula` is optional and stripped):
 { "kind": "define_name", "payload": { "name": "Rate", "formula": "Inputs!$B$3" } }
 ```
 
+Remove a workbook-scoped named range (surgical `xl/workbook.xml` only):
+
+```json
+{ "kind": "delete_name", "payload": { "name": "Rate" } }
+```
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

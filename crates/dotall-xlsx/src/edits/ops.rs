@@ -86,6 +86,9 @@ pub enum XlsxEditOp {
         /// OOXML defined-name formula body (no leading `=`).
         formula: String,
     },
+    DeleteName {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

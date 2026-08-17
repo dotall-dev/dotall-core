@@ -114,6 +114,9 @@ pub(crate) fn parse_validated_operations(
                 name: required_string(operation, "name")?,
                 formula: required_string(operation, "formula")?,
             }),
+            "delete_name" => Ok(XlsxEditOp::DeleteName {
+                name: required_string(operation, "name")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
