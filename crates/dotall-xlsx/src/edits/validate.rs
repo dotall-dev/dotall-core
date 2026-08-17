@@ -42,6 +42,7 @@ pub fn validate(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
+    reject_unsupported_comment_or_chart_ops(operations)?;
     if operations
         .iter()
         .any(|operation| matches!(operation.kind.as_str(), "merge_cells" | "unmerge_cells"))
@@ -61,6 +62,18 @@ pub fn validate(
         .any(|operation| matches!(operation.kind.as_str(), "freeze_panes"))
     {
         return validate_freeze_panes_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "insert_comment"))
+    {
+        return validate_insert_comment_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "insert_picture"))
+    {
+        return validate_insert_picture_operations(model, operations);
     }
     if operations
         .iter()
@@ -127,6 +140,18 @@ pub fn validate(
         .any(|operation| matches!(operation.kind.as_str(), "set_header_footer"))
     {
         return validate_set_header_footer_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_cell_font"))
+    {
+        return validate_set_cell_font_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_cell_fill"))
+    {
+        return validate_set_cell_fill_operations(model, operations);
     }
     if operations
         .iter()
@@ -196,6 +221,7 @@ pub fn validate_with_source(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
 ) -> Result<ValidatedEdit> {
+    reject_unsupported_comment_or_chart_ops(operations)?;
     if operations.iter().any(|operation| {
         matches!(
             operation.kind.as_str(),
@@ -223,6 +249,18 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "freeze_panes"))
     {
         return validate_freeze_panes_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "insert_comment"))
+    {
+        return validate_insert_comment_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "insert_picture"))
+    {
+        return validate_insert_picture_operations(model, operations);
     }
     if operations
         .iter()
@@ -289,6 +327,18 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_header_footer"))
     {
         return validate_set_header_footer_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_cell_font"))
+    {
+        return validate_set_cell_font_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_cell_fill"))
+    {
+        return validate_set_cell_fill_operations(model, operations);
     }
     if operations
         .iter()
@@ -941,6 +991,242 @@ fn validate_freeze_panes_operations(
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
             notes: vec!["refs parsed; values not evaluated".into()],
+        },
+    })
+}
+
+fn reject_unsupported_comment_or_chart_ops(operations: &[SemanticOperation]) -> Result<()> {
+    for operation in operations {
+        let kind = operation.kind.as_str();
+        if matches!(
+            kind,
+            "set_comment"
+                | "delete_comment"
+                | "replace_comment"
+                | "update_comment"
+                | "set_picture"
+                | "delete_picture"
+                | "replace_picture"
+        ) {
+            return Err(unsupported_edit_capability(kind));
+        }
+        if kind.contains("chart") && kind != "insert_comment" {
+            return Err(unsupported_edit_capability(kind));
+        }
+    }
+    Ok(())
+}
+
+fn unsupported_edit_capability(kind: &str) -> DotallError {
+    DotallError::UnsupportedCapability {
+        format_id: FORMAT_ID.into(),
+        capability: kind.into(),
+        available: vec![
+            "insert_comment".into(),
+            "insert_picture".into(),
+            "set_cell_value".into(),
+            "set_cell_formula".into(),
+            "set_range".into(),
+            "freeze_panes".into(),
+        ],
+    }
+}
+
+fn validate_insert_comment_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "insert_comment edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "insert_comment" {
+        return Err(format_error("unsupported insert_comment edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("insert_comment requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let address_raw = operation
+        .payload
+        .get("address")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .ok_or_else(|| format_error("insert_comment requires a non-empty `address` field"))?;
+    let address = format_address(parse_address(address_raw)?);
+    let text = operation
+        .payload
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format_error("insert_comment requires a non-empty `text` field"))?;
+    let author = match operation.payload.get("author") {
+        None | Some(Value::Null) => "Dotall".to_owned(),
+        Some(Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                return Err(format_error(
+                    "insert_comment `author` must be non-empty when present",
+                ));
+            }
+            trimmed.to_owned()
+        }
+        _ => {
+            return Err(format_error(
+                "insert_comment `author` must be a string when present",
+            ));
+        }
+    };
+
+    let cell_exists = sheet
+        .cells
+        .iter()
+        .any(|cell| cell.address.eq_ignore_ascii_case(&address));
+    if !cell_exists {
+        return Err(format_error(format!(
+            "insert_comment requires an existing cell `{canonical_sheet}!{address}`"
+        )));
+    }
+    if workbook.comments.iter().any(|comment| {
+        comment.sheet.eq_ignore_ascii_case(&canonical_sheet)
+            && comment.cell.eq_ignore_ascii_case(&address)
+    }) {
+        return Err(format_error(format!(
+            "insert_comment rejected: cell `{canonical_sheet}!{address}` already has a comment"
+        )));
+    }
+
+    let element_id = ids::comment_id(&canonical_sheet, &address, MODEL_SCHEMA_VERSION);
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_comment".into(),
+            payload: serde_json::json!({
+                "sheet": &canonical_sheet,
+                "address": &address,
+                "element_id": &element_id,
+                "text": &text,
+                "author": &author,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!{address}"),
+            element_id,
+            change: "insert_comment".into(),
+            before: None,
+            after: Some(text),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_insert_picture_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    use base64::Engine;
+
+    if operations.len() != 1 {
+        return Err(format_error(
+            "insert_picture edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "insert_picture" {
+        return Err(format_error("unsupported insert_picture edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("insert_picture requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let from_cell_raw = operation
+        .payload
+        .get("from_cell")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|cell| !cell.is_empty())
+        .ok_or_else(|| format_error("insert_picture requires a non-empty `from_cell` field"))?;
+    let from_cell = format_address(parse_address(from_cell_raw)?);
+    let content_type = match operation.payload.get("content_type") {
+        None | Some(Value::Null) => "image/png".to_owned(),
+        Some(Value::String(value)) => {
+            let trimmed = value.trim();
+            if trimmed != "image/png" && trimmed != "image/jpeg" {
+                return Err(format_error(
+                    "insert_picture `content_type` must be image/png or image/jpeg",
+                ));
+            }
+            trimmed.to_owned()
+        }
+        _ => {
+            return Err(format_error(
+                "insert_picture `content_type` must be a string when present",
+            ));
+        }
+    };
+    let encoded = operation
+        .payload
+        .get("bytes_base64")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format_error("insert_picture requires a non-empty `bytes_base64` field"))?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| format_error(format!("insert_picture invalid base64: {error}")))?;
+    if bytes.is_empty() {
+        return Err(format_error("insert_picture rejects empty image bytes"));
+    }
+
+    let element_id = ids::picture_id(
+        &canonical_sheet,
+        &format!("pending:{from_cell}"),
+        MODEL_SCHEMA_VERSION,
+    );
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_picture".into(),
+            payload: serde_json::json!({
+                "sheet": &canonical_sheet,
+                "from_cell": &from_cell,
+                "bytes_base64": encoded,
+                "content_type": &content_type,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!{from_cell}"),
+            element_id,
+            change: "insert_picture".into(),
+            before: None,
+            after: Some(content_type),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
         },
     })
 }
@@ -1807,6 +2093,208 @@ fn validate_set_header_footer_operations(
             notes: Vec::new(),
         },
     })
+}
+
+fn validate_set_cell_font_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_cell_font edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_cell_font" {
+        return Err(format_error("unsupported set_cell_font edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_cell_font requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let address_raw = operation
+        .payload
+        .get("address")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .ok_or_else(|| format_error("set_cell_font requires a non-empty `address` field"))?;
+    let address = format_address(parse_address(address_raw)?);
+    let bold = optional_bool_field(&operation.payload, "bold")?;
+    let italic = optional_bool_field(&operation.payload, "italic")?;
+    let name = optional_non_empty_string_field(&operation.payload, "name")?;
+    let size_pt = optional_positive_f64_field(&operation.payload, "size_pt")?;
+    let color = match operation.payload.get("color") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(normalize_tab_color(value).map_err(|_| {
+            format_error("set_cell_font `color` must be a 6- or 8-digit RGB/AARRGGBB hex string")
+        })?),
+        _ => {
+            return Err(format_error(
+                "set_cell_font `color` must be a hex string when present",
+            ));
+        }
+    };
+    if bold.is_none() && italic.is_none() && name.is_none() && size_pt.is_none() && color.is_none()
+    {
+        return Err(format_error(
+            "set_cell_font requires at least one font field (`bold`, `italic`, `name`, `size_pt`, or `color`)",
+        ));
+    }
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_cell_font".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "address": address,
+                "bold": bold,
+                "italic": italic,
+                "name": name,
+                "size_pt": size_pt,
+                "color": color,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!{address}"),
+            element_id: ids::cell_id(&canonical_sheet, &address, MODEL_SCHEMA_VERSION),
+            change: "set_cell_font".into(),
+            before: None,
+            after: Some(format!(
+                "bold={:?} italic={:?} name={:?} size_pt={:?} color={:?}",
+                bold, italic, name, size_pt, color
+            )),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_cell_fill_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_cell_fill edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_cell_fill" {
+        return Err(format_error("unsupported set_cell_fill edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_cell_fill requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let address_raw = operation
+        .payload
+        .get("address")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|address| !address.is_empty())
+        .ok_or_else(|| format_error("set_cell_fill requires a non-empty `address` field"))?;
+    let address = format_address(parse_address(address_raw)?);
+    if !operation
+        .payload
+        .as_object()
+        .is_some_and(|obj| obj.contains_key("color"))
+    {
+        return Err(format_error(
+            "set_cell_fill requires a `color` field (hex string or null)",
+        ));
+    }
+    let color = match operation.payload.get("color") {
+        Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(normalize_tab_color(value).map_err(|_| {
+            format_error("set_cell_fill `color` must be a 6- or 8-digit RGB/AARRGGBB hex string")
+        })?),
+        _ => {
+            return Err(format_error(
+                "set_cell_fill `color` must be a hex string or null",
+            ));
+        }
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_cell_fill".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "address": address,
+                "color": color,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!{address}"),
+            element_id: ids::cell_id(&canonical_sheet, &address, MODEL_SCHEMA_VERSION),
+            change: "set_cell_fill".into(),
+            before: None,
+            after: color.clone().or_else(|| Some("cleared".into())),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn optional_bool_field(payload: &Value, field: &str) -> Result<Option<bool>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Bool(value)) => Ok(Some(*value)),
+        _ => Err(format_error(format!(
+            "set_cell_font `{field}` must be a boolean when present"
+        ))),
+    }
+}
+
+fn optional_non_empty_string_field(payload: &Value, field: &str) -> Result<Option<String>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.trim().to_owned())),
+        Some(Value::String(_)) => Err(format_error(format!(
+            "set_cell_font `{field}` must be a non-empty string when present"
+        ))),
+        _ => Err(format_error(format!(
+            "set_cell_font `{field}` must be a string when present"
+        ))),
+    }
+}
+
+fn optional_positive_f64_field(payload: &Value, field: &str) -> Result<Option<f64>> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(Some)
+            .ok_or_else(|| {
+                format_error(format!(
+                    "set_cell_font `{field}` must be a positive number when present"
+                ))
+            }),
+    }
 }
 
 fn validate_set_sheet_zoom_operations(
@@ -2738,9 +3226,13 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetCellFont { .. }
+        | XlsxEditOp::SetCellFill { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
-        | XlsxEditOp::SetRightToLeft { .. } => {
+        | XlsxEditOp::SetRightToLeft { .. }
+        | XlsxEditOp::InsertComment { .. }
+                | XlsxEditOp::InsertPicture { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -2865,11 +3357,15 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetCellFont { .. }
+        | XlsxEditOp::SetCellFill { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
-        | XlsxEditOp::SetRightToLeft { .. } => {
+        | XlsxEditOp::SetRightToLeft { .. }
+        | XlsxEditOp::InsertComment { .. }
+        | XlsxEditOp::InsertPicture { .. } => {
             unreachable!(
-                "sheet, merge, dimension, freeze, and define_name edits are validated separately"
+                "sheet, merge, dimension, freeze, define_name, insert_comment, and insert_picture edits are validated separately"
             )
         }
     }
@@ -2922,6 +3418,9 @@ mod tests {
                 formula: "=Inputs!$B$1".into(),
             }],
             style_table: Vec::new(),
+            comments: Vec::new(),
+            charts: Vec::new(),
+            pictures: Vec::new(),
             unmodeled: UnmodeledMap {
                 charts: PreservationStatus::Preserved,
                 pivots: PreservationStatus::Preserved,

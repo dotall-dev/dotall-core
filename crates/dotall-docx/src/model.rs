@@ -19,6 +19,32 @@ pub struct DocumentModel {
     /// Number of top-level `w:tbl` elements in `word/document.xml`.
     #[serde(default)]
     pub table_count: u32,
+    /// Comments from `word/comments.xml`, anchored to body paragraphs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<CommentModel>,
+    /// Inline pictures from `word/document.xml` drawings → `word/media/*`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pictures: Vec<PictureModel>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CommentModel {
+    pub element_id: String,
+    /// Anchored paragraph `element_id`.
+    pub paragraph: String,
+    /// Document-order paragraph index.
+    pub index: u32,
+    pub author: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PictureModel {
+    pub element_id: String,
+    /// Document-order paragraph index containing the drawing.
+    pub index: u32,
+    /// Package part path, e.g. `word/media/image1.png`.
+    pub part: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

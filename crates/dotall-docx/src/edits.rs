@@ -17,15 +17,29 @@ const HYPERLINK_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 const NUMBERING_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering";
+const COMMENTS_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+const IMAGE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
 const DOCUMENT_RELS_NAME: &str = "word/_rels/document.xml.rels";
 const NUMBERING_PART: &str = "word/numbering.xml";
+const COMMENTS_PART: &str = "word/comments.xml";
 const CONTENT_TYPES_NAME: &str = "[Content_Types].xml";
 const NUMBERING_OVERRIDE: &str = concat!(
     r#"<Override PartName="/word/numbering.xml" ContentType=""#,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml",
     r#""/>"#
 );
+const COMMENTS_OVERRIDE: &str = concat!(
+    r#"<Override PartName="/word/comments.xml" ContentType=""#,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml",
+    r#""/>"#
+);
+const PNG_DEFAULT: &str = r#"<Default Extension="png" ContentType="image/png"/>"#;
+const JPEG_DEFAULT: &str = r#"<Default Extension="jpeg" ContentType="image/jpeg"/>"#;
+const JPG_DEFAULT: &str = r#"<Default Extension="jpg" ContentType="image/jpeg"/>"#;
 const MINIMAL_BULLET_NUMBERING: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="hybridMultilevel"/><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val="&#8226;"/><w:lvlJc w:val="left"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>"#;
+const EMPTY_COMMENTS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"></w:comments>"#;
 const R_NAMESPACE: &str =
     r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
 const EMPTY_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#;
@@ -43,6 +57,8 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "delete_paragraph" => validate_delete_paragraph(model, operation),
         "set_paragraph_style" => validate_set_paragraph_style(model, operation),
         "set_paragraph_alignment" => validate_set_paragraph_alignment(model, operation),
+        "set_paragraph_spacing" => validate_set_paragraph_spacing(model, operation),
+        "insert_page_break" => validate_insert_page_break(model, operation),
         "set_paragraph_bold" => validate_set_paragraph_bold(model, operation),
         "set_paragraph_italic" => validate_set_paragraph_italic(model, operation),
         "set_paragraph_underline" => validate_set_paragraph_underline(model, operation),
@@ -58,6 +74,8 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_cell_shading" => validate_set_cell_shading(model, operation),
         "replace_paragraph_text" => validate_replace_paragraph_text(model, operation),
         "replace_across_paragraphs" => validate_replace_across_paragraphs(model, operation),
+        "insert_comment" => validate_insert_comment(model, operation),
+        "insert_picture" => validate_insert_picture(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -65,7 +83,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_paragraph_bullet, set_cell_shading, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_spacing, insert_page_break, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_paragraph_bullet, set_cell_shading, insert_comment, insert_picture, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -380,6 +398,105 @@ fn normalize_alignment(raw: &str) -> Result<String> {
     }
 }
 
+fn validate_set_paragraph_spacing(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let before_pt = optional_non_negative_f64(&operation.payload, "before_pt")?;
+    let after_pt = optional_non_negative_f64(&operation.payload, "after_pt")?;
+    if before_pt.is_none() && after_pt.is_none() {
+        return Err(format_error(
+            "set_paragraph_spacing requires at least one of `before_pt` or `after_pt`",
+        ));
+    }
+    let before_twips = before_pt.map(pt_to_twips);
+    let after_twips = after_pt.map(pt_to_twips);
+    let mut payload = serde_json::json!({
+        "index": paragraph.index,
+        "element_id": paragraph.element_id,
+    });
+    if let Some(value) = before_pt {
+        payload["before_pt"] = serde_json::json!(value);
+    }
+    if let Some(value) = after_pt {
+        payload["after_pt"] = serde_json::json!(value);
+    }
+    if let Some(value) = before_twips {
+        payload["before_twips"] = serde_json::json!(value);
+    }
+    if let Some(value) = after_twips {
+        payload["after_twips"] = serde_json::json!(value);
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_spacing".into(),
+            payload,
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_spacing".into(),
+            before: None,
+            after: Some(format!(
+                "before_pt={:?}, after_pt={:?}",
+                before_pt, after_pt
+            )),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_insert_page_break(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_page_break".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "insert_page_break".into(),
+            before: None,
+            after: Some("page".into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn pt_to_twips(pt: f64) -> u32 {
+    (pt * 20.0).round() as u32
+}
+
 fn validate_set_paragraph_bold(
     model: &DocumentModel,
     operation: &SemanticOperation,
@@ -528,6 +645,123 @@ fn validate_set_paragraph_bullet(
             notes: Vec::new(),
         },
     })
+}
+
+fn validate_insert_comment(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let text = required_str(&operation.payload, "text")?;
+    let author = operation
+        .payload
+        .get("author")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Dotall");
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_comment".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "text": text,
+                "author": author,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "insert_comment".into(),
+            before: None,
+            after: Some(text.to_owned()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_insert_picture(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    if !paragraph.editable {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let (bytes, content_type) = decode_picture_payload(&operation.payload)?;
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_picture".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "bytes_base64": encoded,
+                "content_type": content_type,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "insert_picture".into(),
+            before: None,
+            after: Some(content_type),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn decode_picture_payload(payload: &serde_json::Value) -> Result<(Vec<u8>, String)> {
+    use base64::Engine;
+    let encoded = required_str(payload, "bytes_base64")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| format_error(format!("invalid bytes_base64: {error}")))?;
+    if bytes.is_empty() {
+        return Err(format_error("image bytes must not be empty"));
+    }
+    let content_type = payload
+        .get("content_type")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("image/png");
+    let content_type = match content_type {
+        "image/png" | "image/jpeg" => content_type.to_owned(),
+        other => {
+            return Err(format_error(format!(
+                "unsupported content_type `{other}`; use image/png or image/jpeg"
+            )));
+        }
+    };
+    match content_type.as_str() {
+        "image/png" if !bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) => {
+            return Err(format_error("invalid image: PNG signature mismatch"));
+        }
+        "image/jpeg" if !(bytes.starts_with(&[0xFF, 0xD8])) => {
+            return Err(format_error("invalid image: JPEG signature mismatch"));
+        }
+        _ => {}
+    }
+    Ok((bytes, content_type))
 }
 
 fn validate_set_paragraph_hyperlink(
@@ -994,6 +1228,55 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 bytes,
             })
         }
+        "set_paragraph_spacing" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let before_twips = operation
+                .payload
+                .get("before_twips")
+                .and_then(serde_json::Value::as_u64)
+                .map(|value| value as u32);
+            let after_twips = operation
+                .payload
+                .get("after_twips")
+                .and_then(serde_json::Value::as_u64)
+                .map(|value| value as u32);
+            if before_twips.is_none() && after_twips.is_none() {
+                return Err(format_error(
+                    "set_paragraph_spacing requires at least one of `before_pt` or `after_pt`",
+                ));
+            }
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_spacing(&original, index, before_twips, after_twips)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
+        "insert_page_break" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_insert_page_break(&original, index)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
         "set_paragraph_bold" => {
             let index = operation
                 .payload
@@ -1216,6 +1499,30 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let bullet = required_bool(&operation.payload, "bullet")?;
             apply_paragraph_bullet(package, index, bullet)
         }
+        "insert_comment" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let text = required_str(&operation.payload, "text")?;
+            let author = operation
+                .payload
+                .get("author")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("Dotall");
+            apply_insert_comment(package, index, text, author)
+        }
+        "insert_picture" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let (bytes, content_type) = decode_picture_payload(&operation.payload)?;
+            apply_insert_picture(package, index, &bytes, &content_type)
+        }
         "set_cell_shading" => {
             let index = operation
                 .payload
@@ -1428,6 +1735,146 @@ fn upsert_p_jc(p_pr: &str, jc_tag: &str) -> Result<String> {
     ))
 }
 
+pub fn patch_paragraph_spacing(
+    xml: &[u8],
+    index: u32,
+    before_twips: Option<u32>,
+    after_twips: Option<u32>,
+) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let open_end = paragraph
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    let replacement = match extract_p_pr(&paragraph[open_end..]) {
+        Some(p_pr) => {
+            let patched_p_pr = upsert_p_spacing(p_pr, before_twips, after_twips)?;
+            format!(
+                "{}{}{}",
+                &paragraph[..open_end],
+                patched_p_pr,
+                &paragraph[open_end + p_pr.len()..]
+            )
+        }
+        None => {
+            let spacing_tag = format_spacing_tag(before_twips, after_twips);
+            format!(
+                "{}<w:pPr>{}</w:pPr>{}",
+                &paragraph[..open_end],
+                spacing_tag,
+                &paragraph[open_end..]
+            )
+        }
+    };
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&replacement);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
+fn upsert_p_spacing(
+    p_pr: &str,
+    before_twips: Option<u32>,
+    after_twips: Option<u32>,
+) -> Result<String> {
+    let (existing_before, existing_after) = if let Some(start) = find_named_open(p_pr, "w:spacing")
+    {
+        let end = element_end(p_pr, start, "w:spacing")?;
+        let existing = &p_pr[start..end];
+        (
+            attr_u32(existing, "w:before"),
+            attr_u32(existing, "w:after"),
+        )
+    } else {
+        (None, None)
+    };
+    let merged_before = before_twips.or(existing_before);
+    let merged_after = after_twips.or(existing_after);
+    let spacing_tag = format_spacing_tag(merged_before, merged_after);
+    if let Some(start) = find_named_open(p_pr, "w:spacing") {
+        let end = element_end(p_pr, start, "w:spacing")?;
+        return Ok(format!("{}{}{}", &p_pr[..start], spacing_tag, &p_pr[end..]));
+    }
+    let open_end = p_pr
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:pPr"))?;
+    if p_pr[..open_end].ends_with("/>") {
+        let open = p_pr[..open_end].trim_end_matches("/>");
+        return Ok(format!("{open}>{spacing_tag}</w:pPr>"));
+    }
+    Ok(format!(
+        "{}{}{}",
+        &p_pr[..open_end],
+        spacing_tag,
+        &p_pr[open_end..]
+    ))
+}
+
+fn format_spacing_tag(before_twips: Option<u32>, after_twips: Option<u32>) -> String {
+    let mut tag = String::from("<w:spacing");
+    if let Some(before) = before_twips {
+        tag.push_str(&format!(r#" w:before="{before}""#));
+    }
+    if let Some(after) = after_twips {
+        tag.push_str(&format!(r#" w:after="{after}""#));
+    }
+    tag.push_str("/>");
+    tag
+}
+
+fn attr_u32(element: &str, name: &str) -> Option<u32> {
+    let needle = format!(r#"{name}=""#);
+    let at = element.find(&needle)?;
+    let value_start = at + needle.len();
+    let value_end = element[value_start..].find('"')? + value_start;
+    element[value_start..value_end].parse().ok()
+}
+
+pub fn patch_insert_page_break(xml: &[u8], index: u32) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let (content_start, _) = paragraph_content_span(paragraph)?;
+    const BREAK_RUN: &str = r#"<w:r><w:br w:type="page"/></w:r>"#;
+    let mut replacement = String::new();
+    replacement.push_str(&paragraph[..content_start]);
+    replacement.push_str(BREAK_RUN);
+    replacement.push_str(&paragraph[content_start..]);
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&replacement);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
 pub fn patch_paragraph_bold(xml: &[u8], index: u32, bold: bool) -> Result<Vec<u8>> {
     patch_paragraph_run_bool(xml, index, "w:b", bold)
 }
@@ -1575,6 +2022,288 @@ fn apply_paragraph_bullet(package: &[u8], index: u32, bullet: bool) -> Result<Pa
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
         bytes,
     })
+}
+
+fn apply_insert_comment(
+    package: &[u8],
+    index: u32,
+    text: &str,
+    author: &str,
+) -> Result<PatchedOutput> {
+    let comments_existed = has_entry(package, COMMENTS_PART)?;
+    let comments_xml = if comments_existed {
+        entry_bytes(package, COMMENTS_PART)?
+    } else {
+        EMPTY_COMMENTS.to_vec()
+    };
+    let (comment_id, patched_comments) = append_comment_entry(&comments_xml, text, author)?;
+    let document = entry_bytes(package, "word/document.xml")?;
+    let patched_document = patch_paragraph_comment_markers(&document, index, comment_id)?;
+
+    let mut replacements = BTreeMap::from([
+        ("word/document.xml".to_owned(), patched_document),
+        (COMMENTS_PART.to_owned(), patched_comments),
+    ]);
+    if !comments_existed {
+        ensure_comments_package_links(package, &mut replacements)?;
+    }
+    let bytes = rebuild_package(package, &replacements)?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn apply_insert_picture(
+    package: &[u8],
+    index: u32,
+    image_bytes: &[u8],
+    content_type: &str,
+) -> Result<PatchedOutput> {
+    let extension = match content_type {
+        "image/png" => "png",
+        "image/jpeg" => "jpeg",
+        other => {
+            return Err(format_error(format!(
+                "unsupported content_type `{other}`; use image/png or image/jpeg"
+            )));
+        }
+    };
+    let image_n = next_media_image_number(package)?;
+    let media_name = format!("word/media/image{image_n}.{extension}");
+    let rel_target = format!("media/image{image_n}.{extension}");
+
+    let rels_exist = has_entry(package, DOCUMENT_RELS_NAME)?;
+    let rels_xml = if rels_exist {
+        entry_bytes(package, DOCUMENT_RELS_NAME)?
+    } else {
+        EMPTY_RELATIONSHIPS.to_vec()
+    };
+    let used = relationship_id_numbers(&rels_xml)?;
+    let rid = format!("rId{}", lowest_unused_number(&used));
+    let patched_rels = insert_before_close(
+        &rels_xml,
+        "Relationships",
+        &format!(r#"<Relationship Id="{rid}" Type="{IMAGE_REL_TYPE}" Target="{rel_target}"/>"#),
+    )?;
+
+    let document = entry_bytes(package, "word/document.xml")?;
+    let patched_document = patch_paragraph_inline_picture(&document, index, &rid, image_n)?;
+
+    let mut replacements = BTreeMap::from([
+        ("word/document.xml".to_owned(), patched_document),
+        (DOCUMENT_RELS_NAME.to_owned(), patched_rels),
+        (media_name, image_bytes.to_vec()),
+    ]);
+    ensure_image_content_type(package, extension, content_type, &mut replacements)?;
+
+    let bytes = rebuild_package(package, &replacements)?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn next_media_image_number(package: &[u8]) -> Result<u32> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| format_error(format!("invalid DOCX package: {error}")))?;
+    let mut max = 0u32;
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|error| format_error(format!("cannot list ZIP entry: {error}")))?;
+        let name = entry.name();
+        let Some(rest) = name.strip_prefix("word/media/image") else {
+            continue;
+        };
+        let Some((digits, _)) = rest.split_once('.') else {
+            continue;
+        };
+        if let Ok(number) = digits.parse::<u32>() {
+            max = max.max(number);
+        }
+    }
+    Ok(max + 1)
+}
+
+fn ensure_image_content_type(
+    package: &[u8],
+    extension: &str,
+    content_type: &str,
+    replacements: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    let content_types = if let Some(existing) = replacements.get(CONTENT_TYPES_NAME) {
+        existing.clone()
+    } else {
+        entry_bytes(package, CONTENT_TYPES_NAME)?
+    };
+    let text = std::str::from_utf8(&content_types)
+        .map_err(|error| format_error(format!("content types XML is not UTF-8: {error}")))?;
+    let needle = format!(r#"Extension="{extension}""#);
+    if text.contains(&needle) {
+        return Ok(());
+    }
+    let insertion = match extension {
+        "png" => PNG_DEFAULT,
+        "jpeg" => JPEG_DEFAULT,
+        "jpg" => JPG_DEFAULT,
+        _ => {
+            return Err(format_error(format!(
+                "unsupported image extension `{extension}` for {content_type}"
+            )));
+        }
+    };
+    replacements.insert(
+        CONTENT_TYPES_NAME.to_owned(),
+        insert_before_close(&content_types, "Types", insertion)?,
+    );
+    Ok(())
+}
+
+fn patch_paragraph_inline_picture(
+    xml: &[u8],
+    index: u32,
+    rid: &str,
+    image_n: u32,
+) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let close = paragraph
+        .rfind("</w:p>")
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    let drawing = inline_picture_run(rid, image_n);
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&paragraph[..close]);
+    output.push_str(&drawing);
+    output.push_str(&paragraph[close..]);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
+fn inline_picture_run(rid: &str, image_n: u32) -> String {
+    format!(
+        concat!(
+            r#"<w:r><w:drawing>"#,
+            r#"<wp:inline distT="0" distB="0" distL="0" distR="0" "#,
+            r#"xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" "#,
+            r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" "#,
+            r#"xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" "#,
+            r#"xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">"#,
+            r#"<wp:extent cx="914400" cy="914400"/>"#,
+            r#"<wp:docPr id="{id}" name="Picture {id}"/>"#,
+            r#"<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">"#,
+            r#"<pic:pic><pic:nvPicPr><pic:cNvPr id="0" name="Picture {id}"/><pic:cNvPicPr/>"#,
+            r#"</pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/></a:stretch>"#,
+            r#"</pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/>"#,
+            r#"</a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"#,
+            r#"</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"#
+        ),
+        id = image_n,
+        rid = rid
+    )
+}
+
+fn append_comment_entry(xml: &[u8], text: &str, author: &str) -> Result<(u32, Vec<u8>)> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("comments XML is not UTF-8: {error}")))?;
+    let used = named_attribute_numbers(source, "w:comment", "w:id")?;
+    let comment_id = lowest_unused_number(&used);
+    let date = "2024-01-15T12:00:00Z";
+    let insertion = format!(
+        r#"<w:comment w:id="{comment_id}" w:author="{}" w:date="{date}"><w:p><w:r><w:t xml:space="preserve">{}</w:t></w:r></w:p></w:comment>"#,
+        xml_escape_attr(author),
+        xml_escape(text)
+    );
+    Ok((
+        comment_id,
+        insert_before_close(xml, "w:comments", &insertion)?,
+    ))
+}
+
+fn patch_paragraph_comment_markers(xml: &[u8], index: u32, comment_id: u32) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let close = paragraph
+        .rfind("</w:p>")
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    let markers = format!(r#"<w:commentRangeStart w:id="{comment_id}"/>"#);
+    let trailer = format!(
+        r#"<w:commentRangeEnd w:id="{comment_id}"/><w:r><w:commentReference w:id="{comment_id}"/></w:r>"#
+    );
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    // Insert range start immediately after the opening <w:p ...> tag.
+    let gt = paragraph
+        .find('>')
+        .ok_or_else(|| format_error("unterminated w:p open tag"))?;
+    output.push_str(&paragraph[..=gt]);
+    output.push_str(&markers);
+    output.push_str(&paragraph[gt + 1..close]);
+    output.push_str(&trailer);
+    output.push_str(&paragraph[close..]);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
+fn ensure_comments_package_links(
+    package: &[u8],
+    replacements: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<()> {
+    let rels_exist = has_entry(package, DOCUMENT_RELS_NAME)?;
+    let rels_xml = if rels_exist {
+        entry_bytes(package, DOCUMENT_RELS_NAME)?
+    } else {
+        EMPTY_RELATIONSHIPS.to_vec()
+    };
+    if !relationship_has_type(&rels_xml, COMMENTS_REL_TYPE)? {
+        let used = relationship_id_numbers(&rels_xml)?;
+        let rid = format!("rId{}", lowest_unused_number(&used));
+        replacements.insert(
+            DOCUMENT_RELS_NAME.to_owned(),
+            insert_before_close(
+                &rels_xml,
+                "Relationships",
+                &format!(
+                    r#"<Relationship Id="{rid}" Type="{COMMENTS_REL_TYPE}" Target="comments.xml"/>"#
+                ),
+            )?,
+        );
+    }
+    let content_types = entry_bytes(package, CONTENT_TYPES_NAME)?;
+    if !content_types_has_part(&content_types, "/word/comments.xml")? {
+        replacements.insert(
+            CONTENT_TYPES_NAME.to_owned(),
+            insert_before_close(&content_types, "Types", COMMENTS_OVERRIDE)?,
+        );
+    }
+    Ok(())
 }
 
 fn ensure_bullet_numbering(package: &[u8]) -> Result<(u32, Option<Vec<u8>>)> {
@@ -3536,6 +4265,17 @@ fn optional_positive_f64(payload: &serde_json::Value, key: &str) -> Result<Optio
             .filter(|n| n.is_finite() && *n > 0.0)
             .map(Some)
             .ok_or_else(|| format_error(format!("`{key}` must be a positive number"))),
+    }
+}
+
+fn optional_non_negative_f64(payload: &serde_json::Value, key: &str) -> Result<Option<f64>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|n| n.is_finite() && *n >= 0.0)
+            .map(Some)
+            .ok_or_else(|| format_error(format!("`{key}` must be a non-negative number"))),
     }
 }
 

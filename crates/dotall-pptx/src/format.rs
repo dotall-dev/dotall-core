@@ -88,6 +88,33 @@ impl FormatHandler for PptxFormat {
             summary: json!({
                 "slides": slides,
                 "media_parts": presentation.media_parts,
+                "comments": presentation.comments.iter().map(|comment| {
+                    let mut value = json!({
+                        "element_id": comment.element_id,
+                        "slide": comment.slide,
+                        "author": comment.author,
+                        "text": comment.text,
+                    });
+                    if let Some(shape) = &comment.shape {
+                        value["shape"] = json!(shape);
+                    }
+                    value
+                }).collect::<Vec<_>>(),
+                "charts": presentation.charts.iter().map(|chart| {
+                    json!({
+                        "element_id": chart.element_id,
+                        "slide": chart.slide,
+                        "title": chart.title,
+                    })
+                }).collect::<Vec<_>>(),
+                "pictures": presentation.pictures.iter().map(|picture| {
+                    json!({
+                        "element_id": picture.element_id,
+                        "slide": picture.slide,
+                        "name": picture.name,
+                        "part": picture.part,
+                    })
+                }).collect::<Vec<_>>(),
             }),
             capabilities: capabilities(),
             edit_capabilities: edit_capabilities(),
@@ -262,6 +289,22 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 }
             }),
             safety: "Upserts a:rPr b on each a:r inside the target a:tc. Patches only the slide part that owns the table. Rejects out-of-range row/col and unknown table/slide. Media and other slides stay byte-identical.".into(),
+        },
+        EditCapability {
+            operation: "set_table_cell_italic".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear italic on all text runs inside one slide table cell (a:rPr i). Preferred over cell fill (tblStyle fights solidFill).".into(),
+            example: json!({
+                "kind": "set_table_cell_italic",
+                "payload": {
+                    "slide": "Slide 1",
+                    "table": "Table 1",
+                    "row": 0,
+                    "col": 1,
+                    "italic": true
+                }
+            }),
+            safety: "Upserts a:rPr i on each a:r inside the target a:tc. Patches only the slide part that owns the table. Rejects out-of-range row/col and unknown table/slide. Media and other slides stay byte-identical. Cell fill is not shipped.".into(),
         },
         EditCapability {
             operation: "set_notes_text".into(),
@@ -506,6 +549,36 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "slide": "Slide 1", "shape": "Title", "bullet": true }
             }),
             safety: "Upserts a:pPr a:buChar char=\"•\" (true) or a:buNone (false) on each a:p in the shape txBody, replacing existing buNone/buFont/buChar/buAutoNum. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
+            operation: "insert_comment".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert one new classic PowerPoint comment on a slide (ISO commentAuthors + comments part).".into(),
+            example: json!({
+                "kind": "insert_comment",
+                "payload": {
+                    "slide": "Slide 1",
+                    "text": "Check KPI",
+                    "author": "Dotall",
+                    "shape": "Title"
+                }
+            }),
+            safety: "Append-only: creates or appends ppt/comments/commentN.xml and updates commentAuthors, slide .rels, and Content_Types. Does not mutate existing comments. Charts are inspect-only.".into(),
+        },
+        EditCapability {
+            operation: "insert_picture".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert a PNG/JPEG picture onto a slide (new ppt/media part + p:pic).".into(),
+            example: json!({
+                "kind": "insert_picture",
+                "payload": {
+                    "slide": "Slide 1",
+                    "bytes_base64": "<base64>",
+                    "content_type": "image/png",
+                    "name": "Logo"
+                }
+            }),
+            safety: "Adds ppt/media/imageN.png|jpeg, a slide image relationship, Default png/jpeg in Content_Types, and splices p:pic into the slide spTree (1cm×1cm). Existing ppt/media/* stay byte-identical. Rejects replace/delete/set_picture.".into(),
         },
     ]
 }

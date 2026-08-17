@@ -44,9 +44,13 @@ pub(super) fn patch(
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetCellFont { .. }
+            | XlsxEditOp::SetCellFill { .. }
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
-            | XlsxEditOp::SetRightToLeft { .. } => {
+            | XlsxEditOp::SetRightToLeft { .. }
+            | XlsxEditOp::InsertComment { .. }
+            | XlsxEditOp::InsertPicture { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -166,9 +170,13 @@ pub(super) fn patch(
                 | XlsxEditOp::SetCenterOnPage { .. }
                 | XlsxEditOp::SetPageMargins { .. }
                 | XlsxEditOp::SetHeaderFooter { .. }
+                | XlsxEditOp::SetCellFont { .. }
+                | XlsxEditOp::SetCellFill { .. }
                 | XlsxEditOp::SetSheetZoom { .. }
                 | XlsxEditOp::SetShowGridlines { .. }
-                | XlsxEditOp::SetRightToLeft { .. } => {
+                | XlsxEditOp::SetRightToLeft { .. }
+                | XlsxEditOp::InsertComment { .. }
+                | XlsxEditOp::InsertPicture { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -211,9 +219,13 @@ pub(super) fn patch(
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetCellFont { .. }
+            | XlsxEditOp::SetCellFill { .. }
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
-            | XlsxEditOp::SetRightToLeft { .. } => {
+            | XlsxEditOp::SetRightToLeft { .. }
+            | XlsxEditOp::InsertComment { .. }
+            | XlsxEditOp::InsertPicture { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -356,9 +368,13 @@ fn render_new_cell(
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetCellFont { .. }
+        | XlsxEditOp::SetCellFill { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
-        | XlsxEditOp::SetRightToLeft { .. } => {
+        | XlsxEditOp::SetRightToLeft { .. }
+        | XlsxEditOp::InsertComment { .. }
+        | XlsxEditOp::InsertPicture { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -546,9 +562,13 @@ fn render_cell_parts(
         | XlsxEditOp::SetCenterOnPage { .. }
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
+        | XlsxEditOp::SetCellFont { .. }
+        | XlsxEditOp::SetCellFill { .. }
         | XlsxEditOp::SetSheetZoom { .. }
         | XlsxEditOp::SetShowGridlines { .. }
-        | XlsxEditOp::SetRightToLeft { .. } => {
+        | XlsxEditOp::SetRightToLeft { .. }
+        | XlsxEditOp::InsertComment { .. }
+        | XlsxEditOp::InsertPicture { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

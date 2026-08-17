@@ -238,6 +238,32 @@ $DOTALL apply demo/financials.xlsx --all
 $DOTALL inspect demo/financials.xlsx
 # expect sheets[].right_to_left true for Revenue
 
+# Wave 23: insert_comment (legacy Excel Note: comments.xml + VML)
+$DOTALL inspect demo/financials.xlsx
+# expect summary.comments[] (empty) and summary.charts[]
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"insert_comment","payload":{"sheet":"Inputs","address":"B2","text":"Review Rate","author":"Dotall"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect comments[] sheet=Inputs cell=B2 text=Review Rate (Excel Review → Notes)
+
+# Wave 24: insert_picture (new drawing + xl/media; existing media byte-identical)
+$DOTALL inspect demo/financials.xlsx
+# expect summary.pictures[]
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"insert_picture","payload":{"sheet":"Inputs","from_cell":"C1","bytes_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQI12P4z8AAAAMBAQAY3Y20AAAAAElFTkSuQmCC","content_type":"image/png"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect pictures[] sheet=Inputs from_cell=C1
+
+# Wave 25: set_cell_font + set_cell_fill (surgical styles.xml + cell s=)
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_cell_font","payload":{"sheet":"Inputs","address":"A1","bold":true,"size_pt":14,"color":"#1F4E79"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_cell_fill","payload":{"sheet":"Inputs","address":"A1","color":"#FFFF00"}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -387,9 +413,32 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_table_cell_bold","payload":{"slide":"Slide 1","table":"Metrics","row":1,"col":1,"bold":true}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 23 — insert_comment (classic ISO commentAuthors + comments/commentN.xml)
+$DOTALL inspect demo/deck.pptx
+# expect summary.comments[] and summary.charts[]
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"insert_comment","payload":{"slide":"Slide 1","text":"Check KPI","author":"Dotall"}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL inspect demo/deck.pptx
+# expect comments[] slide=Slide 1 text=Check KPI
+
+# Wave 24 — insert_picture (new p:pic + ppt/media; existing media byte-identical)
+$DOTALL inspect demo/deck.pptx
+# expect summary.pictures[]
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"insert_picture","payload":{"slide":"Slide 1","name":"Logo","bytes_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQI12P4z8AAAAMBAQAY3Y20AAAAAElFTkSuQmCC","content_type":"image/png"}}]'
+$DOTALL apply demo/deck.pptx --all
+$DOTALL inspect demo/deck.pptx
+# expect pictures[] slide=Slide 1 name=Logo
+
+# Wave 25 — italic Metrics cell (a:rPr i; not cell fill)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_table_cell_italic","payload":{"slide":"Slide 1","table":"Metrics","row":1,"col":1,"italic":true}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `set_shape_strikethrough` / `set_shape_vert_align` / `set_shape_caps` / `replace_shape_text` / `replace_across_shapes` / `set_shape_bullet` / `set_table_cell_text` / `set_table_cell_bold` patch only the target slide part. `set_shape_hyperlink` also patches that slide’s `.rels`.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `set_shape_strikethrough` / `set_shape_vert_align` / `set_shape_caps` / `replace_shape_text` / `replace_across_shapes` / `set_shape_bullet` / `set_table_cell_text` / `set_table_cell_bold` / `set_table_cell_italic` patch only the target slide part. `set_shape_hyperlink` also patches that slide’s `.rels`.
 
 ---
 
@@ -530,6 +579,32 @@ $DOTALL apply demo/memo.docx --all
 # Wave 22 — table cell shading (w:shd fill on enclosing w:tc)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_cell_shading","payload":{"index":3,"color":"#FFFF00"}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 23 — insert_comment (word/comments.xml + commentRange on a paragraph)
+$DOTALL inspect demo/memo.docx
+# expect summary.comments[] and summary.charts []
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"insert_comment","payload":{"index":1,"text":"Confirm owners","author":"Dotall"}}]'
+$DOTALL apply demo/memo.docx --all
+$DOTALL inspect demo/memo.docx
+# expect comments[] index=1 text=Confirm owners
+
+# Wave 24 — insert_picture (inline drawing + word/media)
+$DOTALL inspect demo/memo.docx
+# expect summary.pictures[]
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"insert_picture","payload":{"index":1,"bytes_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQI12P4z8AAAAMBAQAY3Y20AAAAAElFTkSuQmCC","content_type":"image/png"}}]'
+$DOTALL apply demo/memo.docx --all
+$DOTALL inspect demo/memo.docx
+# expect pictures[] index=1
+
+# Wave 25 — paragraph spacing (twips) and page break
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_spacing","payload":{"index":1,"before_pt":12,"after_pt":6}}]'
+$DOTALL apply demo/memo.docx --all
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"insert_page_break","payload":{"index":2}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
@@ -753,6 +828,34 @@ $DOTALL inspect demo/form.pdf
 # expect fields[].edit true for Department
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field_edit","payload":{"name":"Department","edit":false}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 23 — insert_comment (sticky /Text annotation; not a content-stream rewrite)
+$DOTALL inspect demo/form.pdf
+# expect summary.comments[] (Widget fields are not comments) and summary.charts []
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"insert_comment","payload":{"page":1,"contents":"Check Name field","author":"Dotall"}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect comments[] page=1 subtype=Text contents=Check Name field
+
+# Wave 24 — insert_picture (stamp annotation; not a page content-stream rewrite)
+$DOTALL inspect demo/form.pdf
+# expect summary.pictures[] (Stamp annots, not Widget)
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"insert_picture","payload":{"page":1,"bytes_base64":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQI12P4z8AAAAMBAQAY3Y20AAAAAElFTkSuQmCC","content_type":"image/png"}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect pictures[] page=1 subtype=Stamp
+
+# Wave 25 — rotate_page (page /Rotate; not a content-stream redraw)
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"rotate_page","payload":{"page":1,"degrees":90}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect summary.page_rotations page=1 rotate=90
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"rotate_page","payload":{"page":1,"degrees":0}}]'
 $DOTALL apply demo/form.pdf --all
 ```
 

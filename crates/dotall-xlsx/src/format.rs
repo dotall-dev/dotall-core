@@ -131,6 +131,25 @@ impl FormatHandler for XlsxFormat {
                 "style_table": workbook.style_table.iter().map(|entry| json!({
                     "style_id": entry.style_id,
                 })).collect::<Vec<_>>(),
+                "comments": workbook.comments.iter().map(|comment| json!({
+                    "element_id": comment.element_id,
+                    "sheet": comment.sheet,
+                    "cell": comment.cell,
+                    "author": comment.author,
+                    "text": comment.text,
+                })).collect::<Vec<_>>(),
+                "charts": workbook.charts.iter().map(|chart| json!({
+                    "element_id": chart.element_id,
+                    "sheet": chart.sheet,
+                    "title": chart.title,
+                })).collect::<Vec<_>>(),
+                "pictures": workbook.pictures.iter().map(|picture| json!({
+                    "element_id": picture.element_id,
+                    "sheet": picture.sheet,
+                    "name": picture.name,
+                    "content_type": picture.content_type,
+                    "from_cell": picture.from_cell,
+                })).collect::<Vec<_>>(),
                 "preserved": ["charts", "pivots", "vba", "other_ooxml_parts"],
                 "structure": structure,
             }),
@@ -711,6 +730,37 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 .into(),
         },
         EditCapability {
+            operation: "set_cell_font".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set cell font (bold/italic/name/size_pt/color) via styles.xml fonts + cellXfs."
+                .into(),
+            example: json!({
+                "kind": "set_cell_font",
+                "payload": {
+                    "sheet": "Inputs",
+                    "address": "A1",
+                    "bold": true,
+                    "name": "Calibri",
+                    "size_pt": 14,
+                    "color": "#1F4E79"
+                }
+            }),
+            safety: "Append-only patch of xl/styles.xml fonts/cellXfs plus the target cell s= index. Requires at least one of bold/italic/name/size_pt/color. Color is #RRGGBB or RRGGBB (normalized like set_tab_color). No theme rewrite. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_cell_fill".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear cell solid fill via styles.xml fills + cellXfs."
+                .into(),
+            example: json!({
+                "kind": "set_cell_fill",
+                "payload": { "sheet": "Inputs", "address": "A1", "color": "#FFFF00" }
+            }),
+            safety: "Append-only patch of xl/styles.xml fills/cellXfs plus the target cell s= index. Pass null color to clear to fillId 0. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
             operation: "set_sheet_zoom".into(),
             schema_version: crate::edits::SCHEMA_VERSION,
             description: "Set worksheet view zoom via sheetView zoomScale (percent 10–400)."
@@ -744,6 +794,40 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "rtl": true }
             }),
             safety: "Surgically patches only the target worksheet sheetView rightToLeft attribute. true writes rightToLeft=\"1\"; false removes the attribute (Excel default LTR). Existing freeze-pane children, zoomScale, showGridLines, and other sheetView attributes are preserved. Inspect surfaces right_to_left when true. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "insert_comment".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Insert a legacy Excel Note (comment) on an existing cell that has no comment."
+                .into(),
+            example: json!({
+                "kind": "insert_comment",
+                "payload": {
+                    "sheet": "Inputs",
+                    "address": "B2",
+                    "text": "Review Rate",
+                    "author": "Dotall"
+                }
+            }),
+            safety: "Insert-only. Rejects cells that already have a comment (no set/delete/replace). Writes legacy comments*.xml + vmlDrawing + worksheet legacyDrawing/rels. Charts remain preserve-only — never mutate chart parts."
+                .into(),
+        },
+        EditCapability {
+            operation: "insert_picture".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Insert a PNG or JPEG picture anchored at a worksheet cell (oneCellAnchor)."
+                .into(),
+            example: json!({
+                "kind": "insert_picture",
+                "payload": {
+                    "sheet": "Inputs",
+                    "from_cell": "A1",
+                    "bytes_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVQI12P4z8AAAAMBAQAY3Y20AAAAAElFTkSuQmCC",
+                    "content_type": "image/png"
+                }
+            }),
+            safety: "Insert-only. Rejects replace/delete/set_picture. Adds xl/media + drawing oneCellAnchor; existing xl/media/* bytes stay identical. Coexists with legacyDrawing comments. content_type defaults to image/png; only image/png and image/jpeg allowed."
                 .into(),
         },
     ]

@@ -183,6 +183,35 @@ pub(crate) fn parse_validated_operations(
                 header: optional_nullable_string(operation, "header")?,
                 footer: optional_nullable_string(operation, "footer")?,
             }),
+            "set_cell_font" => Ok(XlsxEditOp::SetCellFont {
+                sheet: required_string(operation, "sheet")?,
+                address: required_string(operation, "address")?,
+                bold: optional_bool_opt(operation, "bold")?,
+                italic: optional_bool_opt(operation, "italic")?,
+                name: optional_string(operation, "name")?,
+                size_pt: optional_positive_f64_opt(operation, "size_pt")?,
+                color: optional_string(operation, "color")?,
+            }),
+            "set_cell_fill" => Ok(XlsxEditOp::SetCellFill {
+                sheet: required_string(operation, "sheet")?,
+                address: required_string(operation, "address")?,
+                color: optional_nullable_string(operation, "color")?,
+            }),
+            "insert_comment" => Ok(XlsxEditOp::InsertComment {
+                sheet: required_string(operation, "sheet")?,
+                address: required_string(operation, "address")?,
+                element_id: required_string(operation, "element_id")?,
+                text: required_string(operation, "text")?,
+                author: optional_string(operation, "author")?
+                    .unwrap_or_else(|| "Dotall".to_owned()),
+            }),
+            "insert_picture" => Ok(XlsxEditOp::InsertPicture {
+                sheet: required_string(operation, "sheet")?,
+                from_cell: required_string(operation, "from_cell")?,
+                bytes: decode_bytes_base64(operation)?,
+                content_type: optional_string(operation, "content_type")?
+                    .unwrap_or_else(|| "image/png".to_owned()),
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),
@@ -295,6 +324,37 @@ fn required_bool(
         })
 }
 
+fn optional_bool_opt(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<Option<bool>> {
+    match operation.payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Bool(value)) => Ok(Some(*value)),
+        _ => Err(invalid_operation(format!(
+            "validated edit operation requires boolean `{field}` when present"
+        ))),
+    }
+}
+
+fn optional_positive_f64_opt(
+    operation: &dotall_core::SemanticOperation,
+    field: &str,
+) -> dotall_core::Result<Option<f64>> {
+    match operation.payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(Some)
+            .ok_or_else(|| {
+                invalid_operation(format!(
+                    "validated edit operation requires positive `{field}` when present"
+                ))
+            }),
+    }
+}
+
 fn required_positive_u32(
     operation: &dotall_core::SemanticOperation,
     field: &str,
@@ -384,6 +444,25 @@ fn optional_nullable_string(
             "validated edit operation requires `{field}` to be a string or null when present"
         ))),
     }
+}
+
+fn decode_bytes_base64(operation: &dotall_core::SemanticOperation) -> dotall_core::Result<Vec<u8>> {
+    use base64::Engine;
+    let encoded = operation
+        .payload
+        .get("bytes_base64")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            invalid_operation("validated insert_picture requires non-empty `bytes_base64`")
+        })?;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|error| {
+            invalid_operation(format!(
+                "validated insert_picture has invalid base64: {error}"
+            ))
+        })
 }
 
 fn invalid_operation(message: impl Into<String>) -> dotall_core::DotallError {

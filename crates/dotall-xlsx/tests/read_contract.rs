@@ -137,9 +137,13 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_center_on_page",
             "set_page_margins",
             "set_header_footer",
+            "set_cell_font",
+            "set_cell_fill",
             "set_sheet_zoom",
             "set_show_gridlines",
             "set_right_to_left",
+            "insert_comment",
+            "insert_picture",
         ]
     );
     assert_eq!(
@@ -634,6 +638,9 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
             }],
             named_ranges: Vec::new(),
             style_table: Vec::new(),
+            comments: Vec::new(),
+            charts: Vec::new(),
+            pictures: Vec::new(),
             unmodeled: UnmodeledMap {
                 charts: PreservationStatus::Preserved,
                 pivots: PreservationStatus::Preserved,

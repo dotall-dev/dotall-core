@@ -14,7 +14,9 @@ use crate::edits::transform::{Axis, AxisChange};
 use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
 use super::auto_filter;
+use super::cell_style;
 use super::center_on_page;
+use super::comments;
 use super::dimensions;
 use super::fit_to_page;
 use super::freeze_panes;
@@ -23,6 +25,7 @@ use super::merges;
 use super::page_margins;
 use super::page_orientation;
 use super::paper_size;
+use super::pictures;
 use super::print_scale;
 use super::right_to_left;
 use super::shared_strings;
@@ -90,6 +93,50 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     }
     if let [XlsxEditOp::FreezePanes { sheet, cell }] = operations.as_slice() {
         return patch_freeze_panes(&original, sheet, cell.as_deref());
+    }
+    if let [
+        XlsxEditOp::InsertComment {
+            sheet,
+            address,
+            text,
+            author,
+            ..
+        },
+    ] = operations.as_slice()
+    {
+        let patch = comments::insert_comment(&original, sheet, address, text, author)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
+    if let [
+        XlsxEditOp::InsertPicture {
+            sheet,
+            from_cell,
+            bytes: image_bytes,
+            content_type,
+        },
+    ] = operations.as_slice()
+    {
+        let patch =
+            pictures::insert_picture(&original, sheet, from_cell, image_bytes, content_type)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
     }
     if let [XlsxEditOp::SetTabColor { sheet, color }] = operations.as_slice() {
         return patch_tab_color(&original, sheet, color.as_deref());
@@ -166,6 +213,41 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     ] = operations.as_slice()
     {
         return patch_header_footer(&original, sheet, header.as_deref(), footer.as_deref());
+    }
+    if let [
+        XlsxEditOp::SetCellFont {
+            sheet,
+            address,
+            bold,
+            italic,
+            name,
+            size_pt,
+            color,
+        },
+    ] = operations.as_slice()
+    {
+        return patch_cell_font(
+            &original,
+            sheet,
+            address,
+            cell_style::FontPatch {
+                bold: *bold,
+                italic: *italic,
+                name: name.clone(),
+                size_pt: *size_pt,
+                color: color.clone(),
+            },
+        );
+    }
+    if let [
+        XlsxEditOp::SetCellFill {
+            sheet,
+            address,
+            color,
+        },
+    ] = operations.as_slice()
+    {
+        return patch_cell_fill(&original, sheet, address, color.as_deref());
     }
     if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
         let patch = workbook::define_name(&original, name, formula)?;
@@ -337,9 +419,13 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetCenterOnPage { .. }
                 | XlsxEditOp::SetPageMargins { .. }
                 | XlsxEditOp::SetHeaderFooter { .. }
+                | XlsxEditOp::SetCellFont { .. }
+                | XlsxEditOp::SetCellFill { .. }
                 | XlsxEditOp::SetSheetZoom { .. }
                 | XlsxEditOp::SetShowGridlines { .. }
                 | XlsxEditOp::SetRightToLeft { .. }
+                | XlsxEditOp::InsertComment { .. }
+                | XlsxEditOp::InsertPicture { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -382,9 +468,13 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetCenterOnPage { .. }
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
+            | XlsxEditOp::SetCellFont { .. }
+            | XlsxEditOp::SetCellFill { .. }
             | XlsxEditOp::SetSheetZoom { .. }
             | XlsxEditOp::SetShowGridlines { .. }
-            | XlsxEditOp::SetRightToLeft { .. } => {
+            | XlsxEditOp::SetRightToLeft { .. }
+            | XlsxEditOp::InsertComment { .. }
+            | XlsxEditOp::InsertPicture { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -987,6 +1077,53 @@ fn patch_header_footer(
         bytes,
     })
 }
+
+fn patch_cell_font(
+    original: &[u8],
+    sheet: &str,
+    address: &str,
+    font: cell_style::FontPatch,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let sheet_xml = entry_bytes(original, path)?;
+    let styles_xml = entry_bytes(original, "xl/styles.xml")?;
+    let (styles_out, sheet_out) = cell_style::patch_font(&styles_xml, &sheet_xml, address, &font)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert("xl/styles.xml".into(), styles_out);
+    replacements.insert(path.clone(), sheet_out);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_cell_fill(
+    original: &[u8],
+    sheet: &str,
+    address: &str,
+    color: Option<&str>,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let sheet_xml = entry_bytes(original, path)?;
+    let styles_xml = entry_bytes(original, "xl/styles.xml")?;
+    let (styles_out, sheet_out) = cell_style::patch_fill(&styles_xml, &sheet_xml, address, color)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert("xl/styles.xml".into(), styles_out);
+    replacements.insert(path.clone(), sheet_out);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
 fn shared_strings_path(package: &[u8]) -> Result<Option<String>> {
     let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
     if let Some(target) = parse_shared_strings_target(&relationships)? {

@@ -74,6 +74,12 @@ From the response, capture:
   used in the workbook (ids only; no full style writer).
 - Inspect `summary.sheets[].freeze_panes` — openpyxl-style freeze cell (e.g. `B2`),
   or absent/null when panes are not frozen.
+- Inspect `summary.comments[]` — legacy Notes `{ element_id, sheet, cell, author, text }`
+  (empty/`[]` when none).
+- Inspect `summary.charts[]` — preserve-only `{ element_id, sheet, title }` (title may be
+  `""`). Never mutate charts.
+- Inspect `summary.pictures[]` — `{ element_id, sheet, name, content_type, from_cell? }`
+  (empty/`[]` when none). Insert-only via `insert_picture`.
 
 Never assume an operation exists because another `.xlsx` supported it — always
 re-check after external edits or a failed apply.
@@ -256,6 +262,20 @@ Set or clear worksheet print header/footer (`headerFooter`/`oddHeader`/`oddFoote
 
 Inspect surfaces `header_footer` per sheet when present. Other worksheets stay byte-identical.
 
+Set cell font (append-only `xl/styles.xml` fonts/cellXfs + cell `s=`; at least one font field required):
+
+```json
+{ "kind": "set_cell_font", "payload": { "sheet": "Inputs", "address": "A1", "bold": true, "name": "Calibri", "size_pt": 14, "color": "#1F4E79" } }
+```
+
+Set or clear cell solid fill (`null` color clears to fillId 0):
+
+```json
+{ "kind": "set_cell_fill", "payload": { "sheet": "Inputs", "address": "A1", "color": "#FFFF00" } }
+```
+
+Other worksheets stay byte-identical; `styles.xml` is an allowed target part.
+
 Set worksheet view zoom (`sheetView` `zoomScale` percent 10–400):
 
 ```json
@@ -279,6 +299,47 @@ Set or clear worksheet view right-to-left (`sheetView` `rightToLeft`; `true` wri
 ```
 
 Inspect surfaces `right_to_left` per sheet when true (omit or false when LTR). Freeze panes, zoom, gridlines, and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
+
+Insert a legacy Excel Note / comment on an existing cell that does **not** already have one
+(`author` optional; defaults to `"Dotall"`). Writes `comments*.xml` + `vmlDrawing` +
+worksheet `legacyDrawing` / rels. Do **not** attempt `set_comment` / `delete_comment` /
+`replace_comment` — those are rejected. Charts are inspect-only (`summary.charts[]`);
+never mutate chart XML or series.
+
+```json
+{
+  "kind": "insert_comment",
+  "payload": {
+    "sheet": "Inputs",
+    "address": "B2",
+    "text": "Review Rate",
+    "author": "Dotall"
+  }
+}
+```
+
+Inspect surfaces `summary.comments[]` (`element_id`, `sheet`, `cell`, `author`, `text`)
+and `summary.charts[]` (`element_id`, `sheet`, `title`). `summary.preserved` still lists
+`charts` — inspect does not mean mutate.
+
+Insert a PNG/JPEG picture at a worksheet cell (`content_type` optional; defaults to
+`image/png`). Adds `xl/media/*` + drawing `oneCellAnchor`; existing media bytes stay
+identical. Do **not** attempt `replace_picture` / `delete_picture` / `set_picture`.
+
+```json
+{
+  "kind": "insert_picture",
+  "payload": {
+    "sheet": "Inputs",
+    "from_cell": "A1",
+    "bytes_base64": "<standard base64 of raw image bytes>",
+    "content_type": "image/png"
+  }
+}
+```
+
+Inspect surfaces `summary.pictures[]` (`element_id`, `sheet`, `name`, `content_type`,
+`from_cell`).
 
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
@@ -314,7 +375,7 @@ Use **`dotall_discard`** to drop a staged transaction without touching source by
 | **Capability-driven ops** | Unsupported `kind` values return structured errors listing available operations. |
 | **Structural rejects** | Row/column/sheet ops validate impact first (formula rewrites, chart/table/name references). Rejection is intentional — do not bypass with raw file edits. |
 | **No formula evaluation** | Dotall stores and patches formulas; it does not compute results. |
-| **Charts/pivots preserved, not edited** | Do not attempt chart or pivot mutation; preserve them by using Dotall edits only. |
+| **Charts/pivots preserved, not edited** | Inspect `summary.charts[]` only. Do not attempt chart or pivot mutation; preserve them by using Dotall edits only. Comments are **insert-only** (`insert_comment`); never set/delete/replace existing notes. Pictures are **insert-only** (`insert_picture`); never replace/delete existing media. |
 
 When a structural edit is rejected, read the error, inspect dependents with
 `dotall_deps`, adjust the plan, or choose a narrower cell-level edit.

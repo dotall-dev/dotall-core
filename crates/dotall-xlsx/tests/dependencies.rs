@@ -87,6 +87,9 @@ fn ignores_external_workbook_formula_references() {
         ],
         named_ranges: Vec::new(),
         style_table: Vec::new(),
+        comments: Vec::new(),
+        charts: Vec::new(),
+        pictures: Vec::new(),
         unmodeled: UnmodeledMap {
             charts: PreservationStatus::Preserved,
             pivots: PreservationStatus::Preserved,
@@ -118,6 +121,9 @@ fn resolves_sheet_references_case_insensitively() {
         ],
         named_ranges: Vec::new(),
         style_table: Vec::new(),
+        comments: Vec::new(),
+        charts: Vec::new(),
+        pictures: Vec::new(),
         unmodeled: UnmodeledMap {
             charts: PreservationStatus::Preserved,
             pivots: PreservationStatus::Preserved,
@@ -240,6 +246,9 @@ fn workbook_fixture() -> WorkbookModel {
             formula: "=Inputs!$B$1".into(),
         }],
         style_table: Vec::new(),
+        comments: Vec::new(),
+        charts: Vec::new(),
+        pictures: Vec::new(),
         unmodeled: UnmodeledMap {
             charts: PreservationStatus::Preserved,
             pivots: PreservationStatus::Preserved,

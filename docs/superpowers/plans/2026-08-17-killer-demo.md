@@ -552,7 +552,7 @@ git commit -m "feat(mcp): add dotall_search over cached views"
 - Consumes: `DotallStore` filesystem under `workspace.all_dir()`
 - Produces:
   - `pub struct VizNode { pub name: String, pub path: String, pub bytes: u64, pub children: Vec<VizNode> }`
-  - `pub struct VizHistoryEntry { pub path: String, pub version: u64, pub summary: String, pub op_count: usize }`
+  - `pub struct VizHistoryEntry { pub path: String, pub version: u64, pub summary: String, pub op_count: usize, pub timestamp: String, pub parent: Option<u64>, pub revert_of: Option<u64> }`
   - `pub struct VizMetrics { pub all_bytes: u64, pub snapshot_part_bytes: u64, pub naive_full_copy_bytes: u64, pub model_cache_hits: u64, pub view_cache_hits: u64, pub estimated_tokens_served: u64, pub estimated_dump_tokens: u64 }`
   - `pub struct VizSnapshot { pub tree: VizNode, pub history: Vec<VizHistoryEntry>, pub metrics: VizMetrics }`
   - `pub fn viz_snapshot(store: &DotallStore) -> Result<VizSnapshot>`

@@ -1,5 +1,7 @@
 mod auto_filter;
+mod cell_style;
 mod center_on_page;
+mod comments;
 mod dimensions;
 mod fit_to_page;
 mod freeze_panes;
@@ -9,6 +11,7 @@ mod package;
 mod page_margins;
 mod page_orientation;
 mod paper_size;
+mod pictures;
 mod print_scale;
 mod right_to_left;
 mod shared_strings;

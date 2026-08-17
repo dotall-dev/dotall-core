@@ -5,7 +5,10 @@ use lopdf::{Document, Object};
 
 use crate::FORMAT_ID;
 use crate::ids;
-use crate::model::{PdfDocumentModel, PdfFieldModel, PdfMetadata, PdfPageModel, SCHEMA_VERSION};
+use crate::model::{
+    PdfCommentModel, PdfDocumentModel, PdfFieldModel, PdfMetadata, PdfPageModel, PdfPictureModel,
+    SCHEMA_VERSION,
+};
 
 pub fn parse_pdf(source: &Path) -> Result<PdfDocumentModel> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
@@ -41,12 +44,14 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
             element_id: ids::page_id(*number, SCHEMA_VERSION),
             number: *number,
             text,
+            rotate: page_rotate(&document, *page_id),
         });
     }
     pages.sort_by_key(|page| page.number);
 
     let mut fields = Vec::new();
     collect_fields(&document, &mut fields)?;
+    let (comments, pictures) = collect_annots(&document, &pages_map)?;
     let outline = collect_outline(&document);
     let metadata = collect_metadata(&document);
 
@@ -55,6 +60,8 @@ pub fn parse_pdf_bytes(bytes: &[u8]) -> Result<PdfDocumentModel> {
         page_count: pages.len() as u32,
         pages,
         fields,
+        comments,
+        pictures,
         outline,
         encrypted: false,
         metadata,
@@ -65,12 +72,27 @@ fn page_text(document: &Document, page_id: lopdf::ObjectId, number: u32) -> Stri
     crate::text::page_text(document, page_id, number)
 }
 
+fn page_rotate(document: &Document, page_id: lopdf::ObjectId) -> Option<u32> {
+    let Ok(Object::Dictionary(dict)) = document.get_object(page_id) else {
+        return None;
+    };
+    let Ok(Object::Integer(value)) = dict.get(b"Rotate") else {
+        return None;
+    };
+    if *value == 0 {
+        return None;
+    }
+    u32::try_from(*value).ok()
+}
+
 fn encrypted_stub(source_hash: &str) -> PdfDocumentModel {
     PdfDocumentModel {
         document_id: ids::document_id(source_hash, SCHEMA_VERSION),
         page_count: 0,
         pages: Vec::new(),
         fields: Vec::new(),
+        comments: Vec::new(),
+        pictures: Vec::new(),
         outline: Vec::new(),
         encrypted: true,
         metadata: PdfMetadata::default(),
@@ -108,6 +130,79 @@ fn collect_fields(document: &Document, fields: &mut Vec<PdfFieldModel>) -> Resul
         return Ok(());
     };
     walk_field_list(document, list, "", fields)
+}
+
+fn collect_annots(
+    document: &Document,
+    pages_map: &std::collections::BTreeMap<u32, lopdf::ObjectId>,
+) -> Result<(Vec<PdfCommentModel>, Vec<PdfPictureModel>)> {
+    let mut comments = Vec::new();
+    let mut pictures = Vec::new();
+    let mut page_numbers: Vec<_> = pages_map.keys().copied().collect();
+    page_numbers.sort_unstable();
+    for number in page_numbers {
+        let Some(page_id) = pages_map.get(&number) else {
+            continue;
+        };
+        let Ok(page_obj) = document.get_object(*page_id) else {
+            continue;
+        };
+        let Object::Dictionary(page_dict) = page_obj else {
+            continue;
+        };
+        let Ok(annots) = page_dict.get(b"Annots") else {
+            continue;
+        };
+        let Ok(Object::Array(items)) = dereference(document, annots) else {
+            continue;
+        };
+        for item in items {
+            let object_id = match item {
+                Object::Reference(id) => *id,
+                _ => continue,
+            };
+            let Some(dict) = resolve_dict(document, item)? else {
+                continue;
+            };
+            let Some(subtype) = dict.get(b"Subtype").ok().and_then(object_name) else {
+                continue;
+            };
+            if subtype == "Widget" {
+                continue;
+            }
+            let object_key = format!("{}:{}", object_id.0, object_id.1);
+            let element_id = ids::annot_id(&object_key, SCHEMA_VERSION);
+            if subtype == "Stamp" {
+                pictures.push(PdfPictureModel {
+                    element_id,
+                    page: number,
+                    subtype,
+                });
+                continue;
+            }
+            if subtype != "Text" && subtype != "FreeText" {
+                continue;
+            }
+            let contents = dict
+                .get(b"Contents")
+                .ok()
+                .and_then(object_string)
+                .unwrap_or_default();
+            let author = dict
+                .get(b"T")
+                .ok()
+                .and_then(object_string)
+                .unwrap_or_default();
+            comments.push(PdfCommentModel {
+                element_id,
+                page: number,
+                subtype,
+                contents,
+                author,
+            });
+        }
+    }
+    Ok((comments, pictures))
 }
 
 fn walk_field_list(

@@ -167,6 +167,36 @@ pub enum XlsxEditOp {
         /// Odd-page footer; `None` with header `None` clears `<headerFooter>`.
         footer: Option<String>,
     },
+    SetCellFont {
+        sheet: String,
+        address: String,
+        bold: Option<bool>,
+        italic: Option<bool>,
+        name: Option<String>,
+        size_pt: Option<f64>,
+        /// AARRGGBB hex; same normalizer as `set_tab_color`.
+        color: Option<String>,
+    },
+    SetCellFill {
+        sheet: String,
+        address: String,
+        /// Solid fill AARRGGBB; `None` clears to fillId 0.
+        color: Option<String>,
+    },
+    InsertComment {
+        sheet: String,
+        address: String,
+        element_id: String,
+        text: String,
+        /// Defaults to `"Dotall"` when the agent omits `author`.
+        author: String,
+    },
+    InsertPicture {
+        sheet: String,
+        from_cell: String,
+        bytes: Vec<u8>,
+        content_type: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

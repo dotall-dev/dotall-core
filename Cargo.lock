@@ -602,6 +602,7 @@ dependencies = [
 name = "dotall-docx"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "blake3",
  "dotall-core",
  "dotall-ooxml",
@@ -650,8 +651,10 @@ dependencies = [
 name = "dotall-pdf"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "blake3",
  "dotall-core",
+ "flate2",
  "lopdf",
  "serde",
  "serde_json",
@@ -663,6 +666,7 @@ dependencies = [
 name = "dotall-pptx"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "blake3",
  "dotall-core",
  "dotall-ooxml",
@@ -679,6 +683,7 @@ dependencies = [
 name = "dotall-xlsx"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "blake3",
  "calamine",
  "dotall-core",

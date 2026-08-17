@@ -19,6 +19,27 @@ const BLANK_SLIDE: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="
 const HYPERLINK_REL_TYPE: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink";
 
+const COMMENTS_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments";
+
+const COMMENT_AUTHORS_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/commentAuthors";
+
+const COMMENT_AUTHORS_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.commentAuthors+xml";
+
+const COMMENTS_CONTENT_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.comments+xml";
+
+const IMAGE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
+const SHAPE_ANCHOR_URI: &str = "{C0A1B2D3-E4F5-6789-ABCD-EF0123456789}";
+
+const EMPTY_COMMENT_AUTHORS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:cmAuthorLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"></p:cmAuthorLst>"#;
+
+const EMPTY_COMMENT_LIST: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:cmLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"></p:cmLst>"#;
+
 const EMPTY_RELATIONSHIPS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>"#;
 
 struct PackagePatch {
@@ -41,6 +62,7 @@ pub fn validate(
         "set_shape_text" => validate_set_shape_text(model, operation),
         "set_table_cell_text" => validate_set_table_cell_text(model, operation),
         "set_table_cell_bold" => validate_set_table_cell_bold(model, operation),
+        "set_table_cell_italic" => validate_set_table_cell_italic(model, operation),
         "set_notes_text" => validate_set_notes_text(model, operation),
         "add_slide" => validate_add_slide(model, operation),
         "delete_slide" => validate_delete_slide(model, operation),
@@ -62,8 +84,21 @@ pub fn validate(
         "set_shape_hyperlink" => validate_set_shape_hyperlink(model, operation),
         "replace_shape_text" => validate_replace_shape_text(model, operation),
         "replace_across_shapes" => validate_replace_across_shapes(model, operation),
+        "insert_comment" => validate_insert_comment(model, operation),
+        "insert_picture" => validate_insert_picture(model, operation),
+        "set_comment" | "delete_comment" | "replace_comment" => Err(format_error(format!(
+            "rejected pptx edit `{}`: mutating existing comments is not supported; use insert_comment",
+            operation.kind
+        ))),
+        "set_picture" | "delete_picture" | "replace_picture" => Err(format_error(format!(
+            "rejected pptx edit `{}`: mutating existing pictures is not supported; use insert_picture",
+            operation.kind
+        ))),
+        "set_chart_title" => Err(format_error(
+            "rejected pptx edit `set_chart_title`: chart mutate is not supported (charts are inspect-only)",
+        )),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, replace_across_shapes, set_table_cell_text, set_table_cell_bold, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_bullet, set_shape_hyperlink, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, replace_across_shapes, set_table_cell_text, set_table_cell_bold, set_table_cell_italic, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_bullet, set_shape_hyperlink, insert_comment, insert_picture, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -324,6 +359,55 @@ fn validate_set_table_cell_bold(
             change: "set_table_cell_bold".into(),
             before: None,
             after: Some(if bold { "true" } else { "false" }.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_table_cell_italic(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let table_ref = table_ref(&operation.payload)?;
+    let row = required_u32(&operation.payload, "row")?;
+    let col = required_u32(&operation.payload, "col")?;
+    let italic = required_bool(&operation.payload, "italic")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let table = resolve_table(slide, table_ref)
+        .ok_or_else(|| format_error(format!("table `{table_ref}` was not found")))?;
+    let cell = resolve_cell(table, row, col).ok_or_else(|| {
+        format_error(format!(
+            "table cell row={row} col={col} is out of range for `{}`",
+            table.name
+        ))
+    })?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_table_cell_italic".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "table": table.name,
+                "row": row,
+                "col": col,
+                "italic": italic,
+                "part_name": slide.part_name,
+                "element_id": cell.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}!r{}c{}", slide.name, table.name, row, col),
+            element_id: cell.element_id.clone(),
+            change: "set_table_cell_italic".into(),
+            before: None,
+            after: Some(if italic { "true" } else { "false" }.into()),
         }],
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
@@ -1078,6 +1162,160 @@ fn resolve_cell(table: &TableModel, row: u32, col: u32) -> Option<&TableCellMode
         .find(|cell| cell.row == row && cell.col == col)
 }
 
+fn validate_insert_comment(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let text = required_str(&operation.payload, "text")?;
+    let author = optional_str(&operation.payload, "author")?.unwrap_or("Dotall");
+    let shape_ref = optional_str(&operation.payload, "shape")?;
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let shape_name = if let Some(shape_ref) = shape_ref {
+        let shape = slide
+            .shapes
+            .iter()
+            .find(|shape| shape.name == shape_ref || shape.element_id == shape_ref)
+            .ok_or_else(|| format_error(format!("shape `{shape_ref}` was not found")))?;
+        Some(shape.name.clone())
+    } else {
+        None
+    };
+    let mut payload = serde_json::json!({
+        "slide": slide.name,
+        "text": text,
+        "author": author,
+        "part_name": slide.part_name,
+    });
+    if let Some(shape) = &shape_name {
+        payload["shape"] = serde_json::json!(shape);
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_comment".into(),
+            payload,
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: match &shape_name {
+                Some(shape) => format!("{}!{}@comment", slide.name, shape),
+                None => format!("{}@comment", slide.name),
+            },
+            element_id: slide.element_id.clone(),
+            change: "insert_comment".into(),
+            before: None,
+            after: Some(text.to_owned()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_insert_picture(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let bytes_base64 = required_str(&operation.payload, "bytes_base64")?;
+    let content_type = optional_str(&operation.payload, "content_type")?.unwrap_or("image/png");
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let extension = match content_type {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpeg",
+        other => {
+            return Err(format_error(format!(
+                "unsupported content_type `{other}`; use image/png or image/jpeg"
+            )));
+        }
+    };
+    let bytes = decode_base64_image(bytes_base64)?;
+    if bytes.is_empty() {
+        return Err(format_error("picture bytes must not be empty"));
+    }
+    let name = match optional_str(&operation.payload, "name")? {
+        Some(name) => {
+            if name_taken_on_slide(model, &slide.name, name) {
+                return Err(format_error(format!(
+                    "name `{name}` already exists on `{}`",
+                    slide.name
+                )));
+            }
+            name.to_owned()
+        }
+        None => {
+            let mut n = 1u32;
+            loop {
+                let candidate = format!("Picture {n}");
+                if !name_taken_on_slide(model, &slide.name, &candidate) {
+                    break candidate;
+                }
+                n = n.saturating_add(1);
+            }
+        }
+    };
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_picture".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "name": name,
+                "part_name": slide.part_name,
+                "content_type": content_type,
+                "extension": extension,
+                "bytes_base64": bytes_base64,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, name),
+            element_id: String::new(),
+            change: "insert_picture".into(),
+            before: None,
+            after: Some(name),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn name_taken_on_slide(model: &PresentationModel, slide_name: &str, name: &str) -> bool {
+    if model
+        .pictures
+        .iter()
+        .any(|picture| picture.slide == slide_name && picture.name == name)
+    {
+        return true;
+    }
+    let Some(slide) = model.slides.iter().find(|slide| slide.name == slide_name) else {
+        return false;
+    };
+    slide
+        .shapes
+        .iter()
+        .any(|shape| shape.name == name || shape.element_id == name)
+        || slide
+            .tables
+            .iter()
+            .any(|table| table.name == name || table.element_id == name)
+}
+
+fn decode_base64_image(encoded: &str) -> Result<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .map_err(|error| format_error(format!("invalid bytes_base64: {error}")))
+}
+
 pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput> {
     let operation = edit
         .operations
@@ -1149,6 +1387,22 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 replacements: BTreeMap::from([(
                     part_name.to_owned(),
                     patch_table_cell_bold(&original, table, row, col, bold)?,
+                )]),
+                additions: BTreeMap::new(),
+                removals: BTreeSet::new(),
+            }
+        }
+        "set_table_cell_italic" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let table = required_str(&operation.payload, "table")?;
+            let row = required_u32(&operation.payload, "row")?;
+            let col = required_u32(&operation.payload, "col")?;
+            let italic = required_bool(&operation.payload, "italic")?;
+            let original = entry_bytes(package, part_name)?;
+            PackagePatch {
+                replacements: BTreeMap::from([(
+                    part_name.to_owned(),
+                    patch_table_cell_italic(&original, table, row, col, italic)?,
                 )]),
                 additions: BTreeMap::new(),
                 removals: BTreeSet::new(),
@@ -1408,6 +1662,22 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let shape = required_str(&operation.payload, "shape")?;
             let url = optional_hyperlink_url(&operation.payload, "url")?;
             set_shape_hyperlink_patch(package, part_name, shape, url)?
+        }
+        "insert_comment" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let text = required_str(&operation.payload, "text")?;
+            let author = required_str(&operation.payload, "author")?;
+            let shape = optional_str(&operation.payload, "shape")?;
+            insert_comment_patch(package, part_name, text, author, shape)?
+        }
+        "insert_picture" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let name = required_str(&operation.payload, "name")?;
+            let extension = required_str(&operation.payload, "extension")?;
+            let content_type = required_str(&operation.payload, "content_type")?;
+            let bytes_base64 = required_str(&operation.payload, "bytes_base64")?;
+            let bytes = decode_base64_image(bytes_base64)?;
+            insert_picture_patch(package, part_name, name, extension, content_type, &bytes)?
         }
         other => {
             return Err(format_error(format!(
@@ -1920,6 +2190,446 @@ fn set_shape_hyperlink_patch(
         additions,
         removals: BTreeSet::new(),
     })
+}
+
+fn insert_comment_patch(
+    package: &[u8],
+    slide_part: &str,
+    text: &str,
+    author: &str,
+    shape: Option<&str>,
+) -> Result<PackagePatch> {
+    let mut replacements = BTreeMap::new();
+    let mut additions = BTreeMap::new();
+
+    let authors_exist = has_entry(package, "ppt/commentAuthors.xml")?;
+    let authors_xml = if authors_exist {
+        entry_bytes(package, "ppt/commentAuthors.xml")?
+    } else {
+        EMPTY_COMMENT_AUTHORS.to_vec()
+    };
+    let (author_id, idx, patched_authors) = upsert_comment_author(&authors_xml, author)?;
+    if authors_exist {
+        replacements.insert("ppt/commentAuthors.xml".into(), patched_authors);
+    } else {
+        additions.insert("ppt/commentAuthors.xml".into(), patched_authors);
+    }
+
+    let slide_rels_name = slide_relationship_part(slide_part);
+    let slide_rels_exist = has_entry(package, &slide_rels_name)?;
+    let slide_rels_xml = if slide_rels_exist {
+        entry_bytes(package, &slide_rels_name)?
+    } else {
+        EMPTY_RELATIONSHIPS.to_vec()
+    };
+
+    let (comments_part, comments_exist, comments_rid) =
+        resolve_comments_part(package, slide_part, &slide_rels_xml)?;
+    let comments_xml = if comments_exist {
+        entry_bytes(package, &comments_part)?
+    } else {
+        EMPTY_COMMENT_LIST.to_vec()
+    };
+    let comment_xml = comment_element(author_id, idx, text, shape);
+    let patched_comments = insert_before_close(&comments_xml, "p:cmLst", &comment_xml)?;
+    if comments_exist {
+        replacements.insert(comments_part.clone(), patched_comments);
+    } else {
+        additions.insert(comments_part.clone(), patched_comments);
+    }
+
+    if !comments_exist || relationship_target_for_type(&slide_rels_xml, "/comments")?.is_none() {
+        let rid = comments_rid.unwrap_or_else(|| {
+            // Fallback unused if resolve didn't allocate — should not happen.
+            "rId1".to_owned()
+        });
+        let target = comments_part
+            .strip_prefix("ppt/")
+            .map(|rest| format!("../{rest}"))
+            .unwrap_or_else(|| comments_part.clone());
+        let without =
+            if let Some(existing) = relationship_id_for_type(&slide_rels_xml, "/comments")? {
+                remove_relationship(&slide_rels_xml, &existing)?
+            } else {
+                slide_rels_xml.clone()
+            };
+        let patched_rels = insert_before_close(
+            &without,
+            "Relationships",
+            &format!(r#"<Relationship Id="{rid}" Type="{COMMENTS_REL_TYPE}" Target="{target}"/>"#),
+        )?;
+        if slide_rels_exist {
+            replacements.insert(slide_rels_name, patched_rels);
+        } else {
+            additions.insert(slide_rels_name, patched_rels);
+        }
+    }
+
+    let presentation_rels = entry_bytes(package, "ppt/_rels/presentation.xml.rels")?;
+    if relationship_target_for_type(&presentation_rels, "/commentAuthors")?.is_none() {
+        let used = relationship_id_numbers(&presentation_rels)?;
+        let rid = format!("rId{}", lowest_unused_number(&used));
+        replacements.insert(
+            "ppt/_rels/presentation.xml.rels".into(),
+            insert_before_close(
+                &presentation_rels,
+                "Relationships",
+                &format!(
+                    r#"<Relationship Id="{rid}" Type="{COMMENT_AUTHORS_REL_TYPE}" Target="commentAuthors.xml"/>"#
+                ),
+            )?,
+        );
+    }
+
+    let content_types = entry_bytes(package, "[Content_Types].xml")?;
+    let mut patched_types = content_types;
+    if !content_type_has_part(&patched_types, "ppt/commentAuthors.xml")? {
+        patched_types = insert_before_close(
+            &patched_types,
+            "Types",
+            &format!(
+                r#"<Override PartName="/ppt/commentAuthors.xml" ContentType="{COMMENT_AUTHORS_CONTENT_TYPE}"/>"#
+            ),
+        )?;
+    }
+    if !content_type_has_part(&patched_types, &comments_part)? {
+        patched_types = insert_before_close(
+            &patched_types,
+            "Types",
+            &format!(
+                r#"<Override PartName="/{comments_part}" ContentType="{COMMENTS_CONTENT_TYPE}"/>"#
+            ),
+        )?;
+    }
+    if patched_types.as_slice() != entry_bytes(package, "[Content_Types].xml")?.as_slice() {
+        replacements.insert("[Content_Types].xml".into(), patched_types);
+    }
+
+    Ok(PackagePatch {
+        replacements,
+        additions,
+        removals: BTreeSet::new(),
+    })
+}
+
+fn insert_picture_patch(
+    package: &[u8],
+    slide_part: &str,
+    name: &str,
+    extension: &str,
+    content_type: &str,
+    image_bytes: &[u8],
+) -> Result<PackagePatch> {
+    let mut replacements = BTreeMap::new();
+    let mut additions = BTreeMap::new();
+
+    let media_number = next_media_image_number(package)?;
+    let media_part = format!("ppt/media/image{media_number}.{extension}");
+    additions.insert(media_part.clone(), image_bytes.to_vec());
+
+    let slide_rels_name = slide_relationship_part(slide_part);
+    let slide_rels_exist = has_entry(package, &slide_rels_name)?;
+    let slide_rels_xml = if slide_rels_exist {
+        entry_bytes(package, &slide_rels_name)?
+    } else {
+        EMPTY_RELATIONSHIPS.to_vec()
+    };
+    let used = relationship_id_numbers(&slide_rels_xml)?;
+    let rid = format!("rId{}", lowest_unused_number(&used));
+    let target = format!("../media/image{media_number}.{extension}");
+    let patched_rels = insert_before_close(
+        &slide_rels_xml,
+        "Relationships",
+        &format!(r#"<Relationship Id="{rid}" Type="{IMAGE_REL_TYPE}" Target="{target}"/>"#),
+    )?;
+    if slide_rels_exist {
+        replacements.insert(slide_rels_name, patched_rels);
+    } else {
+        additions.insert(slide_rels_name, patched_rels);
+    }
+
+    let slide_xml = entry_bytes(package, slide_part)?;
+    replacements.insert(
+        slide_part.to_owned(),
+        patch_add_picture(&slide_xml, name, &rid)?,
+    );
+
+    let content_types = entry_bytes(package, "[Content_Types].xml")?;
+    let mut patched_types = content_types.clone();
+    if !content_type_has_default(&patched_types, extension)? {
+        patched_types = insert_before_close(
+            &patched_types,
+            "Types",
+            &format!(r#"<Default Extension="{extension}" ContentType="{content_type}"/>"#),
+        )?;
+    }
+    if patched_types.as_slice() != content_types.as_slice() {
+        replacements.insert("[Content_Types].xml".into(), patched_types);
+    }
+
+    Ok(PackagePatch {
+        replacements,
+        additions,
+        removals: BTreeSet::new(),
+    })
+}
+
+fn patch_add_picture(xml: &[u8], name: &str, rid: &str) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let close = "</p:spTree>";
+    let position = source
+        .rfind(close)
+        .ok_or_else(|| format_error("slide is missing closing p:spTree"))?;
+    let shape_id = next_c_nv_pr_id(source);
+    let pic = format!(
+        concat!(
+            r#"<p:pic>"#,
+            r#"<p:nvPicPr>"#,
+            r#"<p:cNvPr id="{id}" name="{name}"/>"#,
+            r#"<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>"#,
+            r#"<p:nvPr/>"#,
+            r#"</p:nvPicPr>"#,
+            r#"<p:blipFill>"#,
+            r#"<a:blip r:embed="{rid}"/>"#,
+            r#"<a:stretch><a:fillRect/></a:stretch>"#,
+            r#"</p:blipFill>"#,
+            r#"<p:spPr>"#,
+            r#"<a:xfrm>"#,
+            r#"<a:off x="0" y="0"/>"#,
+            r#"<a:ext cx="914400" cy="914400"/>"#,
+            r#"</a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#,
+            r#"</p:spPr>"#,
+            r#"</p:pic>"#
+        ),
+        id = shape_id,
+        name = xml_escape(name),
+        rid = xml_escape(rid)
+    );
+    Ok(format!("{}{}{}", &source[..position], pic, &source[position..]).into_bytes())
+}
+
+fn next_media_image_number(package: &[u8]) -> Result<u32> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| format_error(format!("invalid PPTX package: {error}")))?;
+    let mut used = BTreeSet::new();
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|error| format_error(format!("cannot read ZIP entry: {error}")))?;
+        let name = entry.name();
+        if let Some(rest) = name.strip_prefix("ppt/media/image") {
+            let number = rest
+                .split('.')
+                .next()
+                .and_then(|value| value.parse::<u32>().ok());
+            if let Some(number) = number {
+                used.insert(number);
+            }
+        }
+    }
+    Ok(lowest_unused_number(&used))
+}
+
+fn content_type_has_default(xml: &[u8], extension: &str) -> Result<bool> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("Content_Types is not UTF-8: {error}")))?;
+    let needle = format!(r#"Extension="{extension}""#);
+    Ok(text.contains(&needle))
+}
+
+fn resolve_comments_part(
+    package: &[u8],
+    slide_part: &str,
+    slide_rels_xml: &[u8],
+) -> Result<(String, bool, Option<String>)> {
+    if let Some(target) = relationship_target_for_type(slide_rels_xml, "/comments")? {
+        let part = if let Some(rest) = target.strip_prefix("../") {
+            format!("ppt/{rest}")
+        } else {
+            resolve_ppt_target(&target)
+        };
+        let exists = has_entry(package, &part)?;
+        let rid = relationship_id_for_type(slide_rels_xml, "/comments")?;
+        return Ok((part, exists, rid));
+    }
+    let number = slide_part
+        .strip_prefix("ppt/slides/slide")
+        .and_then(|name| name.strip_suffix(".xml"))
+        .and_then(|number| number.parse::<u32>().ok())
+        .unwrap_or(1);
+    let mut part = format!("ppt/comments/comment{number}.xml");
+    let mut used_numbers = comment_part_numbers(package)?;
+    if has_entry(package, &part)?
+        && relationship_target_for_type(slide_rels_xml, "/comments")?.is_none()
+    {
+        // Slide has no comments rel yet but the heuristic part exists (another slide). Pick unused.
+        let next = lowest_unused_number(&used_numbers);
+        part = format!("ppt/comments/comment{next}.xml");
+        used_numbers.insert(next);
+    }
+    let used_rids = relationship_id_numbers(slide_rels_xml)?;
+    let rid = format!("rId{}", lowest_unused_number(&used_rids));
+    Ok((part, false, Some(rid)))
+}
+
+fn comment_part_numbers(package: &[u8]) -> Result<BTreeSet<u32>> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| format_error(format!("invalid PPTX package: {error}")))?;
+    let mut numbers = BTreeSet::new();
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|error| format_error(format!("cannot read ZIP entry: {error}")))?;
+        if let Some(number) = entry
+            .name()
+            .strip_prefix("ppt/comments/comment")
+            .and_then(|name| name.strip_suffix(".xml"))
+            .and_then(|number| number.parse().ok())
+        {
+            numbers.insert(number);
+        }
+    }
+    Ok(numbers)
+}
+
+fn upsert_comment_author(xml: &[u8], author: &str) -> Result<(u32, u32, Vec<u8>)> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("commentAuthors XML is not UTF-8: {error}")))?;
+    let mut cursor = 0;
+    let mut max_id = 0u32;
+    while let Some(rel) = text[cursor..].find("<p:cmAuthor") {
+        let start = cursor + rel;
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| format_error("unterminated p:cmAuthor"))?;
+        let tag = &text[start..end];
+        let id = tag_attribute(tag, "id")
+            .and_then(|value| value.parse::<u32>().ok())
+            .unwrap_or(0);
+        max_id = max_id.max(id);
+        if tag_attribute(tag, "name").as_deref() == Some(author) {
+            let last_idx = tag_attribute(tag, "lastIdx")
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(0)
+                .saturating_add(1);
+            let initials =
+                tag_attribute(tag, "initials").unwrap_or_else(|| author_initials(author));
+            let clr_idx = tag_attribute(tag, "clrIdx").unwrap_or_else(|| id.to_string());
+            let replacement = format!(
+                r#"<p:cmAuthor id="{id}" name="{}" initials="{}" lastIdx="{last_idx}" clrIdx="{clr_idx}"/>"#,
+                escape_xml_attr(author),
+                escape_xml_attr(&initials)
+            );
+            let self_closing = tag.ends_with("/>");
+            let full_end = if self_closing {
+                end
+            } else {
+                text[end..]
+                    .find("</p:cmAuthor>")
+                    .map(|offset| end + offset + "</p:cmAuthor>".len())
+                    .ok_or_else(|| format_error("unterminated p:cmAuthor element"))?
+            };
+            let patched = format!("{}{}{}", &text[..start], replacement, &text[full_end..]);
+            return Ok((id, last_idx, patched.into_bytes()));
+        }
+        cursor = end;
+    }
+    let id = if text.contains("<p:cmAuthor") {
+        max_id.saturating_add(1)
+    } else {
+        0
+    };
+    let idx = 1u32;
+    let initials = author_initials(author);
+    let insertion = format!(
+        r#"<p:cmAuthor id="{id}" name="{}" initials="{}" lastIdx="{idx}" clrIdx="{id}"/>"#,
+        escape_xml_attr(author),
+        escape_xml_attr(&initials)
+    );
+    let patched = insert_before_close(xml, "p:cmAuthorLst", &insertion)?;
+    Ok((id, idx, patched))
+}
+
+fn author_initials(author: &str) -> String {
+    let initials: String = author
+        .split_whitespace()
+        .filter_map(|word| word.chars().next())
+        .collect();
+    if initials.is_empty() {
+        "D".into()
+    } else {
+        initials.chars().take(2).collect()
+    }
+}
+
+fn comment_element(author_id: u32, idx: u32, text: &str, shape: Option<&str>) -> String {
+    let mut xml = format!(
+        r#"<p:cm authorId="{author_id}" dt="2024-01-15T12:00:00" idx="{idx}"><p:pos x="457200" y="274320"/><p:text>{}</p:text>"#,
+        xml_escape(text)
+    );
+    if let Some(shape) = shape {
+        xml.push_str(&format!(
+            r#"<p:extLst><p:ext uri="{SHAPE_ANCHOR_URI}"><dotall:shapeAnchor xmlns:dotall="https://dotall.dev/pptx/shapeAnchor" name="{}"/></p:ext></p:extLst>"#,
+            escape_xml_attr(shape)
+        ));
+    }
+    xml.push_str("</p:cm>");
+    xml
+}
+
+fn relationship_target_for_type(xml: &[u8], type_suffix: &str) -> Result<Option<String>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("relationships XML is not UTF-8: {error}")))?;
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find("<Relationship") {
+        let start = cursor + rel;
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| format_error("unterminated Relationship"))?;
+        let tag = &text[start..end];
+        if tag_attribute(tag, "Type")
+            .as_deref()
+            .is_some_and(|rel_type| rel_type.ends_with(type_suffix))
+        {
+            return Ok(tag_attribute(tag, "Target"));
+        }
+        cursor = end;
+    }
+    Ok(None)
+}
+
+fn relationship_id_for_type(xml: &[u8], type_suffix: &str) -> Result<Option<String>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("relationships XML is not UTF-8: {error}")))?;
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find("<Relationship") {
+        let start = cursor + rel;
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| format_error("unterminated Relationship"))?;
+        let tag = &text[start..end];
+        if tag_attribute(tag, "Type")
+            .as_deref()
+            .is_some_and(|rel_type| rel_type.ends_with(type_suffix))
+        {
+            return Ok(tag_attribute(tag, "Id"));
+        }
+        cursor = end;
+    }
+    Ok(None)
+}
+
+fn content_type_has_part(xml: &[u8], part: &str) -> Result<bool> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("Content_Types XML is not UTF-8: {error}")))?;
+    let needle = format!("PartName=\"/{part}\"");
+    let alt = format!("PartName=\"{part}\"");
+    Ok(text.contains(&needle) || text.contains(&alt))
 }
 
 fn upsert_hyperlink_relationship(xml: &[u8], rid: &str, url: &str) -> Result<Vec<u8>> {
@@ -2705,6 +3415,47 @@ fn patch_table_cell_bold(
     let tbl = &frame[tbl_rel..tbl_end];
     let cell = nth_table_cell(tbl, row, col)?;
     let patched_cell = set_shape_runs_attr(cell, "b", value)?;
+
+    let cell_abs_start = frame_start + tbl_rel + cell_offset_in_tbl(tbl, row, col)?;
+    let cell_abs_end = cell_abs_start + cell.len();
+    let mut output = String::new();
+    output.push_str(&source[..cell_abs_start]);
+    output.push_str(&patched_cell);
+    output.push_str(&source[cell_abs_end..]);
+    Ok(output.into_bytes())
+}
+
+fn patch_table_cell_italic(
+    xml: &[u8],
+    table: &str,
+    row: u32,
+    col: u32,
+    italic: bool,
+) -> Result<Vec<u8>> {
+    let value = if italic { "1" } else { "0" };
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let needle = format!("name=\"{table}\"");
+    let name_at = source
+        .find(&needle)
+        .ok_or_else(|| format_error(format!("table `{table}` was not found in slide XML")))?;
+    let frame_start = source[..name_at]
+        .rfind("<p:graphicFrame")
+        .ok_or_else(|| format_error("table is missing a p:graphicFrame wrapper"))?;
+    let rel_end = source[name_at..]
+        .find("</p:graphicFrame>")
+        .ok_or_else(|| format_error("table is missing a closing p:graphicFrame"))?;
+    let frame_end = name_at + rel_end + "</p:graphicFrame>".len();
+    let frame = &source[frame_start..frame_end];
+    let tbl_rel = find_tag(frame, 0, "a:tbl")
+        .ok_or_else(|| format_error(format!("graphicFrame `{table}` has no a:tbl")))?;
+    let tbl_close_rel = frame[tbl_rel..]
+        .find("</a:tbl>")
+        .ok_or_else(|| format_error("unterminated a:tbl"))?;
+    let tbl_end = tbl_rel + tbl_close_rel + "</a:tbl>".len();
+    let tbl = &frame[tbl_rel..tbl_end];
+    let cell = nth_table_cell(tbl, row, col)?;
+    let patched_cell = set_shape_runs_attr(cell, "i", value)?;
 
     let cell_abs_start = frame_start + tbl_rel + cell_offset_in_tbl(tbl, row, col)?;
     let cell_abs_end = cell_abs_start + cell.len();

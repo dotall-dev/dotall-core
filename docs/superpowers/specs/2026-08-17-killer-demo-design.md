@@ -135,8 +135,10 @@ store, source files, or history.
 `state/access/log.jsonl`; `state/edits/history/vNNN.json`; snapshot manifests
 and part file sizes (hashes + bytes, not part payloads in the default view).
 
-**UI:** expandable tree (`cache/` vs `state/`); per-file history (`v001…` + op
-summaries); click-to-preview JSON/JSONL truncated.
+**UI:** split pane — git-style version graph (one stitch-dashed lane per
+tracked file, newest on top, `parent` / `revert_of` edges) beside a visual
+`.all/` directory tree (`cache/` vs `state/` nodes). Click a commit to
+highlight that object in the tree. Click-to-preview JSON/JSONL truncated.
 
 **Honest metrics only:**
 

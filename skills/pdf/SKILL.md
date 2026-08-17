@@ -3,21 +3,23 @@ name: pdf
 description: >-
   Work with .pdf files through Dotall MCP. Use when inspecting pages, listing
   AcroForm fields, filling or clearing a text/checkbox/choice/radio field,
-  setting /Info metadata, or reverting a PDF in a Dotall workspace. Do not
-  rewrite page content streams.
+  inserting a sticky/text comment annotation, inserting a stamp/picture
+  annotation, rotating a page via /Rotate, setting /Info metadata, or reverting
+  a PDF in a Dotall workspace. Do not rewrite page content streams.
 ---
 
 # PDF via Dotall MCP
 
-v0 is **form fill + document metadata**. Do not unzip, reprint, or rewrite page
-operators.
+v0 is **form fill + document metadata + comment annotations + stamp pictures +
+page rotate**. Do not unzip, reprint, or rewrite page operators. Charts are N/A
+for PDF (`summary.charts` is omit or `[]`).
 
 ## Workflow
 
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | set_form_field_edit | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | set_form_field_rich_text | set_form_field_no_export | set_form_field_multi_select | set_form_field_combo | set_form_field_edit | clear_form_field | clear_all_form_fields | set_document_metadata | insert_comment | insert_picture | rotate_page (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -37,6 +39,8 @@ for humans inspecting `.all/`, not required in the edit loop.
 Text extraction is best-effort but operator-aware (`Tj` / `TJ` / `'` / `"`, line
 breaks from `Td` / `T*`). Inspect `encrypted` and `has_signature` before editing.
 Inspect `metadata` for `/Info` Title / Author / Subject / Creator / Producer when present.
+Inspect `page_rotations` for non-zero page `/Rotate` values as
+`[{ "page": 1, "rotate": 90 }]` (always keeps `page_count`).
 Checkbox and radio fields (`btn`) may include `export_values` (e.g. `Yes`, `Off`,
 or radio states `Low` / `Medium` / `High`) from `/AP /N` across widgets.
 Choice fields (`ch`) expose `options` from `/Opt` on inspect and field read.
@@ -44,6 +48,12 @@ Inspect surfaces `read_only` per field from `/Ff` bit 1.
 Inspect surfaces `no_export` per field from `/Ff` bit 3.
 Inspect surfaces `multi_select` per choice field from `/Ff` bit 20.
 Inspect surfaces `combo` per choice field from `/Ff` bit 17.
+
+Inspect `comments[]` lists sticky/text annotations (`/Text`, `/FreeText`) with
+`element_id`, `page`, `subtype`, `contents`, and `author`. Inspect `pictures[]`
+lists stamp annotations (`/Stamp`) with `element_id`, `page`, and `subtype` —
+always present (possibly `[]`). AcroForm `/Widget` annots are form fields, not
+comments or pictures. `charts` is omit or `[]`.
 
 ### Edit
 
@@ -250,6 +260,59 @@ Clear `/Info` Title, Author, and Subject (Creator/Producer left untouched):
   "payload": {}
 }
 ```
+
+Insert a sticky/text comment annotation (new object only; no content-stream drawing):
+
+```json
+{
+  "kind": "insert_comment",
+  "payload": {
+    "page": 1,
+    "contents": "Check Name field",
+    "author": "Dotall"
+  }
+}
+```
+
+`page` is 1-based. `author` defaults to `"Dotall"`. Creates `/Type /Annot`
+`/Subtype /Text` with `/Contents` and `/T`, appends to the page `/Annots` array.
+Does **not** rewrite page `/Contents` streams or mutate existing annot dicts
+(including Widget form fields). Rejected: `set_comment`, `delete_comment`,
+`replace_comment`, and any draw-text-on-page kind.
+
+Insert a stamp/picture annotation (new object only; never page content-stream
+rewrite):
+
+```json
+{
+  "kind": "insert_picture",
+  "payload": {
+    "page": 1,
+    "bytes_base64": "<standard base64 of png or jpeg bytes>",
+    "content_type": "image/png",
+    "rect": [400, 700, 500, 780]
+  }
+}
+```
+
+`page` is 1-based. `content_type` defaults to `image/png`. `rect` defaults to
+`[400, 700, 500, 780]`. Creates `/Type /Annot /Subtype /Stamp` with annot-owned
+`/AP` Form XObject wrapping an Image XObject, then appends to `/Annots`. PNG is
+limited to IHDR 8-bit RGB (1×1 in v0); JPEG uses `/Filter /DCTDecode`. Rejected:
+`draw_image`, `replace_picture`, `delete_picture`, and content-stream drawing.
+
+Rotate a page (page dictionary `/Rotate` only — no content-stream rewrite):
+
+```json
+{
+  "kind": "rotate_page",
+  "payload": { "page": 1, "degrees": 90 }
+}
+```
+
+`page` is 1-based. `degrees` must be `0`, `90`, `180`, or `270`. `0` removes
+`/Rotate` if present. Form field values are unchanged. Inspect surfaces non-zero
+rotations in `summary.page_rotations`.
 
 Rejected: encrypted PDFs, signed/certified PDFs, read-only fields, ambiguous radios
 without an export value, empty metadata payloads.

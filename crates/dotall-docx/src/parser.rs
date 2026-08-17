@@ -8,7 +8,10 @@ use zip::ZipArchive;
 
 use crate::FORMAT_ID;
 use crate::ids;
-use crate::model::{DocumentModel, HeaderFooterParagraphModel, ParagraphModel, SCHEMA_VERSION};
+use crate::model::{
+    CommentModel, DocumentModel, HeaderFooterParagraphModel, ParagraphModel, PictureModel,
+    SCHEMA_VERSION,
+};
 
 pub fn parse_document(source: &Path) -> Result<DocumentModel> {
     let bytes = std::fs::read(source).map_err(|error| DotallError::Io {
@@ -28,6 +31,8 @@ pub fn parse_document_bytes(package: &[u8]) -> Result<DocumentModel> {
     let footer_names = list_story_parts(&mut archive, "word/footer")?;
     let header_paragraphs = parse_story_parts(&mut archive, &header_names, "header")?;
     let footer_paragraphs = parse_story_parts(&mut archive, &footer_names, "footer")?;
+    let comments = parse_comments(&mut archive, &document_xml, &paragraphs)?;
+    let pictures = parse_pictures(&mut archive, &document_xml)?;
     Ok(DocumentModel {
         document_id: ids::document_id(&source_hash, SCHEMA_VERSION),
         paragraphs,
@@ -35,6 +40,8 @@ pub fn parse_document_bytes(package: &[u8]) -> Result<DocumentModel> {
         footer_paragraphs,
         skipped_tables: false,
         table_count,
+        comments,
+        pictures,
     })
 }
 
@@ -95,6 +102,252 @@ fn zip_entry(archive: &mut ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<
         .read_to_end(&mut bytes)
         .map_err(|error| format_error(format!("cannot read `{name}`: {error}")))?;
     Ok(bytes)
+}
+
+fn optional_zip_entry(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+) -> Result<Option<Vec<u8>>> {
+    match archive.by_name(name) {
+        Ok(mut entry) => {
+            let mut bytes = Vec::new();
+            entry
+                .read_to_end(&mut bytes)
+                .map_err(|error| format_error(format!("cannot read `{name}`: {error}")))?;
+            Ok(Some(bytes))
+        }
+        Err(_) => Ok(None),
+    }
+}
+
+fn parse_comments(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    document_xml: &[u8],
+    paragraphs: &[ParagraphModel],
+) -> Result<Vec<CommentModel>> {
+    let Some(comments_xml) = optional_zip_entry(archive, "word/comments.xml")? else {
+        return Ok(Vec::new());
+    };
+    let drafts = parse_comments_xml(&comments_xml)?;
+    if drafts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let anchors = comment_paragraph_anchors(document_xml)?;
+    let mut comments = Vec::with_capacity(drafts.len());
+    for draft in drafts {
+        let paragraph_index = anchors.get(&draft.w_id).copied().unwrap_or(0);
+        let paragraph = paragraphs.get(paragraph_index as usize).ok_or_else(|| {
+            format_error(format!(
+                "comment `{}` anchors missing paragraph `{paragraph_index}`",
+                draft.w_id
+            ))
+        })?;
+        comments.push(CommentModel {
+            element_id: ids::comment_id(draft.w_id, &draft.author, &draft.text, SCHEMA_VERSION),
+            paragraph: paragraph.element_id.clone(),
+            index: paragraph.index,
+            author: draft.author,
+            text: draft.text,
+        });
+    }
+    Ok(comments)
+}
+
+fn parse_pictures(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    document_xml: &[u8],
+) -> Result<Vec<PictureModel>> {
+    let Some(rels_xml) = optional_zip_entry(archive, "word/_rels/document.xml.rels")? else {
+        return Ok(Vec::new());
+    };
+    let image_targets = parse_image_relationships(&rels_xml)?;
+    if image_targets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut pictures = Vec::new();
+    for (index, embed) in picture_paragraph_embeds(document_xml)? {
+        let Some(target) = image_targets.get(&embed) else {
+            continue;
+        };
+        let part = if target.starts_with("word/") {
+            target.clone()
+        } else {
+            format!("word/{target}")
+        };
+        pictures.push(PictureModel {
+            element_id: ids::picture_id(index, &part, SCHEMA_VERSION),
+            index,
+            part,
+        });
+    }
+    Ok(pictures)
+}
+
+fn parse_image_relationships(xml: &[u8]) -> Result<std::collections::BTreeMap<String, String>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("relationships XML is not UTF-8: {error}")))?;
+    let mut map = std::collections::BTreeMap::new();
+    let mut cursor = 0;
+    while let Some(rel) = text[cursor..].find("<Relationship") {
+        let start = cursor + rel;
+        let end = text[start..]
+            .find("/>")
+            .or_else(|| text[start..].find('>'))
+            .map(|offset| start + offset)
+            .ok_or_else(|| format_error("unterminated Relationship"))?;
+        let tag = &text[start..=end];
+        cursor = end + 1;
+        if !tag
+            .contains("http://schemas.openxmlformats.org/officeDocument/2006/relationships/image")
+        {
+            continue;
+        }
+        let Some(id) = xml_attr(tag, "Id") else {
+            continue;
+        };
+        let Some(target) = xml_attr(tag, "Target") else {
+            continue;
+        };
+        map.insert(id.to_owned(), target.to_owned());
+    }
+    Ok(map)
+}
+
+fn xml_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!("{name}=\"");
+    let start = tag.find(&key)? + key.len();
+    let end = tag[start..].find('"')? + start;
+    Some(&tag[start..end])
+}
+
+fn picture_paragraph_embeds(document_xml: &[u8]) -> Result<Vec<(u32, String)>> {
+    let mut reader = Reader::from_reader(document_xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut embeds = Vec::new();
+    let mut paragraph_index: Option<u32> = None;
+    let mut next_index = 0u32;
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(format!("invalid document XML: {error}")))?
+        {
+            Event::Start(tag) if tag.local_name().as_ref() == b"p" => {
+                paragraph_index = Some(next_index);
+                next_index += 1;
+            }
+            Event::End(tag) if tag.local_name().as_ref() == b"p" => {
+                paragraph_index = None;
+            }
+            Event::Empty(tag) | Event::Start(tag) if tag.local_name().as_ref() == b"blip" => {
+                if let Some(index) = paragraph_index
+                    && let Some(embed) = attribute_val(&tag, b"embed")?
+                {
+                    embeds.push((index, embed));
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(embeds)
+}
+
+struct DraftComment {
+    w_id: u32,
+    author: String,
+    text: String,
+}
+
+fn parse_comments_xml(xml: &[u8]) -> Result<Vec<DraftComment>> {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut comments = Vec::new();
+    let mut in_comment = false;
+    let mut w_id = 0u32;
+    let mut author = String::new();
+    let mut texts = Vec::new();
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(format!("invalid comments XML: {error}")))?
+        {
+            Event::Start(tag) if tag.local_name().as_ref() == b"comment" => {
+                in_comment = true;
+                texts.clear();
+                w_id = attribute_val(&tag, b"id")?
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(0);
+                author = attribute_val(&tag, b"author")?.unwrap_or_default();
+            }
+            Event::Start(tag) if in_comment && tag.local_name().as_ref() == b"t" => {
+                let text = reader
+                    .read_text(tag.name())
+                    .map_err(|error| format_error(format!("invalid w:t in comment: {error}")))?;
+                texts.push(decode_text(text));
+            }
+            Event::End(tag) if tag.local_name().as_ref() == b"comment" && in_comment => {
+                comments.push(DraftComment {
+                    w_id,
+                    author: std::mem::take(&mut author),
+                    text: texts.concat(),
+                });
+                in_comment = false;
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(comments)
+}
+
+fn comment_paragraph_anchors(document_xml: &[u8]) -> Result<std::collections::BTreeMap<u32, u32>> {
+    let mut reader = Reader::from_reader(document_xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut anchors = std::collections::BTreeMap::new();
+    let mut paragraph_index: Option<u32> = None;
+    let mut next_index = 0u32;
+    let mut pending_before_paragraph: Vec<u32> = Vec::new();
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(format!("invalid document XML: {error}")))?
+        {
+            Event::Start(tag) if tag.local_name().as_ref() == b"p" => {
+                paragraph_index = Some(next_index);
+                for w_id in pending_before_paragraph.drain(..) {
+                    anchors.entry(w_id).or_insert(next_index);
+                }
+                next_index += 1;
+            }
+            Event::Empty(tag) | Event::Start(tag)
+                if tag.local_name().as_ref() == b"commentRangeStart" =>
+            {
+                if let Some(w_id) = attribute_val(&tag, b"id")?.and_then(|value| value.parse().ok())
+                {
+                    if let Some(index) = paragraph_index {
+                        anchors.entry(w_id).or_insert(index);
+                    } else {
+                        pending_before_paragraph.push(w_id);
+                    }
+                }
+            }
+            Event::End(tag) if tag.local_name().as_ref() == b"p" => {
+                paragraph_index = None;
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(anchors)
 }
 
 fn parse_body(xml: &[u8]) -> Result<(Vec<ParagraphModel>, u32)> {

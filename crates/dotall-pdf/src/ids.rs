@@ -15,6 +15,15 @@ pub fn field_id(name: &str, schema_version: u32) -> String {
     opaque_id("fl", schema_version, &[name])
 }
 
+pub fn annot_id(object_id: &str, schema_version: u32) -> String {
+    opaque_id("an", schema_version, &[object_id])
+}
+
+/// Alias for comment-facing call sites; same opaque id as [`annot_id`].
+pub fn comment_id(object_id: &str, schema_version: u32) -> String {
+    annot_id(object_id, schema_version)
+}
+
 fn opaque_id(prefix: &str, schema_version: u32, components: &[&str]) -> String {
     let mut hasher = Hasher::new();
     hasher.update(b"pdf.document");

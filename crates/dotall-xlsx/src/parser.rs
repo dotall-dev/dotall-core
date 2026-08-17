@@ -12,9 +12,9 @@ use zip::ZipArchive;
 use crate::FORMAT_ID;
 use crate::ids;
 use crate::model::{
-    CellModel, CellValue, CenterOnPage, FitToPage, HeaderFooter, NamedRange, PageMargins,
-    SCHEMA_VERSION, SheetDimensions, SheetModel, StyleEntry, UnmodeledMap, WorkbookModel,
-    column_name,
+    CellModel, CellValue, CenterOnPage, ChartModel, CommentModel, FitToPage, HeaderFooter,
+    NamedRange, PageMargins, PictureModel, SCHEMA_VERSION, SheetDimensions, SheetModel, StyleEntry,
+    UnmodeledMap, WorkbookModel, column_name,
 };
 
 /// Parsed `xl/styles.xml` cellXfs + number-format resolution.
@@ -51,8 +51,9 @@ struct SheetStyleContext<'a> {
 ///
 /// Calamine does not expose worksheet merges or cell style indices through its
 /// public API, so merges and style refs are read from OOXML (`styles.xml` + sheet
-/// cell `s` attributes). Style entries stay id-only; full font/fill writers are
-/// out of scope.
+/// cell `s` attributes). Style catalog entries stay id-only on read; font/fill
+/// writers append fonts/fills/cellXfs surgically via `set_cell_font` /
+/// `set_cell_fill`.
 pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
     let source_bytes = fs::read(source).map_err(|error| format_error(source, error))?;
     let source_hash = blake3::hash(&source_bytes).to_hex().to_string();
@@ -127,11 +128,18 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
         })
         .collect();
 
+    let comments = parse_comments(&source_bytes, source, &sheets)?;
+    let charts = parse_charts(&source_bytes, source, &sheets)?;
+    let pictures = parse_pictures(&source_bytes, source, &sheets)?;
+
     Ok(WorkbookModel {
         workbook_id: ids::workbook_id(&source_hash, SCHEMA_VERSION),
         sheets,
         named_ranges,
         style_table,
+        comments,
+        charts,
+        pictures,
         unmodeled: UnmodeledMap::default(),
     })
 }
@@ -1348,6 +1356,555 @@ fn normalize_relationship_target(target: &str) -> String {
     } else {
         format!("xl/{target}")
     }
+}
+
+fn resolve_relationship_target(base_part: &str, target: &str) -> String {
+    if target.starts_with('/') {
+        return target.trim_start_matches('/').to_owned();
+    }
+    let base_dir = base_part.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("");
+    let mut components: Vec<&str> = base_dir
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    for part in target.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            other => components.push(other),
+        }
+    }
+    components.join("/")
+}
+
+fn package_entry_names(package: &[u8], source: &Path) -> Result<Vec<String>> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| format_error(source, format!("invalid XLSX package: {error}")))?;
+    let mut names = Vec::with_capacity(archive.len());
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|error| format_error(source, format!("cannot read ZIP entry: {error}")))?;
+        names.push(entry.name().to_owned());
+    }
+    Ok(names)
+}
+
+fn parse_comments(
+    package: &[u8],
+    source: &Path,
+    _sheets: &[SheetModel],
+) -> Result<Vec<CommentModel>> {
+    let workbook = entry_bytes(package, "xl/workbook.xml", source)?;
+    let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels", source)?;
+    let relationship_targets = parse_relationships(&relationships, source)?;
+    let workbook_sheets = parse_workbook_sheets(&workbook, source)?;
+
+    let mut comments = Vec::new();
+    for (sheet_name, relationship_id) in workbook_sheets {
+        let Some(target) = relationship_targets.get(&relationship_id) else {
+            continue;
+        };
+        let worksheet_path = normalize_relationship_target(target);
+        let rels_path = worksheet_rels_path(&worksheet_path);
+        let Ok(rels_bytes) = entry_bytes(package, &rels_path, source) else {
+            continue;
+        };
+        let sheet_rels = parse_relationship_records(&rels_bytes, source)?;
+        let Some(comments_rel) = sheet_rels
+            .iter()
+            .find(|rel| rel.kind.ends_with("/comments"))
+        else {
+            continue;
+        };
+        let comments_path = resolve_relationship_target(&worksheet_path, &comments_rel.target);
+        let Ok(comments_xml) = entry_bytes(package, &comments_path, source) else {
+            continue;
+        };
+        let parsed = parse_comments_xml(&comments_xml, &sheet_name, source)?;
+        comments.extend(parsed);
+    }
+
+    Ok(comments)
+}
+
+fn parse_comments_xml(xml: &[u8], sheet_name: &str, source: &Path) -> Result<Vec<CommentModel>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut authors = Vec::new();
+    let mut comments = Vec::new();
+    let mut in_authors = false;
+    let mut in_author = false;
+    let mut in_comment = false;
+    let mut in_text = false;
+    let mut in_t = false;
+    let mut current_author = String::new();
+    let mut current_ref = String::new();
+    let mut current_author_id: Option<usize> = None;
+    let mut current_text = String::new();
+
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid comments XML: {error}")))?
+        {
+            Event::Start(element) => {
+                let raw_name = element.name();
+                let name = local_name(raw_name.as_ref()).to_vec();
+                match name.as_slice() {
+                    b"authors" => in_authors = true,
+                    b"author" if in_authors => {
+                        in_author = true;
+                        current_author.clear();
+                    }
+                    b"comment" => {
+                        in_comment = true;
+                        current_ref.clear();
+                        current_author_id = None;
+                        current_text.clear();
+                        for attribute in element.attributes().flatten() {
+                            match local_name(attribute.key.as_ref()) {
+                                b"ref" => {
+                                    current_ref = String::from_utf8_lossy(attribute.value.as_ref())
+                                        .into_owned()
+                                        .to_ascii_uppercase();
+                                }
+                                b"authorId" => {
+                                    current_author_id =
+                                        String::from_utf8_lossy(attribute.value.as_ref())
+                                            .parse()
+                                            .ok();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    b"text" if in_comment => in_text = true,
+                    b"t" if in_text => in_t = true,
+                    _ => {}
+                }
+            }
+            Event::Text(text) => {
+                let decoded = String::from_utf8_lossy(text.as_ref());
+                let unescaped = quick_xml::escape::unescape(&decoded).map_err(|error| {
+                    format_error(source, format!("invalid comments text: {error}"))
+                })?;
+                if in_author {
+                    current_author.push_str(&unescaped);
+                } else if in_t {
+                    current_text.push_str(&unescaped);
+                }
+            }
+            Event::End(element) => {
+                let raw_name = element.name();
+                let name = local_name(raw_name.as_ref()).to_vec();
+                match name.as_slice() {
+                    b"authors" => in_authors = false,
+                    b"author" if in_author => {
+                        in_author = false;
+                        authors.push(std::mem::take(&mut current_author));
+                    }
+                    b"t" => in_t = false,
+                    b"text" => in_text = false,
+                    b"comment" if in_comment => {
+                        in_comment = false;
+                        if current_ref.is_empty() {
+                            continue;
+                        }
+                        let author = current_author_id
+                            .and_then(|index| authors.get(index).cloned())
+                            .unwrap_or_default();
+                        let text = normalize_comment_text(&current_text, &author);
+                        comments.push(CommentModel {
+                            element_id: ids::comment_id(sheet_name, &current_ref, SCHEMA_VERSION),
+                            sheet: sheet_name.to_owned(),
+                            cell: current_ref.clone(),
+                            author,
+                            text,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(comments)
+}
+
+/// Strip a leading `Author:` prefix when the rich-text note includes one.
+fn normalize_comment_text(raw: &str, author: &str) -> String {
+    let trimmed = raw.trim_start_matches('\n').trim_end();
+    if author.is_empty() {
+        return trimmed.to_owned();
+    }
+    let prefixed = format!("{author}:");
+    if let Some(rest) = trimmed.strip_prefix(&prefixed) {
+        rest.trim_start_matches('\n').trim_start().to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn parse_charts(package: &[u8], source: &Path, _sheets: &[SheetModel]) -> Result<Vec<ChartModel>> {
+    let chart_to_sheet = chart_sheet_map(package, source)?;
+    let names = package_entry_names(package, source)?;
+    let mut charts = Vec::new();
+    for name in names {
+        if !(name.starts_with("xl/charts/") && name.ends_with(".xml")) {
+            continue;
+        }
+        let Ok(xml) = entry_bytes(package, &name, source) else {
+            continue;
+        };
+        let title = parse_chart_title(&xml).unwrap_or_default();
+        charts.push(ChartModel {
+            element_id: ids::chart_id(&name, SCHEMA_VERSION),
+            sheet: chart_to_sheet.get(&name).cloned(),
+            title,
+        });
+    }
+    charts.sort_by(|left, right| left.element_id.cmp(&right.element_id));
+    Ok(charts)
+}
+
+fn parse_pictures(
+    package: &[u8],
+    source: &Path,
+    _sheets: &[SheetModel],
+) -> Result<Vec<PictureModel>> {
+    let content_types = parse_content_types(package, source)?;
+    let workbook = entry_bytes(package, "xl/workbook.xml", source)?;
+    let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels", source)?;
+    let relationship_targets = parse_relationships(&relationships, source)?;
+    let workbook_sheets = parse_workbook_sheets(&workbook, source)?;
+
+    let mut pictures = Vec::new();
+    for (sheet_name, relationship_id) in workbook_sheets {
+        let Some(target) = relationship_targets.get(&relationship_id) else {
+            continue;
+        };
+        let worksheet_path = normalize_relationship_target(target);
+        let rels_path = worksheet_rels_path(&worksheet_path);
+        let Ok(rels_bytes) = entry_bytes(package, &rels_path, source) else {
+            continue;
+        };
+        let sheet_rels = parse_relationship_records(&rels_bytes, source)?;
+        for rel in sheet_rels {
+            if !rel.kind.ends_with("/drawing") {
+                continue;
+            }
+            let drawing_path = resolve_relationship_target(&worksheet_path, &rel.target);
+            let Ok(drawing_xml) = entry_bytes(package, &drawing_path, source) else {
+                continue;
+            };
+            let drawing_rels_path = worksheet_rels_path(&drawing_path);
+            let Ok(drawing_rels) = entry_bytes(package, &drawing_rels_path, source) else {
+                continue;
+            };
+            let mut image_by_rid = BTreeMap::new();
+            for drawing_rel in parse_relationship_records(&drawing_rels, source)? {
+                if !drawing_rel.kind.ends_with("/image") {
+                    continue;
+                }
+                let media_path = resolve_relationship_target(&drawing_path, &drawing_rel.target);
+                image_by_rid.insert(drawing_rel.id, media_path);
+            }
+            let parsed =
+                parse_drawing_pictures(&drawing_xml, &sheet_name, &image_by_rid, &content_types)?;
+            pictures.extend(parsed);
+        }
+    }
+    pictures.sort_by(|left, right| left.element_id.cmp(&right.element_id));
+    Ok(pictures)
+}
+
+fn parse_content_types(package: &[u8], source: &Path) -> Result<ContentTypesIndex> {
+    let xml = entry_bytes(package, "[Content_Types].xml", source)?;
+    let text = std::str::from_utf8(&xml)
+        .map_err(|error| format_error(source, format!("content types are not UTF-8: {error}")))?;
+    let mut defaults = BTreeMap::new();
+    let mut overrides = BTreeMap::new();
+
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..].find("<Default ") {
+        let start = cursor + relative;
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset)
+            .ok_or_else(|| format_error(source, "unterminated Default content type"))?;
+        let tag = &text[start..=end];
+        if let (Some(extension), Some(content_type)) =
+            (xml_attr(tag, "Extension"), xml_attr(tag, "ContentType"))
+        {
+            defaults.insert(extension.to_ascii_lowercase(), content_type);
+        }
+        cursor = end + 1;
+    }
+
+    cursor = 0;
+    while let Some(relative) = text[cursor..].find("<Override ") {
+        let start = cursor + relative;
+        let end = text[start..]
+            .find('>')
+            .map(|offset| start + offset)
+            .ok_or_else(|| format_error(source, "unterminated Override content type"))?;
+        let tag = &text[start..=end];
+        if let (Some(part_name), Some(content_type)) =
+            (xml_attr(tag, "PartName"), xml_attr(tag, "ContentType"))
+        {
+            let normalized = part_name.trim_start_matches('/').to_owned();
+            overrides.insert(normalized, content_type);
+        }
+        cursor = end + 1;
+    }
+
+    Ok(ContentTypesIndex {
+        defaults,
+        overrides,
+    })
+}
+
+#[derive(Clone, Debug, Default)]
+struct ContentTypesIndex {
+    defaults: BTreeMap<String, String>,
+    overrides: BTreeMap<String, String>,
+}
+
+impl ContentTypesIndex {
+    fn content_type_for(&self, part_path: &str) -> String {
+        if let Some(value) = self.overrides.get(part_path) {
+            return value.clone();
+        }
+        let extension = part_path
+            .rsplit_once('.')
+            .map(|(_, extension)| extension.to_ascii_lowercase())
+            .unwrap_or_default();
+        self.defaults
+            .get(&extension)
+            .cloned()
+            .unwrap_or_else(|| "application/octet-stream".to_owned())
+    }
+}
+
+fn xml_attr(tag: &str, attribute: &str) -> Option<String> {
+    let needle = format!("{attribute}=\"");
+    let start = tag.find(&needle)? + needle.len();
+    let end = tag[start..].find('"')? + start;
+    Some(tag[start..end].to_owned())
+}
+
+fn parse_drawing_pictures(
+    xml: &[u8],
+    sheet_name: &str,
+    image_by_rid: &BTreeMap<String, String>,
+    content_types: &ContentTypesIndex,
+) -> Result<Vec<PictureModel>> {
+    let text = match std::str::from_utf8(xml) {
+        Ok(value) => value,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut pictures = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..]
+        .find("<xdr:twoCellAnchor")
+        .or_else(|| text[cursor..].find("<xdr:oneCellAnchor"))
+    {
+        let start = cursor + relative;
+        let is_two = text[start..].starts_with("<xdr:twoCellAnchor");
+        let close = if is_two {
+            "</xdr:twoCellAnchor>"
+        } else {
+            "</xdr:oneCellAnchor>"
+        };
+        let Some(end_rel) = text[start..].find(close) else {
+            break;
+        };
+        let end = start + end_rel + close.len();
+        let anchor = &text[start..end];
+        cursor = end;
+
+        if !anchor.contains("<xdr:pic") && !anchor.contains("<xdr:pic>") {
+            // Still allow pic without checking both; continue if no blip.
+        }
+        let Some(embed) = blip_embed_id(anchor) else {
+            continue;
+        };
+        let Some(media_path) = image_by_rid.get(&embed) else {
+            continue;
+        };
+        let name = cnvpr_name(anchor).unwrap_or_else(|| {
+            media_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(media_path)
+                .to_owned()
+        });
+        let from_cell = anchor_from_cell(anchor);
+        pictures.push(PictureModel {
+            element_id: ids::picture_id(sheet_name, media_path, SCHEMA_VERSION),
+            sheet: sheet_name.to_owned(),
+            name,
+            content_type: content_types.content_type_for(media_path),
+            from_cell,
+        });
+    }
+    Ok(pictures)
+}
+
+fn blip_embed_id(anchor: &str) -> Option<String> {
+    let markers = ["r:embed=\"", "embed=\""];
+    for marker in markers {
+        if let Some(start) = anchor.find(marker) {
+            let value_start = start + marker.len();
+            let value_end = anchor[value_start..].find('"')? + value_start;
+            return Some(anchor[value_start..value_end].to_owned());
+        }
+    }
+    None
+}
+
+fn cnvpr_name(anchor: &str) -> Option<String> {
+    let start = anchor.find("<xdr:cNvPr ")?;
+    let end = anchor[start..].find('>')? + start;
+    let tag = &anchor[start..=end];
+    xml_attr(tag, "name")
+}
+
+fn anchor_from_cell(anchor: &str) -> Option<String> {
+    let from_start = anchor.find("<xdr:from>")?;
+    let from_end = anchor[from_start..].find("</xdr:from>")? + from_start;
+    let from = &anchor[from_start..from_end];
+    let col = xml_element_u32(from, "xdr:col")?;
+    let row = xml_element_u32(from, "xdr:row")?;
+    Some(format!("{}{}", column_name(col as usize), row + 1))
+}
+
+fn xml_element_u32(source: &str, local: &str) -> Option<u32> {
+    let open = format!("<{local}>");
+    let close = format!("</{local}>");
+    let start = source.find(&open)? + open.len();
+    let end = source[start..].find(&close)? + start;
+    source[start..end].trim().parse().ok()
+}
+
+fn chart_sheet_map(package: &[u8], source: &Path) -> Result<BTreeMap<String, String>> {
+    let workbook = entry_bytes(package, "xl/workbook.xml", source)?;
+    let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels", source)?;
+    let relationship_targets = parse_relationships(&relationships, source)?;
+    let workbook_sheets = parse_workbook_sheets(&workbook, source)?;
+
+    let mut chart_to_sheet = BTreeMap::new();
+    for (sheet_name, relationship_id) in workbook_sheets {
+        let Some(target) = relationship_targets.get(&relationship_id) else {
+            continue;
+        };
+        let worksheet_path = normalize_relationship_target(target);
+        let rels_path = worksheet_rels_path(&worksheet_path);
+        let Ok(rels_bytes) = entry_bytes(package, &rels_path, source) else {
+            continue;
+        };
+        let sheet_rels = parse_relationship_records(&rels_bytes, source)?;
+        for rel in sheet_rels {
+            if !rel.kind.ends_with("/drawing") {
+                continue;
+            }
+            let drawing_path = resolve_relationship_target(&worksheet_path, &rel.target);
+            let drawing_rels_path = worksheet_rels_path(&drawing_path);
+            let Ok(drawing_rels) = entry_bytes(package, &drawing_rels_path, source) else {
+                continue;
+            };
+            let drawing_relationships = parse_relationship_records(&drawing_rels, source)?;
+            for drawing_rel in drawing_relationships {
+                if !drawing_rel.kind.ends_with("/chart") {
+                    continue;
+                }
+                let chart_path = resolve_relationship_target(&drawing_path, &drawing_rel.target);
+                chart_to_sheet.insert(chart_path, sheet_name.clone());
+            }
+        }
+    }
+    Ok(chart_to_sheet)
+}
+
+fn parse_chart_title(xml: &[u8]) -> Option<String> {
+    let source = std::str::from_utf8(xml).ok()?;
+    let title_start = source.find("<c:title")?;
+    let title_end = source[title_start..].find("</c:title>")? + title_start;
+    let title_body = &source[title_start..title_end];
+    let mut text = String::new();
+    let mut cursor = 0;
+    while let Some(relative) = title_body[cursor..].find("<a:t") {
+        let start = cursor + relative;
+        let open_end = title_body[start..].find('>')? + start;
+        let close = title_body[open_end..].find("</a:t>")? + open_end;
+        let value = &title_body[open_end + 1..close];
+        text.push_str(&quick_xml::escape::unescape(value).ok()?);
+        cursor = close + "</a:t>".len();
+    }
+    Some(text)
+}
+
+fn worksheet_rels_path(part_path: &str) -> String {
+    match part_path.rsplit_once('/') {
+        Some((dir, file)) => format!("{dir}/_rels/{file}.rels"),
+        None => format!("_rels/{part_path}.rels"),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct RelationshipRecord {
+    id: String,
+    kind: String,
+    target: String,
+}
+
+fn parse_relationship_records(xml: &[u8], source: &Path) -> Result<Vec<RelationshipRecord>> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    let mut relationships = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid relationships XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if local_name(element.name().as_ref()) == b"Relationship" =>
+            {
+                let mut id = None;
+                let mut kind = None;
+                let mut target = None;
+                for attribute in element.attributes().flatten() {
+                    match local_name(attribute.key.as_ref()) {
+                        b"Id" => {
+                            id =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
+                        b"Type" => {
+                            kind =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
+                        b"Target" => {
+                            target =
+                                Some(String::from_utf8_lossy(attribute.value.as_ref()).into_owned())
+                        }
+                        _ => {}
+                    }
+                }
+                if let (Some(id), Some(kind), Some(target)) = (id, kind, target) {
+                    relationships.push(RelationshipRecord { id, kind, target });
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(relationships)
 }
 
 fn local_name(name: &[u8]) -> &[u8] {

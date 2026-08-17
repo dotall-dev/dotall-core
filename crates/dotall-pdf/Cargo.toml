@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+base64 = "0.22"
 blake3 = "1.8.5"
 dotall-core = { version = "0.1.0", path = "../dotall-core" }
+flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
 lopdf = "0.44.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

@@ -10,7 +10,10 @@ use serde_json::json;
 
 use crate::detection;
 use crate::edits;
-use crate::model::{PdfDocumentModel, PdfFieldModel, PdfMetadata, SCHEMA_ID, SCHEMA_VERSION};
+use crate::model::{
+    PdfCommentModel, PdfDocumentModel, PdfFieldModel, PdfMetadata, PdfPictureModel, SCHEMA_ID,
+    SCHEMA_VERSION,
+};
 use crate::{FORMAT_ID, parser, projection, selector};
 
 const AVAILABLE_READS: [&str; 3] = ["read.full", "read.page", "read.field"];
@@ -60,8 +63,23 @@ impl FormatHandler for PdfFormat {
             format_id: FORMAT_ID.into(),
             summary: json!({
                 "page_count": document.page_count,
+                "page_rotations": document
+                    .pages
+                    .iter()
+                    .filter_map(|page| {
+                        page.rotate.map(|rotate| {
+                            json!({
+                                "page": page.number,
+                                "rotate": rotate,
+                            })
+                        })
+                    })
+                    .collect::<Vec<_>>(),
                 "field_names": document.fields.iter().map(|field| &field.name).collect::<Vec<_>>(),
                 "fields": document.fields.iter().map(field_summary).collect::<Vec<_>>(),
+                "comments": document.comments.iter().map(comment_summary).collect::<Vec<_>>(),
+                "pictures": document.pictures.iter().map(picture_summary).collect::<Vec<_>>(),
+                "charts": serde_json::Value::Array(Vec::new()),
                 "encrypted": document.encrypted,
                 "has_signature": document.fields.iter().any(|field| field.field_type == "sig"),
                 "metadata": metadata_summary(&document.metadata),
@@ -181,6 +199,24 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         summary["options"] = json!(field.options);
     }
     summary
+}
+
+fn comment_summary(comment: &PdfCommentModel) -> serde_json::Value {
+    json!({
+        "element_id": comment.element_id,
+        "page": comment.page,
+        "subtype": comment.subtype,
+        "contents": comment.contents,
+        "author": comment.author,
+    })
+}
+
+fn picture_summary(picture: &PdfPictureModel) -> serde_json::Value {
+    json!({
+        "element_id": picture.element_id,
+        "page": picture.page,
+        "subtype": picture.subtype,
+    })
 }
 
 fn metadata_summary(metadata: &PdfMetadata) -> serde_json::Value {
@@ -440,6 +476,45 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": {}
             }),
             safety: "Removes Title/Author/Subject from trailer /Info. Leaves Creator/Producer untouched. Rejects encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "insert_comment".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert a new sticky/text annotation on a page.".into(),
+            example: json!({
+                "kind": "insert_comment",
+                "payload": {
+                    "page": 1,
+                    "contents": "Check Name field",
+                    "author": "Dotall"
+                }
+            }),
+            safety: "Adds a new /Annot /Subtype /Text object and appends it to the page /Annots array. Does not rewrite page content streams or mutate existing annot dictionaries. Rejects encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "insert_picture".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert a new stamp annotation with an image appearance on a page."
+                .into(),
+            example: json!({
+                "kind": "insert_picture",
+                "payload": {
+                    "page": 1,
+                    "bytes_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
+                    "content_type": "image/png"
+                }
+            }),
+            safety: "Adds a new /Annot /Subtype /Stamp with annot-owned /AP Form XObject wrapping an Image XObject. Does not rewrite page /Contents or mutate existing annot dictionaries (including Widgets). PNG is limited to IHDR 8-bit RGB (1×1 in v0); JPEG uses DCTDecode. Rejects draw_image/replace_picture and encrypted/signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "rotate_page".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set a page /Rotate value (0, 90, 180, or 270 degrees).".into(),
+            example: json!({
+                "kind": "rotate_page",
+                "payload": { "page": 1, "degrees": 90 }
+            }),
+            safety: "Writes page dictionary /Rotate only. degrees=0 removes /Rotate. Does not rewrite page content streams or change form field values. Rejects encrypted and signed PDFs.".into(),
         },
     ]
 }
