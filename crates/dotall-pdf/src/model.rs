@@ -52,4 +52,6 @@ pub struct PdfFieldModel {
     pub read_only: bool,
     #[serde(default)]
     pub required: bool,
+    #[serde(default)]
+    pub multiline: bool,
 }

@@ -160,6 +160,7 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         "value": field.value,
         "read_only": field.read_only,
         "required": field.required,
+        "multiline": field.multiline,
     });
     if !field.export_values.is_empty() {
         summary["export_values"] = json!(field.export_values);
@@ -285,6 +286,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "name": "Name", "required": true }
             }),
             safety: "Toggles /Ff Required on the named field. Inspect surfaces required. Rejects encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "set_form_field_multiline".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear the AcroForm text-field Multiline flag (/Ff bit 13)."
+                .into(),
+            example: json!({
+                "kind": "set_form_field_multiline",
+                "payload": { "name": "Name", "multiline": true }
+            }),
+            safety: "Toggles /Ff Multiline on tx fields only. Inspect surfaces multiline. Rejects non-text fields, encrypted and signed PDFs.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),

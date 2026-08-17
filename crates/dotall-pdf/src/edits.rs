@@ -32,10 +32,11 @@ pub fn validate(
         "set_form_fields" => validate_set_form_fields(model, operation),
         "set_form_field_readonly" => validate_set_form_field_readonly(model, operation),
         "set_form_field_required" => validate_set_form_field_required(model, operation),
+        "set_form_field_multiline" => validate_set_form_field_multiline(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_document_metadata, or clear_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_document_metadata, or clear_document_metadata"
         ))),
     }
 }
@@ -352,6 +353,49 @@ fn validate_set_form_field_required(
     })
 }
 
+fn validate_set_form_field_multiline(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let name = required_str(&operation.payload, "name")?;
+    let multiline = required_bool(&operation.payload, "multiline")?;
+    let field = model
+        .fields
+        .iter()
+        .find(|field| field.name == name)
+        .ok_or_else(|| format_error(format!("field `{name}` was not found")))?;
+    if field.field_type != "tx" {
+        return Err(format_error(
+            "set_form_field_multiline only applies to text (tx) fields",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_form_field_multiline".into(),
+            payload: serde_json::json!({
+                "name": field.name,
+                "multiline": multiline,
+                "element_id": field.element_id,
+                "field_type": field.field_type,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("field:{}", field.name),
+            element_id: field.element_id.clone(),
+            change: "set_form_field_multiline".into(),
+            before: Some(if field.multiline { "true" } else { "false" }.into()),
+            after: Some(if multiline { "true" } else { "false" }.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_document_metadata(
     model: &PdfDocumentModel,
     operation: &SemanticOperation,
@@ -534,6 +578,15 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 .ok_or_else(|| format_error("`required` boolean is required"))?;
             set_field_flag(&mut document, name, FIELD_FLAG_REQUIRED, required)?;
         }
+        "set_form_field_multiline" => {
+            let name = required_str(&operation.payload, "name")?;
+            let multiline = operation
+                .payload
+                .get("multiline")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`multiline` boolean is required"))?;
+            set_field_flag(&mut document, name, FIELD_FLAG_MULTILINE, multiline)?;
+        }
         other => {
             return Err(format_error(format!(
                 "unsupported pdf edit `{other}` in apply"
@@ -703,6 +756,7 @@ fn set_field_value(
 
 const FIELD_FLAG_READONLY: i64 = 1;
 const FIELD_FLAG_REQUIRED: i64 = 2;
+const FIELD_FLAG_MULTILINE: i64 = 4096;
 
 fn set_field_flag(document: &mut Document, name: &str, flag: i64, enabled: bool) -> Result<()> {
     let mut target = None;

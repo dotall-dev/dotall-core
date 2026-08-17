@@ -667,6 +667,126 @@ fn capabilities_advertise_set_form_field_required() {
 }
 
 #[test]
+fn set_form_field_multiline_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["multiline"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multiline".into(),
+                payload: serde_json::json!({ "name": "Name", "multiline": true }),
+            }],
+        )
+        .expect("validate multiline");
+    let patched = handler.apply_edit(&path, &edit).expect("apply multiline");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.multiline);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_multiline");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["multiline"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multiline".into(),
+                payload: serde_json::json!({ "name": "Name", "multiline": false }),
+            }],
+        )
+        .expect("validate clear multiline");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let final_doc = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_doc
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.multiline);
+}
+
+#[test]
+fn set_form_field_multiline_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    // Prefer a known non-tx field from the fixture when present.
+    let non_tx = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| {
+            fields.iter().find(|f| {
+                f["field_type"] == "btn" || f["field_type"] == "ch" || f["field_type"] == "sig"
+            })
+        });
+    let Some(field) = non_tx else {
+        return;
+    };
+    let name = field["name"].as_str().expect("name");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_multiline".into(),
+                payload: serde_json::json!({ "name": name, "multiline": true }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text") || message.contains("multiline") || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_multiline() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_multiline"),
+        "capabilities must advertise set_form_field_multiline"
+    );
+}
+
+#[test]
 fn capabilities_advertise_set_form_field_readonly() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("form.pdf");

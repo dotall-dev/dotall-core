@@ -163,6 +163,7 @@ fn walk_field(
         .unwrap_or(0);
     let read_only = flags & 1 == 1;
     let required = flags & 2 == 2;
+    let multiline = flags & 4096 == 4096;
     let export_values = collect_export_values(document, dict);
     let options = collect_choice_options(document, dict);
     if let Some(field_type) = field_type.clone() {
@@ -176,6 +177,7 @@ fn walk_field(
             page: None,
             read_only,
             required,
+            multiline,
         });
     }
     if let Ok(kids) = dict.get(b"Kids") {
