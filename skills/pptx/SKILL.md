@@ -103,6 +103,21 @@ Table cell text (`p:graphicFrame` → `a:tbl`):
 }
 ```
 
+Set or clear bold on a table cell’s text runs (`a:rPr b` inside the target `a:tc`):
+
+```json
+{
+  "kind": "set_table_cell_bold",
+  "payload": {
+    "slide": "Slide 1",
+    "table": "Table 1",
+    "row": 0,
+    "col": 1,
+    "bold": true
+  }
+}
+```
+
 Add / delete slides:
 
 ```json
@@ -246,6 +261,7 @@ Omit `after` on `add_slide` to append at the end. `delete_slide` rejects the sol
 Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
 `delete_shape` removes a `p:sp` by name or element_id; rejects missing shapes (tables use graphicFrame and are not deleted here).
 `rename_shape` updates `cNvPr` name; rejects empty/duplicate names (including table names on the same slide).
+`set_table_cell_bold` upserts `a:rPr b` on each text run in the target table cell; rejects out-of-range cells.
 `set_shape_bold` upserts `a:rPr b` on each text run in the shape; rejects non-text shapes.
 `set_shape_italic` upserts `a:rPr i` on each text run in the shape; rejects non-text shapes.
 `set_shape_underline` upserts `a:rPr u="sng"` / `u="none"` on each text run in the shape; rejects non-text shapes.
@@ -265,6 +281,7 @@ Safety:
 
 - `set_shape_text`: text frames only (`p:sp` + `p:txBody`). Rejects SmartArt, charts, and grouped drawingML the writer cannot patch.
 - `set_table_cell_text`: patches one cell; rejects out-of-range `row`/`col`. First `a:t` in the cell is replaced; later runs in that cell are cleared.
+- `set_table_cell_bold`: upserts `a:rPr b` on runs in the target table cell (`a:tc`); rejects out-of-range `row`/`col`. Other parts stay byte-identical.
 - `set_notes_text`: patches only the notes slide part; rejects slides without a notes part. First `a:t` is replaced; later runs cleared. Slide XML stays byte-identical.
 - `add_slide` / `delete_slide`: surgically update `presentation.xml`, `presentation.xml.rels`, and `[Content_Types].xml`; duplicate a blank slide template or remove the target slide part. Untouched slide/media parts stay byte-identical.
 - `move_slide`: reorders only `p:sldId` entries in `ppt/presentation.xml`. Slide parts, notes, rels, and Content_Types stay byte-identical.

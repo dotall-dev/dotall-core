@@ -248,6 +248,22 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Patches only the slide part that owns the table. Rejects out-of-range row/col. Media and other slides stay byte-identical.".into(),
         },
         EditCapability {
+            operation: "set_table_cell_bold".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear bold on all text runs inside one slide table cell (a:rPr b).".into(),
+            example: json!({
+                "kind": "set_table_cell_bold",
+                "payload": {
+                    "slide": "Slide 1",
+                    "table": "Table 1",
+                    "row": 0,
+                    "col": 1,
+                    "bold": true
+                }
+            }),
+            safety: "Upserts a:rPr b on each a:r inside the target a:tc. Patches only the slide part that owns the table. Rejects out-of-range row/col and unknown table/slide. Media and other slides stay byte-identical.".into(),
+        },
+        EditCapability {
             operation: "set_notes_text".into(),
             schema_version: SCHEMA_VERSION,
             description: "Replace speaker notes text for a slide that already has a notes slide part.".into(),

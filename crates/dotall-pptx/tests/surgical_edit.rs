@@ -2208,3 +2208,227 @@ fn capabilities_advertise_set_shape_bullet() {
         "capabilities must advertise set_shape_bullet"
     );
 }
+
+#[test]
+fn capabilities_advertise_set_table_cell_bold() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_table()).expect("write fixture");
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_table_cell_bold"),
+        "capabilities must advertise set_table_cell_bold"
+    );
+}
+
+#[test]
+fn set_table_cell_bold_true_patches_only_target_cell_and_slide() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_with_table();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_table_cell_bold".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "table": "Table 1",
+                    "row": 0,
+                    "col": 1,
+                    "bold": true,
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let slide_xml = String::from_utf8(zip_entries(&patched.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        slide_xml.contains(r#"<a:rPr b="1"/><a:t>B1</a:t>"#),
+        "expected a:rPr b=1 on target cell B1, got: {slide_xml}"
+    );
+    assert!(
+        !slide_xml.contains(r#"<a:rPr b="1"/><a:t>A1</a:t>"#),
+        "sibling cell A1 must not be bolded"
+    );
+    assert!(
+        !slide_xml.contains(r#"<a:rPr b="1"/><a:t>A2</a:t>"#)
+            && !slide_xml.contains(r#"<a:rPr b="1"/><a:t>B2</a:t>"#),
+        "other table cells must not be bolded"
+    );
+    assert!(
+        !slide_xml.contains(r#"<a:rPr b="1"/><a:t>Hello</a:t>"#),
+        "title shape text must not be bolded"
+    );
+
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+    let cells = &after.slides[0].tables[0].cells;
+    assert_eq!(
+        cells
+            .iter()
+            .find(|cell| cell.row == 0 && cell.col == 0)
+            .map(|cell| cell.text.as_str()),
+        Some("A1")
+    );
+    assert_eq!(
+        cells
+            .iter()
+            .find(|cell| cell.row == 0 && cell.col == 1)
+            .map(|cell| cell.text.as_str()),
+        Some("B1")
+    );
+    assert_eq!(after.slides[0].shapes[0].text, "Hello");
+    assert_eq!(after.slides[1].shapes[0].text, "Other");
+    assert_eq!(edit.semantic_diff[0].change, "set_table_cell_bold");
+    assert_eq!(
+        edit.semantic_diff[0].target, "Slide 1!Table 1!r0c1",
+        "validated edit should name the cell"
+    );
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("true"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn set_table_cell_bold_false_writes_b_zero() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = pptx_with_table();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_table_cell_bold".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "table": "Table 1",
+                    "row": 0,
+                    "col": 1,
+                    "bold": false,
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let slide_xml = String::from_utf8(zip_entries(&patched.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        slide_xml.contains(r#"<a:rPr b="0"/><a:t>B1</a:t>"#),
+        "expected a:rPr b=0 on target cell B1 (same 1/0 convention as set_shape_bold), got: {slide_xml}"
+    );
+    assert!(
+        !slide_xml.contains(r#"<a:rPr b="0"/><a:t>A1</a:t>"#),
+        "sibling cell A1 must not be altered"
+    );
+    assert!(
+        !slide_xml.contains(r#"<a:rPr b="0"/><a:t>Hello</a:t>"#),
+        "title shape text must not be altered"
+    );
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.slides[0].shapes[0].text, "Hello");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("false"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn set_table_cell_bold_rejects_out_of_range() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_table()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_table_cell_bold".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "table": "Table 1",
+                    "row": 9,
+                    "col": 0,
+                    "bold": true,
+                }),
+            }],
+        )
+        .expect_err("out of range");
+    let message = error.to_string();
+    assert!(
+        message.contains("out of range") || message.contains("row"),
+        "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn set_table_cell_bold_rejects_unknown_table() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_table()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_table_cell_bold".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "table": "Missing Table",
+                    "row": 0,
+                    "col": 0,
+                    "bold": true,
+                }),
+            }],
+        )
+        .expect_err("unknown table");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("not found") || message.contains("missing"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn set_table_cell_bold_rejects_unknown_slide() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_table()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_table_cell_bold".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 99",
+                    "table": "Table 1",
+                    "row": 0,
+                    "col": 0,
+                    "bold": true,
+                }),
+            }],
+        )
+        .expect_err("unknown slide");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("not found") || message.contains("missing"),
+        "unexpected error: {error}"
+    );
+}
