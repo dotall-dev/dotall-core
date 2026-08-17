@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use rust_xlsxwriter::{Format, Workbook};
+use rust_xlsxwriter::{DocProperties, ExcelDateTime, Format, Workbook};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let demo = demo_dir()?;
@@ -37,6 +37,9 @@ fn demo_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
 fn write_financials(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let mut workbook = Workbook::new();
+    let date = ExcelDateTime::from_ymd(2026, 8, 17)?;
+    let properties = DocProperties::new().set_creation_datetime(&date);
+    workbook.set_properties(&properties);
     let header = Format::new().set_bold();
     let percent = Format::new().set_num_format("0%");
     let currency = Format::new().set_num_format("$#,##0.00");

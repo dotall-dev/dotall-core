@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 
 use dotall_cli::q3_pack::write_q3_pack;
@@ -16,6 +17,21 @@ fn q3_pack_writes_heavy_workbook_and_siblings() {
     assert!(dir.join("q3-intake.pdf").is_file());
 
     assert_q3_financials(&dir.join("q3-financials.xlsx"));
+}
+
+#[test]
+fn q3_financials_are_byte_stable_across_two_writes() {
+    let temp = tempdir().expect("tempdir");
+    let a = temp.path().join("a");
+    let b = temp.path().join("b");
+    write_q3_pack(&a).expect("write a");
+    write_q3_pack(&b).expect("write b");
+    let bytes_a = fs::read(a.join("q3-financials.xlsx")).expect("read a");
+    let bytes_b = fs::read(b.join("q3-financials.xlsx")).expect("read b");
+    assert_eq!(
+        bytes_a, bytes_b,
+        "pinned creation datetime should make q3-financials byte-identical"
+    );
 }
 
 fn assert_q3_financials(path: &Path) {

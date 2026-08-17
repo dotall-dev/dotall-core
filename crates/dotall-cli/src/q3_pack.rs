@@ -3,7 +3,15 @@
 use std::fs;
 use std::path::Path;
 
-use rust_xlsxwriter::{Format, Workbook};
+use rust_xlsxwriter::{DocProperties, ExcelDateTime, Format, Workbook};
+
+/// Fixed creation datetime so regenerated Q3 financials stay byte-stable.
+fn pin_workbook_datetime(workbook: &mut Workbook) -> Result<(), Box<dyn std::error::Error>> {
+    let date = ExcelDateTime::from_ymd(2026, 8, 17)?;
+    let properties = DocProperties::new().set_creation_datetime(&date);
+    workbook.set_properties(&properties);
+    Ok(())
+}
 
 /// Write the heavy Q3 pack into `dir`:
 /// `q3-financials.xlsx`, `q3-deck.pptx`, `q3-memo.docx`, `q3-intake.pdf`.
@@ -18,6 +26,7 @@ pub fn write_q3_pack(dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
 fn write_q3_financials(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let mut workbook = Workbook::new();
+    pin_workbook_datetime(&mut workbook)?;
     let header = Format::new().set_bold();
     let percent = Format::new().set_num_format("0%");
     let currency = Format::new().set_num_format("$#,##0.00");
