@@ -163,6 +163,9 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         "multiline": field.multiline,
         "password": field.password,
     });
+    if let Some(max_length) = field.max_length {
+        summary["max_length"] = json!(max_length);
+    }
     if !field.export_values.is_empty() {
         summary["export_values"] = json!(field.export_values);
     }
@@ -309,6 +312,16 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "name": "Name", "password": true }
             }),
             safety: "Toggles /Ff Password on tx fields only. Inspect surfaces password. Rejects non-text fields, encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "set_form_field_max_length".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear the AcroForm text-field /MaxLen character limit.".into(),
+            example: json!({
+                "kind": "set_form_field_max_length",
+                "payload": { "name": "Name", "max_length": 32 }
+            }),
+            safety: "Sets /MaxLen on tx fields (null clears). Inspect surfaces max_length. Rejects non-text fields, encrypted and signed PDFs.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),

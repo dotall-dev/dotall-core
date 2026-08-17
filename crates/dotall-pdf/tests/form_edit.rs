@@ -906,6 +906,125 @@ fn capabilities_advertise_set_form_field_password() {
 }
 
 #[test]
+fn set_form_field_max_length_sets_and_clears_maxlen() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert!(name_field.get("max_length").is_none() || name_field["max_length"].is_null());
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_max_length".into(),
+                payload: serde_json::json!({ "name": "Name", "max_length": 32 }),
+            }],
+        )
+        .expect("validate max_length");
+    let patched = handler.apply_edit(&path, &edit).expect("apply max_length");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert_eq!(name.max_length, Some(32));
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_max_length");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["max_length"], 32);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_max_length".into(),
+                payload: serde_json::json!({ "name": "Name", "max_length": null }),
+            }],
+        )
+        .expect("validate clear max_length");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let final_doc = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_doc
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert_eq!(name.max_length, None);
+}
+
+#[test]
+fn set_form_field_max_length_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let non_tx = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| {
+            fields.iter().find(|f| {
+                f["field_type"] == "btn" || f["field_type"] == "ch" || f["field_type"] == "sig"
+            })
+        });
+    let Some(field) = non_tx else {
+        return;
+    };
+    let name = field["name"].as_str().expect("name");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_max_length".into(),
+                payload: serde_json::json!({ "name": name, "max_length": 10 }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text") || message.contains("max_length") || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_max_length() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_max_length"),
+        "capabilities must advertise set_form_field_max_length"
+    );
+}
+
+#[test]
 fn capabilities_advertise_set_form_field_readonly() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("form.pdf");

@@ -34,10 +34,11 @@ pub fn validate(
         "set_form_field_required" => validate_set_form_field_required(model, operation),
         "set_form_field_multiline" => validate_set_form_field_multiline(model, operation),
         "set_form_field_password" => validate_set_form_field_password(model, operation),
+        "set_form_field_max_length" => validate_set_form_field_max_length(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_document_metadata, or clear_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_document_metadata, or clear_document_metadata"
         ))),
     }
 }
@@ -440,6 +441,55 @@ fn validate_set_form_field_password(
     })
 }
 
+fn validate_set_form_field_max_length(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let name = required_str(&operation.payload, "name")?;
+    let max_length = optional_positive_u32(&operation.payload, "max_length")?;
+    let field = model
+        .fields
+        .iter()
+        .find(|field| field.name == name)
+        .ok_or_else(|| format_error(format!("field `{name}` was not found")))?;
+    if field.field_type != "tx" {
+        return Err(format_error(
+            "set_form_field_max_length only applies to text (tx) fields",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_form_field_max_length".into(),
+            payload: serde_json::json!({
+                "name": field.name,
+                "max_length": max_length,
+                "element_id": field.element_id,
+                "field_type": field.field_type,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("field:{}", field.name),
+            element_id: field.element_id.clone(),
+            change: "set_form_field_max_length".into(),
+            before: Some(match field.max_length {
+                Some(value) => value.to_string(),
+                None => "cleared".into(),
+            }),
+            after: Some(match max_length {
+                Some(value) => value.to_string(),
+                None => "cleared".into(),
+            }),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_document_metadata(
     model: &PdfDocumentModel,
     operation: &SemanticOperation,
@@ -639,6 +689,22 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 .and_then(serde_json::Value::as_bool)
                 .ok_or_else(|| format_error("`password` boolean is required"))?;
             set_field_flag(&mut document, name, FIELD_FLAG_PASSWORD, password)?;
+        }
+        "set_form_field_max_length" => {
+            let name = required_str(&operation.payload, "name")?;
+            let max_length = match operation.payload.get("max_length") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(
+                    value
+                        .as_u64()
+                        .filter(|v| *v > 0 && *v <= u64::from(u32::MAX))
+                        .and_then(|v| u32::try_from(v).ok())
+                        .ok_or_else(|| {
+                            format_error("`max_length` must be a positive integer or null")
+                        })?,
+                ),
+            };
+            set_field_max_length(&mut document, name, max_length)?;
         }
         other => {
             return Err(format_error(format!(
@@ -847,6 +913,40 @@ fn set_field_flag(document: &mut Document, name: &str, flag: i64, enabled: bool)
     Ok(())
 }
 
+fn set_field_max_length(
+    document: &mut Document,
+    name: &str,
+    max_length: Option<u32>,
+) -> Result<()> {
+    let mut target = None;
+    for (id, object) in &document.objects {
+        let Object::Dictionary(dict) = object else {
+            continue;
+        };
+        let Ok(Object::String(bytes, _)) = dict.get(b"T") else {
+            continue;
+        };
+        if String::from_utf8_lossy(bytes) == name {
+            target = Some(*id);
+            break;
+        }
+    }
+    let id = target.ok_or_else(|| format_error(format!("field `{name}` was not found")))?;
+    let object = document
+        .get_object_mut(id)
+        .map_err(|error| format_error(format!("cannot update field: {error}")))?;
+    let Object::Dictionary(dict) = object else {
+        return Err(format_error("field is not a dictionary"));
+    };
+    match max_length {
+        Some(value) => dict.set("MaxLen", Object::Integer(i64::from(value))),
+        None => {
+            dict.remove(b"MaxLen");
+        }
+    }
+    Ok(())
+}
+
 fn kid_object_ids(document: &Document, field_id: ObjectId) -> Result<Vec<ObjectId>> {
     let object = document
         .get_object(field_id)
@@ -969,6 +1069,18 @@ fn optional_str<'a>(payload: &'a serde_json::Value, key: &str) -> Result<Option<
         None | Some(serde_json::Value::Null) => Ok(None),
         Some(serde_json::Value::String(value)) => Ok(Some(value.as_str())),
         Some(_) => Err(format_error(format!("`{key}` must be a string"))),
+    }
+}
+
+fn optional_positive_u32(payload: &serde_json::Value, key: &str) -> Result<Option<u32>> {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .filter(|v| *v > 0 && *v <= u64::from(u32::MAX))
+            .and_then(|v| u32::try_from(v).ok())
+            .map(Some)
+            .ok_or_else(|| format_error(format!("`{key}` must be a positive integer or null"))),
     }
 }
 

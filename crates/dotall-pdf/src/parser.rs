@@ -165,6 +165,12 @@ fn walk_field(
     let required = flags & 2 == 2;
     let multiline = flags & 4096 == 4096;
     let password = flags & 8192 == 8192;
+    let max_length = dict
+        .get(b"MaxLen")
+        .ok()
+        .and_then(|object| object.as_i64().ok())
+        .filter(|value| *value > 0)
+        .and_then(|value| u32::try_from(value).ok());
     let export_values = collect_export_values(document, dict);
     let options = collect_choice_options(document, dict);
     if let Some(field_type) = field_type.clone() {
@@ -180,6 +186,7 @@ fn walk_field(
             required,
             multiline,
             password,
+            max_length,
         });
     }
     if let Ok(kids) = dict.get(b"Kids") {
