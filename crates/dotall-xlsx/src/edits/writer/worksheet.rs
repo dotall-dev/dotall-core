@@ -34,7 +34,8 @@ pub(super) fn patch(
             | XlsxEditOp::DeleteName { .. }
             | XlsxEditOp::HideSheet { .. }
             | XlsxEditOp::SetTabColor { .. }
-            | XlsxEditOp::SetAutoFilter { .. } => {
+            | XlsxEditOp::SetAutoFilter { .. }
+            | XlsxEditOp::SetPrintArea { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -144,7 +145,8 @@ pub(super) fn patch(
                 | XlsxEditOp::DeleteName { .. }
                 | XlsxEditOp::HideSheet { .. }
                 | XlsxEditOp::SetTabColor { .. }
-                | XlsxEditOp::SetAutoFilter { .. } => {
+                | XlsxEditOp::SetAutoFilter { .. }
+                | XlsxEditOp::SetPrintArea { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -177,7 +179,8 @@ pub(super) fn patch(
             | XlsxEditOp::DeleteName { .. }
             | XlsxEditOp::HideSheet { .. }
             | XlsxEditOp::SetTabColor { .. }
-            | XlsxEditOp::SetAutoFilter { .. } => {
+            | XlsxEditOp::SetAutoFilter { .. }
+            | XlsxEditOp::SetPrintArea { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -310,7 +313,8 @@ fn render_new_cell(
         | XlsxEditOp::DeleteName { .. }
         | XlsxEditOp::HideSheet { .. }
         | XlsxEditOp::SetTabColor { .. }
-        | XlsxEditOp::SetAutoFilter { .. } => {
+        | XlsxEditOp::SetAutoFilter { .. }
+        | XlsxEditOp::SetPrintArea { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -488,7 +492,8 @@ fn render_cell_parts(
         | XlsxEditOp::DeleteName { .. }
         | XlsxEditOp::HideSheet { .. }
         | XlsxEditOp::SetTabColor { .. }
-        | XlsxEditOp::SetAutoFilter { .. } => {
+        | XlsxEditOp::SetAutoFilter { .. }
+        | XlsxEditOp::SetPrintArea { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

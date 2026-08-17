@@ -128,6 +128,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "hide_sheet",
             "set_tab_color",
             "set_auto_filter",
+            "set_print_area",
         ]
     );
     assert_eq!(
@@ -606,6 +607,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                 freeze_panes: None,
                 tab_color: None,
                 auto_filter: None,
+                print_area: None,
                 cells,
             }],
             named_ranges: Vec::new(),

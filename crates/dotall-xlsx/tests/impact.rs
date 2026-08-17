@@ -308,6 +308,7 @@ fn fixture_sheet(name: &str) -> SheetModel {
         freeze_panes: None,
         tab_color: None,
         auto_filter: None,
+        print_area: None,
         cells: Vec::new(),
     }
 }

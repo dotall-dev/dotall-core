@@ -81,6 +81,7 @@ impl FormatHandler for XlsxFormat {
                     "freeze_panes": sheet.freeze_panes,
                     "tab_color": sheet.tab_color,
                     "auto_filter": sheet.auto_filter,
+                    "print_area": sheet.print_area,
                 })
             })
             .collect::<Vec<_>>();
@@ -577,6 +578,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Inputs", "range": "A1:B10" }
             }),
             safety: "Surgically patches only the target worksheet autoFilter element. Pass null range to clear. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_print_area".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear a worksheet print area via workbook _xlnm.Print_Area."
+                .into(),
+            example: json!({
+                "kind": "set_print_area",
+                "payload": { "sheet": "Revenue", "range": "A1:B5" }
+            }),
+            safety: "Surgically patches only xl/workbook.xml definedNames for _xlnm.Print_Area. Pass null range to clear. Worksheets stay byte-identical."
                 .into(),
         },
     ]

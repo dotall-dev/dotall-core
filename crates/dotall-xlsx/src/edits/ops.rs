@@ -103,6 +103,11 @@ pub enum XlsxEditOp {
         /// A1 range (`A1:D10`); `None` clears the auto filter.
         range: Option<String>,
     },
+    SetPrintArea {
+        sheet: String,
+        /// A1 range (`A1:D10`); `None` clears the print area.
+        range: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

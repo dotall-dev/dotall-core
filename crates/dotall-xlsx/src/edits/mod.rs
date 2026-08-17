@@ -129,6 +129,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 range: optional_string(operation, "range")?,
             }),
+            "set_print_area" => Ok(XlsxEditOp::SetPrintArea {
+                sheet: required_string(operation, "sheet")?,
+                range: optional_string(operation, "range")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),

@@ -76,6 +76,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_print_area"))
+    {
+        return validate_set_print_area_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "define_name"))
     {
         return validate_define_name_operations(model, operations);
@@ -163,6 +169,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_auto_filter"))
     {
         return validate_set_auto_filter_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_print_area"))
+    {
+        return validate_set_print_area_operations(model, operations);
     }
     if operations
         .iter()
@@ -885,6 +897,15 @@ fn normalize_auto_filter_range(raw: &str) -> Result<String> {
     ))
 }
 
+fn normalize_print_area_range(raw: &str) -> Result<String> {
+    let range = crate::edits::transform::parse_range(raw.trim())
+        .map_err(|message| format_error(format!("set_print_area `range` is invalid: {message}")))?;
+    Ok(format!(
+        "{}{}:{}{}",
+        range.start.column, range.start.row, range.end.column, range.end.row
+    ))
+}
+
 fn validate_set_auto_filter_operations(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
@@ -934,6 +955,65 @@ fn validate_set_auto_filter_operations(
             target: format!("{canonical_sheet}!auto_filter"),
             element_id: format!("auto_filter:{canonical_sheet}"),
             change: "set_auto_filter".into(),
+            before,
+            after: range.clone(),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_set_print_area_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_print_area edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_print_area" {
+        return Err(format_error("unsupported set_print_area edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_print_area requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.print_area.clone();
+    let range = match operation.payload.get("range") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(normalize_print_area_range(value)?),
+        _ => {
+            return Err(format_error(
+                "set_print_area `range` must be an A1 range string or null",
+            ));
+        }
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_print_area".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "range": range,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!print_area"),
+            element_id: format!("print_area:{canonical_sheet}"),
+            change: "set_print_area".into(),
             before,
             after: range.clone(),
         }],
@@ -1655,7 +1735,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::DefineName { .. }
             | XlsxEditOp::DeleteName { .. }
             | XlsxEditOp::HideSheet { .. } | XlsxEditOp::SetTabColor { .. }
-            | XlsxEditOp::SetAutoFilter { .. } => {
+            | XlsxEditOp::SetAutoFilter { .. }
+            | XlsxEditOp::SetPrintArea { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -1770,7 +1851,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::DeleteName { .. }
         | XlsxEditOp::HideSheet { .. }
         | XlsxEditOp::SetTabColor { .. }
-        | XlsxEditOp::SetAutoFilter { .. } => {
+        | XlsxEditOp::SetAutoFilter { .. }
+        | XlsxEditOp::SetPrintArea { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )
@@ -1844,6 +1926,7 @@ mod tests {
             freeze_panes: None,
             tab_color: None,
             auto_filter: None,
+            print_area: None,
             cells,
         }
     }

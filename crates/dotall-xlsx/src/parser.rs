@@ -50,6 +50,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
     let named_ranges = workbook
         .defined_names()
         .iter()
+        .filter(|(name, _)| !name.starts_with("_xlnm."))
         .map(|(name, formula)| NamedRange {
             element_id: ids::named_range_id(name, formula, SCHEMA_VERSION),
             name: name.to_owned(),
@@ -58,6 +59,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
         .collect();
 
     let worksheet_parts = parse_worksheet_parts(&source_bytes, source)?;
+    let print_areas = parse_print_areas(&source_bytes, source)?;
     let style_catalog = parse_style_catalog(&source_bytes, source)?;
     let mut used_style_indices = BTreeSet::new();
 
@@ -76,12 +78,14 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                     auto_filter: None,
                     cell_styles: BTreeMap::new(),
                 });
+            let print_area = print_areas.get(&name).cloned();
             parse_sheet(
                 &mut workbook,
                 source,
                 name,
                 index as u32,
                 part,
+                print_area,
                 SheetStyleContext {
                     catalog: &style_catalog,
                     used_indices: &mut used_style_indices,
@@ -112,6 +116,7 @@ fn parse_sheet<RS, R>(
     name: String,
     index: u32,
     part: WorksheetPart,
+    print_area: Option<String>,
     styles: SheetStyleContext<'_>,
 ) -> Result<SheetModel>
 where
@@ -188,6 +193,7 @@ where
         freeze_panes: part.freeze_panes,
         tab_color: part.tab_color,
         auto_filter: part.auto_filter,
+        print_area,
         cells,
     })
 }
@@ -481,6 +487,91 @@ fn parse_auto_filter(xml: &[u8], source: &Path) -> Result<Option<String>> {
         buffer.clear();
     }
     Ok(None)
+}
+
+fn parse_print_areas(package: &[u8], source: &Path) -> Result<BTreeMap<String, String>> {
+    let workbook = entry_bytes(package, "xl/workbook.xml", source)?;
+    let sheet_names: Vec<String> = parse_workbook_sheets(&workbook, source)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let mut areas = BTreeMap::new();
+    let mut reader = XmlReader::from_reader(workbook.as_slice());
+    let mut buffer = Vec::new();
+    let mut current_local_sheet: Option<u32> = None;
+    let mut in_print_area = false;
+    let mut formula = String::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid workbook XML: {error}")))?
+        {
+            Event::Start(element) if local_name(element.name().as_ref()) == b"definedName" => {
+                let mut name = None;
+                let mut local_sheet_id = None;
+                for attribute in element.attributes().flatten() {
+                    match local_name(attribute.key.as_ref()) {
+                        b"name" => {
+                            name = Some(
+                                String::from_utf8_lossy(attribute.value.as_ref()).into_owned(),
+                            );
+                        }
+                        b"localSheetId" => {
+                            local_sheet_id = parse_u32_attr(attribute.value.as_ref());
+                        }
+                        _ => {}
+                    }
+                }
+                if name.as_deref() == Some("_xlnm.Print_Area") {
+                    in_print_area = true;
+                    current_local_sheet = local_sheet_id;
+                    formula.clear();
+                }
+            }
+            Event::Text(text) if in_print_area => {
+                let decoded = String::from_utf8_lossy(text.as_ref());
+                match quick_xml::escape::unescape(&decoded) {
+                    Ok(unescaped) => formula.push_str(&unescaped),
+                    Err(_) => formula.push_str(&decoded),
+                }
+            }
+            Event::End(element)
+                if in_print_area && local_name(element.name().as_ref()) == b"definedName" =>
+            {
+                if let Some(local_id) = current_local_sheet
+                    && let Some(sheet_name) = sheet_names.get(local_id as usize)
+                    && let Some(range) = normalize_print_area_formula(&formula)
+                {
+                    areas.insert(sheet_name.clone(), range);
+                }
+                in_print_area = false;
+                current_local_sheet = None;
+                formula.clear();
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(areas)
+}
+
+fn normalize_print_area_formula(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Accept `Sheet!$A$1:$B$2`, `'Sheet Name'!$A$1:$B$2`, or bare `A1:B2`.
+    let range_part = trimmed
+        .rsplit_once('!')
+        .map(|(_, range)| range)
+        .unwrap_or(trimmed)
+        .trim()
+        .replace('$', "");
+    if range_part.is_empty() {
+        return None;
+    }
+    Some(range_part.to_ascii_uppercase())
 }
 
 fn parse_freeze_panes(xml: &[u8], source: &Path) -> Result<Option<String>> {

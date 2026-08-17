@@ -87,6 +87,19 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     if let [XlsxEditOp::SetAutoFilter { sheet, range }] = operations.as_slice() {
         return patch_auto_filter(&original, sheet, range.as_deref());
     }
+    if let [XlsxEditOp::SetPrintArea { sheet, range }] = operations.as_slice() {
+        let patch = workbook::set_print_area(&original, sheet, range.as_deref())?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
     if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
         let patch = workbook::define_name(&original, name, formula)?;
         let bytes = rebuild_package(
@@ -248,6 +261,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::HideSheet { .. }
                 | XlsxEditOp::SetTabColor { .. }
                 | XlsxEditOp::SetAutoFilter { .. }
+                | XlsxEditOp::SetPrintArea { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -280,7 +294,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::DeleteName { .. }
             | XlsxEditOp::HideSheet { .. }
             | XlsxEditOp::SetTabColor { .. }
-            | XlsxEditOp::SetAutoFilter { .. } => {
+            | XlsxEditOp::SetAutoFilter { .. }
+            | XlsxEditOp::SetPrintArea { .. } => {
                 unreachable!("structural operations return above")
             }
         };

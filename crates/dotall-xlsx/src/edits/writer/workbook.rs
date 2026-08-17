@@ -99,6 +99,160 @@ pub(super) fn define_name(package: &[u8], name: &str, formula: &str) -> Result<P
     })
 }
 
+/// Set or clear sheet print area (`_xlnm.Print_Area` with localSheetId). Patches only workbook.xml.
+pub(super) fn set_print_area(
+    package: &[u8],
+    sheet_name: &str,
+    range: Option<&str>,
+) -> Result<PackagePatch> {
+    let workbook = entry_bytes(package, "xl/workbook.xml")?;
+    let sheets = sheets(&workbook)?;
+    let sheet = find_sheet(&sheets, sheet_name)?;
+    let local_sheet_id = sheets
+        .iter()
+        .position(|candidate| candidate.name.eq_ignore_ascii_case(&sheet.name))
+        .ok_or_else(|| writer_error(format!("worksheet `{}` was not found", sheet.name)))?;
+    let patched = match range {
+        Some(a1) => {
+            let formula = print_area_formula(&sheet.name, a1);
+            upsert_print_area_defined_name(&workbook, local_sheet_id, &formula)?
+        }
+        None => remove_print_area_defined_name(&workbook, local_sheet_id)?,
+    };
+    Ok(PackagePatch {
+        replacements: BTreeMap::from([("xl/workbook.xml".into(), patched)]),
+        additions: BTreeMap::new(),
+        removals: BTreeSet::new(),
+    })
+}
+
+fn print_area_formula(sheet: &str, a1: &str) -> String {
+    let absolute = a1_to_absolute(a1);
+    if sheet_needs_quotes(sheet) {
+        format!("'{}'!{absolute}", sheet.replace('\'', "''"))
+    } else {
+        format!("{sheet}!{absolute}")
+    }
+}
+
+fn a1_to_absolute(a1: &str) -> String {
+    // A1:B3 -> $A$1:$B$3
+    a1.split(':')
+        .map(|part| {
+            let split = part
+                .find(|c: char| c.is_ascii_digit())
+                .unwrap_or(part.len());
+            let (col, row) = part.split_at(split);
+            format!("${col}${row}")
+        })
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+fn sheet_needs_quotes(name: &str) -> bool {
+    name.chars()
+        .any(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+        || name.is_empty()
+}
+
+fn upsert_print_area_defined_name(
+    xml: &[u8],
+    local_sheet_id: usize,
+    formula: &str,
+) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
+    let escaped_formula = escape_xml(formula);
+    let tag = format!(
+        r#"<definedName name="_xlnm.Print_Area" localSheetId="{local_sheet_id}">{escaped_formula}</definedName>"#
+    );
+    if let Some((open_start, _open_end, close_end)) =
+        find_print_area_defined_name(text, local_sheet_id)?
+    {
+        return Ok(format!("{}{}{}", &text[..open_start], tag, &text[close_end..]).into_bytes());
+    }
+    if let Some(container_end) = find_defined_names_close(text)? {
+        return Ok(format!(
+            "{}{}{}",
+            &text[..container_end],
+            tag,
+            &text[container_end..]
+        )
+        .into_bytes());
+    }
+    let sheets_close = text
+        .find("</sheets>")
+        .map(|offset| offset + "</sheets>".len())
+        .ok_or_else(|| writer_error("workbook XML is missing </sheets>"))?;
+    Ok(format!(
+        "{}<definedNames>{}</definedNames>{}",
+        &text[..sheets_close],
+        tag,
+        &text[sheets_close..]
+    )
+    .into_bytes())
+}
+
+fn remove_print_area_defined_name(xml: &[u8], local_sheet_id: usize) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
+    let Some((open_start, _open_end, close_end)) =
+        find_print_area_defined_name(text, local_sheet_id)?
+    else {
+        return Ok(xml.to_vec());
+    };
+    let mut patched = format!("{}{}", &text[..open_start], &text[close_end..]);
+    if let Some(start) = patched.find("<definedNames") {
+        let open_end = patched[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| writer_error("unterminated definedNames"))?;
+        if !patched[start..open_end].ends_with("/>") {
+            let close = patched[open_end..]
+                .find("</definedNames>")
+                .map(|offset| open_end + offset)
+                .ok_or_else(|| writer_error("unterminated definedNames"))?;
+            let close_end = close + "</definedNames>".len();
+            let inner = patched[open_end..close].trim();
+            if inner.is_empty() {
+                patched = format!("{}{}", &patched[..start], &patched[close_end..]);
+            }
+        }
+    }
+    Ok(patched.into_bytes())
+}
+
+fn find_print_area_defined_name(
+    text: &str,
+    local_sheet_id: usize,
+) -> Result<Option<(usize, usize, usize)>> {
+    let mut cursor = 0;
+    let needle = r#"name="_xlnm.Print_Area""#;
+    let local_needle = format!(r#"localSheetId="{local_sheet_id}""#);
+    while let Some(offset) = text[cursor..].find("<definedName") {
+        let start = cursor + offset;
+        if text[start + "<definedName".len()..].starts_with('s') {
+            cursor = start + "<definedName".len();
+            continue;
+        }
+        let open_end = text[start..]
+            .find('>')
+            .map(|rel| start + rel + 1)
+            .ok_or_else(|| writer_error("unterminated definedName"))?;
+        let open_tag = &text[start..open_end];
+        let close = text[open_end..]
+            .find("</definedName>")
+            .map(|rel| open_end + rel)
+            .ok_or_else(|| writer_error("unterminated definedName"))?;
+        let close_end = close + "</definedName>".len();
+        if open_tag.contains(needle) && open_tag.contains(&local_needle) {
+            return Ok(Some((start, open_end, close_end)));
+        }
+        cursor = close_end;
+    }
+    Ok(None)
+}
+
 /// Remove a workbook-scoped defined name. Patches only `xl/workbook.xml`.
 pub(super) fn delete_name(package: &[u8], name: &str) -> Result<PackagePatch> {
     let workbook = entry_bytes(package, "xl/workbook.xml")?;

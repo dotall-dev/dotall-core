@@ -167,6 +167,14 @@ Set or clear a worksheet AutoFilter range (`null` clears):
 
 Inspect surfaces `auto_filter` per sheet when present. Other worksheets stay byte-identical.
 
+Set or clear a worksheet print area (`_xlnm.Print_Area`; `null` clears):
+
+```json
+{ "kind": "set_print_area", "payload": { "sheet": "Revenue", "range": "A1:B5" } }
+```
+
+Inspect surfaces `print_area` per sheet when present. Worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

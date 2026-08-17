@@ -259,6 +259,7 @@ fn fixture_sheet(name: &str, cells: Vec<CellModel>) -> SheetModel {
         freeze_panes: None,
         tab_color: None,
         auto_filter: None,
+        print_area: None,
         cells,
     }
 }

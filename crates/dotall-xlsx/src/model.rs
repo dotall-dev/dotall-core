@@ -29,6 +29,9 @@ pub struct SheetModel {
     /// AutoFilter range as A1 (`A1:D10`). Absent when no auto filter is set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_filter: Option<String>,
+    /// Print area as A1 (`A1:D10`). Absent when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub print_area: Option<String>,
     pub cells: Vec<CellModel>,
 }
 
