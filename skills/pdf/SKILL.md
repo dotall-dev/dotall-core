@@ -17,7 +17,7 @@ operators.
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
+  → dotall_edit set_form_field | set_form_fields | set_form_field_readonly | set_form_field_required | set_form_field_multiline | set_form_field_password | set_form_field_max_length | set_form_field_comb | set_form_field_do_not_scroll | set_form_field_do_not_spell_check | clear_form_field | clear_all_form_fields | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -163,6 +163,15 @@ Mark a text field as do-not-scroll or clear (`/Ff` DoNotScroll bit; `tx` only; p
 {
   "kind": "set_form_field_do_not_scroll",
   "payload": { "name": "Name", "do_not_scroll": true }
+}
+```
+
+Mark a text field as do-not-spell-check or clear (`/Ff` DoNotSpellCheck bit; `tx` only; pairs with do_not_scroll/comb):
+
+```json
+{
+  "kind": "set_form_field_do_not_spell_check",
+  "payload": { "name": "Name", "do_not_spell_check": true }
 }
 ```
 

@@ -1423,3 +1423,123 @@ fn capabilities_advertise_set_form_field_do_not_scroll() {
         "capabilities must advertise set_form_field_do_not_scroll"
     );
 }
+
+#[test]
+fn set_form_field_do_not_spell_check_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["do_not_spell_check"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_do_not_spell_check".into(),
+                payload: serde_json::json!({ "name": "Name", "do_not_spell_check": true }),
+            }],
+        )
+        .expect("validate do_not_spell_check");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.do_not_spell_check);
+    assert_eq!(
+        edit.semantic_diff[0].change,
+        "set_form_field_do_not_spell_check"
+    );
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["do_not_spell_check"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_do_not_spell_check".into(),
+                payload: serde_json::json!({ "name": "Name", "do_not_spell_check": false }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    fs::write(&path, &cleared.bytes).expect("rewrite");
+    let final_model = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_model
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.do_not_spell_check);
+}
+
+#[test]
+fn set_form_field_do_not_spell_check_rejects_non_text() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["field_type"] == "btn"))
+        .and_then(|f| f["name"].as_str())
+        .expect("btn field")
+        .to_owned();
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_do_not_spell_check".into(),
+                payload: serde_json::json!({ "name": name, "do_not_spell_check": true }),
+            }],
+        )
+        .expect_err("non-text");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("text")
+            || message.contains("do_not_spell_check")
+            || message.contains("tx"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_do_not_spell_check() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_do_not_spell_check"),
+        "capabilities must advertise set_form_field_do_not_spell_check"
+    );
+}

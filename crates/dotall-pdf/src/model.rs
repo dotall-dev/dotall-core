@@ -62,6 +62,9 @@ pub struct PdfFieldModel {
     /// AcroForm DoNotScroll flag (`/Ff` bit 24) for text fields.
     #[serde(default)]
     pub do_not_scroll: bool,
+    /// AcroForm DoNotSpellCheck flag (`/Ff` bit 23) for text fields.
+    #[serde(default)]
+    pub do_not_spell_check: bool,
     /// AcroForm `/MaxLen` for text fields when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_length: Option<u32>,

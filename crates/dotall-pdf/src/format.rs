@@ -164,6 +164,7 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         "password": field.password,
         "comb": field.comb,
         "do_not_scroll": field.do_not_scroll,
+        "do_not_spell_check": field.do_not_spell_check,
     });
     if let Some(max_length) = field.max_length {
         summary["max_length"] = json!(max_length);
@@ -345,6 +346,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "name": "Name", "do_not_scroll": true }
             }),
             safety: "Toggles /Ff DoNotScroll on tx fields only. Inspect surfaces do_not_scroll. Pairs with comb/max_length. Rejects non-text fields, encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "set_form_field_do_not_spell_check".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear the AcroForm text-field DoNotSpellCheck flag (/Ff bit 23)."
+                .into(),
+            example: json!({
+                "kind": "set_form_field_do_not_spell_check",
+                "payload": { "name": "Name", "do_not_spell_check": true }
+            }),
+            safety: "Toggles /Ff DoNotSpellCheck on tx fields only. Inspect surfaces do_not_spell_check. Pairs with do_not_scroll/comb. Rejects non-text fields, encrypted and signed PDFs.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),
