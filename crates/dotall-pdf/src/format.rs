@@ -166,6 +166,7 @@ fn field_summary(field: &PdfFieldModel) -> serde_json::Value {
         "do_not_scroll": field.do_not_scroll,
         "do_not_spell_check": field.do_not_spell_check,
         "rich_text": field.rich_text,
+        "no_export": field.no_export,
     });
     if let Some(max_length) = field.max_length {
         summary["max_length"] = json!(max_length);
@@ -369,6 +370,16 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "name": "Name", "rich_text": true }
             }),
             safety: "Toggles /Ff RichText on tx fields only. Inspect surfaces rich_text. Pairs with do_not_spell_check. Rejects non-text fields, encrypted and signed PDFs.".into(),
+        },
+        EditCapability {
+            operation: "set_form_field_no_export".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set or clear the AcroForm field NoExport flag (/Ff bit 3).".into(),
+            example: json!({
+                "kind": "set_form_field_no_export",
+                "payload": { "name": "Name", "no_export": true }
+            }),
+            safety: "Toggles /Ff NoExport on any field type. Inspect surfaces no_export. Rejects encrypted and signed PDFs.".into(),
         },
         EditCapability {
             operation: "set_document_metadata".into(),

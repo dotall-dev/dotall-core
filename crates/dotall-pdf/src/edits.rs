@@ -41,10 +41,11 @@ pub fn validate(
             validate_set_form_field_do_not_spell_check(model, operation)
         }
         "set_form_field_rich_text" => validate_set_form_field_rich_text(model, operation),
+        "set_form_field_no_export" => validate_set_form_field_no_export(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_form_field_rich_text, set_document_metadata, or clear_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_form_field_rich_text, set_form_field_no_export, set_document_metadata, or clear_document_metadata"
         ))),
     }
 }
@@ -632,6 +633,47 @@ fn validate_set_form_field_do_not_spell_check(
     })
 }
 
+fn validate_set_form_field_no_export(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let name = required_str(&operation.payload, "name")?;
+    let no_export = required_bool(&operation.payload, "no_export")?;
+    let field = model
+        .fields
+        .iter()
+        .find(|field| field.name == name)
+        .ok_or_else(|| format_error(format!("field `{name}` was not found")))?;
+    if field.field_type == "sig" {
+        return Err(format_error("cannot edit signature fields"));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_form_field_no_export".into(),
+            payload: serde_json::json!({
+                "name": field.name,
+                "no_export": no_export,
+                "element_id": field.element_id,
+                "field_type": field.field_type,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("field:{}", field.name),
+            element_id: field.element_id.clone(),
+            change: "set_form_field_no_export".into(),
+            before: Some(if field.no_export { "true" } else { "false" }.into()),
+            after: Some(if no_export { "true" } else { "false" }.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_form_field_rich_text(
     model: &PdfDocumentModel,
     operation: &SemanticOperation,
@@ -932,6 +974,15 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 .ok_or_else(|| format_error("`rich_text` boolean is required"))?;
             set_field_flag(&mut document, name, FIELD_FLAG_RICH_TEXT, rich_text)?;
         }
+        "set_form_field_no_export" => {
+            let name = required_str(&operation.payload, "name")?;
+            let no_export = operation
+                .payload
+                .get("no_export")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`no_export` boolean is required"))?;
+            set_field_flag(&mut document, name, FIELD_FLAG_NO_EXPORT, no_export)?;
+        }
         other => {
             return Err(format_error(format!(
                 "unsupported pdf edit `{other}` in apply"
@@ -1101,6 +1152,7 @@ fn set_field_value(
 
 const FIELD_FLAG_READONLY: i64 = 1;
 const FIELD_FLAG_REQUIRED: i64 = 2;
+const FIELD_FLAG_NO_EXPORT: i64 = 8;
 const FIELD_FLAG_MULTILINE: i64 = 4096;
 const FIELD_FLAG_PASSWORD: i64 = 8192;
 const FIELD_FLAG_DO_NOT_SPELL_CHECK: i64 = 4_194_304;
