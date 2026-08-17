@@ -53,9 +53,7 @@ fn search_json_returns_named_range_hit_after_inspect() {
         "expected a named_ranges hit for `Rate`, got: {value}"
     );
     assert!(
-        value["not_indexed"]
-            .as_array()
-            .map_or(true, |v| v.is_empty()),
+        value["not_indexed"].as_array().is_none_or(|v| v.is_empty()),
         "expected no not_indexed entries after inspect, got: {value}"
     );
 }

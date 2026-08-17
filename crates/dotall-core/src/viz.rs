@@ -31,9 +31,10 @@ pub struct VizHistoryEntry {
 
 /// Aggregate `.all/` footprint and access-derived estimates.
 ///
-/// `estimated_dump_tokens` is a labeled upper-bound: source file byte length / 4
-/// (same 4-chars-per-token heuristic as [`crate::read::budget`]). It does not
-/// unzip packages; that keeps `dotall-core` free of a ZIP dependency for viz.
+/// `estimated_dump_tokens` is a labeled **lower bound**: compressed source file
+/// byte length / 4 (same 4-chars-per-token heuristic as [`crate::read::budget`]).
+/// It does not unzip packages; that keeps `dotall-core` free of a ZIP dependency
+/// for viz. Uncompressed XML/text would usually yield a higher token estimate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VizMetrics {
     pub all_bytes: u64,
@@ -178,17 +179,19 @@ fn parse_access_log(path: &Path) -> Result<AccessTotals> {
         return Ok(totals);
     }
 
-    let text = fs::read_to_string(path).map_err(|source| DotallError::io(path, source))?;
-    for (index, line) in text.lines().enumerate() {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(_) => return Ok(totals),
+    };
+    for line in text.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let entry: AccessLogEntry =
-            serde_json::from_str(line).map_err(|source| DotallError::Serialization {
-                context: format!("access log {} line {}", path.display(), index + 1),
-                source,
-            })?;
+        // Skip corrupt lines so one bad access-log entry cannot fail viz.
+        let Ok(entry) = serde_json::from_str::<AccessLogEntry>(line) else {
+            continue;
+        };
         if entry.model_cache_hit {
             totals.model_cache_hits = totals.model_cache_hits.saturating_add(1);
         }

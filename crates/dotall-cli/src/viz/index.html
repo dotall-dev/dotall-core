@@ -23,6 +23,12 @@
     }
     h1 { font-size: 1.4rem; margin: 0 0 1rem; }
     h2 { font-size: 1rem; margin: 1.5rem 0 0.75rem; color: var(--muted); font-weight: 600; }
+    .note {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin: 0.5rem 0 0;
+      max-width: 52rem;
+    }
     dl {
       display: grid;
       grid-template-columns: max-content 1fr;
@@ -56,12 +62,30 @@
   <h1>.all/</h1>
   <h2>Metrics</h2>
   <dl id="metrics"></dl>
+  <p class="note" id="metrics-note"></p>
   <h2>Tree</h2>
   <div id="tree"></div>
   <h2>History</h2>
   <ul class="history" id="history"></ul>
   <script>
     const PREVIEW_LIMIT = 8 * 1024;
+
+    const METRIC_LABELS = {
+      all_bytes: { label: ".all/ size", unit: "bytes" },
+      snapshot_part_bytes: { label: "Snapshot parts", unit: "bytes" },
+      naive_full_copy_bytes: { label: "Naive full-copy size", unit: "bytes" },
+      model_cache_hits: { label: "Model cache hits", unit: "hits" },
+      view_cache_hits: { label: "View cache hits", unit: "hits" },
+      estimated_tokens_served: { label: "Tokens served (from access log)", unit: "tokens" },
+      estimated_dump_tokens: {
+        label: "Dump tokens (lower bound)",
+        unit: "tokens",
+      },
+    };
+
+    function formatMetric(value, unit) {
+      return String(value) + " " + unit;
+    }
 
     function formatBytes(n) {
       return String(n) + " B";
@@ -81,13 +105,17 @@
       ];
       for (const key of keys) {
         if (!(key in metrics)) continue;
+        const meta = METRIC_LABELS[key] || { label: key, unit: "" };
         const dt = document.createElement("dt");
-        dt.textContent = key;
+        dt.textContent = meta.label;
         const dd = document.createElement("dd");
-        dd.textContent = String(metrics[key]);
+        dd.textContent = formatMetric(metrics[key], meta.unit);
         dl.appendChild(dt);
         dl.appendChild(dd);
       }
+      const note = document.getElementById("metrics-note");
+      note.textContent =
+        "Dump tokens are an estimate: compressed source size / 4 (lower bound; packages are not unzipped).";
     }
 
     function renderNode(node) {
