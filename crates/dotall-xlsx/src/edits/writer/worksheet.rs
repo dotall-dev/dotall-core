@@ -45,7 +45,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
             | XlsxEditOp::SetSheetZoom { .. }
-            | XlsxEditOp::SetShowGridlines { .. } => {
+            | XlsxEditOp::SetShowGridlines { .. }
+            | XlsxEditOp::SetRightToLeft { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -166,7 +167,8 @@ pub(super) fn patch(
                 | XlsxEditOp::SetPageMargins { .. }
                 | XlsxEditOp::SetHeaderFooter { .. }
                 | XlsxEditOp::SetSheetZoom { .. }
-                | XlsxEditOp::SetShowGridlines { .. } => {
+                | XlsxEditOp::SetShowGridlines { .. }
+                | XlsxEditOp::SetRightToLeft { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -210,7 +212,8 @@ pub(super) fn patch(
             | XlsxEditOp::SetPageMargins { .. }
             | XlsxEditOp::SetHeaderFooter { .. }
             | XlsxEditOp::SetSheetZoom { .. }
-            | XlsxEditOp::SetShowGridlines { .. } => {
+            | XlsxEditOp::SetShowGridlines { .. }
+            | XlsxEditOp::SetRightToLeft { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -354,7 +357,8 @@ fn render_new_cell(
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
         | XlsxEditOp::SetSheetZoom { .. }
-        | XlsxEditOp::SetShowGridlines { .. } => {
+        | XlsxEditOp::SetShowGridlines { .. }
+        | XlsxEditOp::SetRightToLeft { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -543,7 +547,8 @@ fn render_cell_parts(
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
         | XlsxEditOp::SetSheetZoom { .. }
-        | XlsxEditOp::SetShowGridlines { .. } => {
+        | XlsxEditOp::SetShowGridlines { .. }
+        | XlsxEditOp::SetRightToLeft { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

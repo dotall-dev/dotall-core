@@ -308,6 +308,7 @@ fn fixture_sheet(name: &str) -> SheetModel {
         freeze_panes: None,
         zoom: None,
         show_gridlines: true,
+        right_to_left: false,
         tab_color: None,
         auto_filter: None,
         print_area: None,

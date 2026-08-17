@@ -118,6 +118,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 show: required_bool(operation, "show")?,
             }),
+            "set_right_to_left" => Ok(XlsxEditOp::SetRightToLeft {
+                sheet: required_string(operation, "sheet")?,
+                rtl: required_bool(operation, "rtl")?,
+            }),
             "define_name" => Ok(XlsxEditOp::DefineName {
                 name: required_string(operation, "name")?,
                 formula: required_string(operation, "formula")?,

@@ -91,6 +91,11 @@ pub enum XlsxEditOp {
         /// `false` writes `sheetView/@showGridLines="0"`; `true` removes the attribute (default shown).
         show: bool,
     },
+    SetRightToLeft {
+        sheet: String,
+        /// `true` writes `sheetView/@rightToLeft="1"`; `false` removes the attribute (Excel default LTR).
+        rtl: bool,
+    },
     DefineName {
         name: String,
         /// OOXML defined-name formula body (no leading `=`).

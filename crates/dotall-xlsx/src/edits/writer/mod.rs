@@ -10,6 +10,7 @@ mod page_margins;
 mod page_orientation;
 mod paper_size;
 mod print_scale;
+mod right_to_left;
 mod shared_strings;
 mod sheet_zoom;
 mod show_gridlines;

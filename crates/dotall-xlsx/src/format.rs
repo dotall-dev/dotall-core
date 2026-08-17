@@ -81,6 +81,7 @@ impl FormatHandler for XlsxFormat {
                     "freeze_panes": sheet.freeze_panes,
                     "zoom": sheet.zoom,
                     "show_gridlines": sheet.show_gridlines,
+                    "right_to_left": sheet.right_to_left,
                     "tab_color": sheet.tab_color,
                     "auto_filter": sheet.auto_filter,
                     "print_area": sheet.print_area,
@@ -731,6 +732,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "show": false }
             }),
             safety: "Surgically patches only the target worksheet sheetView showGridLines attribute. false writes showGridLines=\"0\"; true removes the attribute (Excel default shown). Existing freeze-pane children, zoomScale, and other sheetView attributes are preserved. Inspect surfaces show_gridlines. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_right_to_left".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear worksheet view right-to-left via sheetView rightToLeft."
+                .into(),
+            example: json!({
+                "kind": "set_right_to_left",
+                "payload": { "sheet": "Revenue", "rtl": true }
+            }),
+            safety: "Surgically patches only the target worksheet sheetView rightToLeft attribute. true writes rightToLeft=\"1\"; false removes the attribute (Excel default LTR). Existing freeze-pane children, zoomScale, showGridLines, and other sheetView attributes are preserved. Inspect surfaces right_to_left when true. Other sheets stay byte-identical."
                 .into(),
         },
     ]

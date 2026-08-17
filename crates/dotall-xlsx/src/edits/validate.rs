@@ -142,6 +142,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_right_to_left"))
+    {
+        return validate_set_right_to_left_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "define_name"))
     {
         return validate_define_name_operations(model, operations);
@@ -295,6 +301,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_show_gridlines"))
     {
         return validate_set_show_gridlines_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_right_to_left"))
+    {
+        return validate_set_right_to_left_operations(model, operations);
     }
     if operations
         .iter()
@@ -1913,6 +1925,61 @@ fn validate_set_show_gridlines_operations(
     })
 }
 
+fn validate_set_right_to_left_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_right_to_left edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_right_to_left" {
+        return Err(format_error("unsupported set_right_to_left edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_right_to_left requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.right_to_left;
+    let rtl = operation
+        .payload
+        .get("rtl")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format_error("set_right_to_left requires boolean `rtl`"))?;
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_right_to_left".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "rtl": rtl,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!right_to_left"),
+            element_id: format!("right_to_left:{canonical_sheet}"),
+            change: "set_right_to_left".into(),
+            before: Some(before.to_string()),
+            after: Some(rtl.to_string()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn optional_header_footer_text(payload: &Value, field: &str) -> Result<Option<String>> {
     match payload.get(field) {
         None | Some(Value::Null) => Ok(None),
@@ -2672,7 +2739,8 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
         | XlsxEditOp::SetSheetZoom { .. }
-        | XlsxEditOp::SetShowGridlines { .. } => {
+        | XlsxEditOp::SetShowGridlines { .. }
+        | XlsxEditOp::SetRightToLeft { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -2798,7 +2866,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetPageMargins { .. }
         | XlsxEditOp::SetHeaderFooter { .. }
         | XlsxEditOp::SetSheetZoom { .. }
-        | XlsxEditOp::SetShowGridlines { .. } => {
+        | XlsxEditOp::SetShowGridlines { .. }
+        | XlsxEditOp::SetRightToLeft { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )
@@ -2872,6 +2941,7 @@ mod tests {
             freeze_panes: None,
             zoom: None,
             show_gridlines: true,
+            right_to_left: false,
             tab_color: None,
             auto_filter: None,
             print_area: None,

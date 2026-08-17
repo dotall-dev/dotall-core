@@ -29,6 +29,9 @@ pub struct SheetModel {
     /// Worksheet view gridlines. `false` when `sheetView/@showGridLines="0"`; default shown is `true`.
     #[serde(default = "default_show_gridlines")]
     pub show_gridlines: bool,
+    /// Worksheet view right-to-left. `true` when `sheetView/@rightToLeft="1"`; omitted/false when LTR.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub right_to_left: bool,
     /// Worksheet tab color as OOXML `rgb` AARRGGBB (e.g. `FF4472C4`). Absent when default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_color: Option<String>,

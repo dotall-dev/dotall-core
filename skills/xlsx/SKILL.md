@@ -272,6 +272,14 @@ Show or hide worksheet view gridlines (`sheetView` `showGridLines`; `false` writ
 
 Inspect surfaces `show_gridlines` per sheet (`false` when hidden, `true` when shown). Freeze panes, zoom, and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
 
+Set or clear worksheet view right-to-left (`sheetView` `rightToLeft`; `true` writes `rightToLeft="1"`, `false` restores LTR by removing the attribute):
+
+```json
+{ "kind": "set_right_to_left", "payload": { "sheet": "Revenue", "rtl": true } }
+```
+
+Inspect surfaces `right_to_left` per sheet when true (omit or false when LTR). Freeze panes, zoom, gridlines, and other `sheetView` attributes are preserved. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

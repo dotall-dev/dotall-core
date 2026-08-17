@@ -139,6 +139,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_header_footer",
             "set_sheet_zoom",
             "set_show_gridlines",
+            "set_right_to_left",
         ]
     );
     assert_eq!(
@@ -617,6 +618,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                 freeze_panes: None,
                 zoom: None,
                 show_gridlines: true,
+                right_to_left: false,
                 tab_color: None,
                 auto_filter: None,
                 print_area: None,

@@ -29,6 +29,7 @@ struct WorksheetPart {
     freeze_panes: Option<String>,
     zoom: Option<u32>,
     show_gridlines: bool,
+    right_to_left: bool,
     tab_color: Option<String>,
     auto_filter: Option<String>,
     page_orientation: Option<String>,
@@ -87,6 +88,7 @@ pub fn parse_workbook(source: &Path) -> Result<WorkbookModel> {
                     freeze_panes: None,
                     zoom: None,
                     show_gridlines: true,
+                    right_to_left: false,
                     tab_color: None,
                     auto_filter: None,
                     page_orientation: None,
@@ -217,6 +219,7 @@ where
         freeze_panes: part.freeze_panes,
         zoom: part.zoom,
         show_gridlines: part.show_gridlines,
+        right_to_left: part.right_to_left,
         tab_color: part.tab_color,
         auto_filter: part.auto_filter,
         print_area: print.print_area,
@@ -282,6 +285,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
         let freeze_panes = parse_freeze_panes(&worksheet, source)?;
         let zoom = parse_sheet_zoom(&worksheet, source)?;
         let show_gridlines = parse_show_gridlines(&worksheet, source)?;
+        let right_to_left = parse_right_to_left(&worksheet, source)?;
         let tab_color = parse_tab_color(&worksheet, source)?;
         let auto_filter = parse_auto_filter(&worksheet, source)?;
         let page_orientation = parse_page_orientation(&worksheet, source)?;
@@ -299,6 +303,7 @@ fn parse_worksheet_parts(package: &[u8], source: &Path) -> Result<BTreeMap<Strin
                 freeze_panes,
                 zoom,
                 show_gridlines,
+                right_to_left,
                 tab_color,
                 auto_filter,
                 page_orientation,
@@ -1117,6 +1122,34 @@ fn parse_show_gridlines(xml: &[u8], source: &Path) -> Result<bool> {
         buffer.clear();
     }
     Ok(true)
+}
+
+fn parse_right_to_left(xml: &[u8], source: &Path) -> Result<bool> {
+    let mut reader = XmlReader::from_reader(xml);
+    let mut buffer = Vec::new();
+    loop {
+        match reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| format_error(source, format!("invalid worksheet XML: {error}")))?
+        {
+            Event::Empty(element) | Event::Start(element)
+                if local_name(element.name().as_ref()) == b"sheetView" =>
+            {
+                for attribute in element.attributes().flatten() {
+                    if local_name(attribute.key.as_ref()) == b"rightToLeft" {
+                        let value = String::from_utf8_lossy(attribute.value.as_ref());
+                        let rtl = matches!(value.trim(), "1" | "true" | "on");
+                        return Ok(rtl);
+                    }
+                }
+                return Ok(false);
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(false)
 }
 
 fn parse_freeze_panes(xml: &[u8], source: &Path) -> Result<Option<String>> {
