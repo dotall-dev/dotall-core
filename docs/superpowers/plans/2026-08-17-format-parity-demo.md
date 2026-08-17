@@ -375,6 +375,19 @@ After Wave 8 integrates (hide_sheet, set_shape_bold, set_paragraph_bold, clear_a
 
 Each task ends with the standing demo gate.
 
+## Wave 10 — underline run props + companion slices (parallel)
+
+After Wave 9 integrates (set_tab_color, set_shape_italic, set_paragraph_italic, set_form_fields):
+
+1. **XLSX:** `set_auto_filter` — set/clear worksheet `<autoFilter ref="…"/>` (A1-style range or clear); inspect surfaces `auto_filter` when present
+2. **PPTX:** `set_shape_underline` — set/clear underline on shape text runs (`a:rPr u="sng"` / `u="none"`); content-on-slide companion to bold/italic
+3. **DOCX:** `set_paragraph_underline` — set/clear `w:u` on runs (`w:val="single"` / `none`); content-in-document companion to bold/italic
+4. **PDF:** `set_form_field_readonly` — set/clear AcroForm field ReadOnly (`/Ff` bit 1); pairs with form fill workflow
+
+**Deferred:** font size/name, highlight, replace-across-shapes/paragraphs; further structural PPTX packaging.
+
+Each task ends with the standing demo gate.
+
 ---
 
 ## Standing requirement — end every format wave with demos
