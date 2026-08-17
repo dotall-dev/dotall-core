@@ -125,6 +125,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 color: optional_string(operation, "color")?,
             }),
+            "set_auto_filter" => Ok(XlsxEditOp::SetAutoFilter {
+                sheet: required_string(operation, "sheet")?,
+                range: optional_string(operation, "range")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),

@@ -1,3 +1,4 @@
+mod auto_filter;
 mod dimensions;
 mod freeze_panes;
 mod merges;

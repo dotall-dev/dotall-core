@@ -13,6 +13,7 @@ use crate::FORMAT_ID;
 use crate::edits::transform::{Axis, AxisChange};
 use crate::edits::{EditableValue, XlsxEditOp, parse_validated_operations};
 
+use super::auto_filter;
 use super::dimensions;
 use super::freeze_panes;
 use super::merges;
@@ -82,6 +83,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     }
     if let [XlsxEditOp::SetTabColor { sheet, color }] = operations.as_slice() {
         return patch_tab_color(&original, sheet, color.as_deref());
+    }
+    if let [XlsxEditOp::SetAutoFilter { sheet, range }] = operations.as_slice() {
+        return patch_auto_filter(&original, sheet, range.as_deref());
     }
     if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
         let patch = workbook::define_name(&original, name, formula)?;
@@ -243,6 +247,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::DeleteName { .. }
                 | XlsxEditOp::HideSheet { .. }
                 | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -274,7 +279,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::DefineName { .. }
             | XlsxEditOp::DeleteName { .. }
             | XlsxEditOp::HideSheet { .. }
-            | XlsxEditOp::SetTabColor { .. } => {
+            | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -684,6 +690,21 @@ fn patch_tab_color(original: &[u8], sheet: &str, color: Option<&str>) -> Result<
     let xml = entry_bytes(original, path)?;
     let mut replacements = BTreeMap::new();
     replacements.insert(path.clone(), tab_color::patch(&xml, color)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
+
+fn patch_auto_filter(original: &[u8], sheet: &str, range: Option<&str>) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), auto_filter::patch(&xml, range)?);
     let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
     Ok(PatchedOutput {
         after_source_hash: blake3::hash(&bytes).to_hex().to_string(),

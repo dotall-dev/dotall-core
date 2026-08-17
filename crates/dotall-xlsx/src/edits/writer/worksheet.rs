@@ -33,7 +33,8 @@ pub(super) fn patch(
             | XlsxEditOp::DefineName { .. }
             | XlsxEditOp::DeleteName { .. }
             | XlsxEditOp::HideSheet { .. }
-            | XlsxEditOp::SetTabColor { .. } => {
+            | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -142,7 +143,8 @@ pub(super) fn patch(
                 | XlsxEditOp::DefineName { .. }
                 | XlsxEditOp::DeleteName { .. }
                 | XlsxEditOp::HideSheet { .. }
-                | XlsxEditOp::SetTabColor { .. } => {
+                | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -174,7 +176,8 @@ pub(super) fn patch(
             | XlsxEditOp::DefineName { .. }
             | XlsxEditOp::DeleteName { .. }
             | XlsxEditOp::HideSheet { .. }
-            | XlsxEditOp::SetTabColor { .. } => {
+            | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -306,7 +309,8 @@ fn render_new_cell(
         | XlsxEditOp::DefineName { .. }
         | XlsxEditOp::DeleteName { .. }
         | XlsxEditOp::HideSheet { .. }
-        | XlsxEditOp::SetTabColor { .. } => {
+        | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -483,7 +487,8 @@ fn render_cell_parts(
         | XlsxEditOp::DefineName { .. }
         | XlsxEditOp::DeleteName { .. }
         | XlsxEditOp::HideSheet { .. }
-        | XlsxEditOp::SetTabColor { .. } => {
+        | XlsxEditOp::SetTabColor { .. }
+            | XlsxEditOp::SetAutoFilter { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

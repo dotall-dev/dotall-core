@@ -80,6 +80,7 @@ impl FormatHandler for XlsxFormat {
                     "merges": sheet.merges,
                     "freeze_panes": sheet.freeze_panes,
                     "tab_color": sheet.tab_color,
+                    "auto_filter": sheet.auto_filter,
                 })
             })
             .collect::<Vec<_>>();
@@ -565,6 +566,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Inputs", "color": "FF4472C4" }
             }),
             safety: "Surgically patches only the target worksheet sheetPr/tabColor. Pass null color to clear. Other sheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_auto_filter".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set or clear a worksheet AutoFilter range.".into(),
+            example: json!({
+                "kind": "set_auto_filter",
+                "payload": { "sheet": "Inputs", "range": "A1:B10" }
+            }),
+            safety: "Surgically patches only the target worksheet autoFilter element. Pass null range to clear. Other sheets stay byte-identical."
                 .into(),
         },
     ]

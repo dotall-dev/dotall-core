@@ -159,6 +159,14 @@ Set or clear a worksheet tab color (`sheetPr`/`tabColor` rgb AARRGGBB; `null` cl
 
 Inspect surfaces `tab_color` per sheet when present. Other worksheets stay byte-identical.
 
+Set or clear a worksheet AutoFilter range (`null` clears):
+
+```json
+{ "kind": "set_auto_filter", "payload": { "sheet": "Inputs", "range": "A1:B10" } }
+```
+
+Inspect surfaces `auto_filter` per sheet when present. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

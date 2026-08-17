@@ -604,6 +604,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                 merges: Vec::new(),
                 freeze_panes: None,
                 tab_color: None,
+                auto_filter: None,
                 cells,
             }],
             named_ranges: Vec::new(),

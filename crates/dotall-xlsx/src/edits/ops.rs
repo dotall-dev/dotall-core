@@ -98,6 +98,11 @@ pub enum XlsxEditOp {
         /// AARRGGBB hex (with or without leading FF); `None` clears tab color.
         color: Option<String>,
     },
+    SetAutoFilter {
+        sheet: String,
+        /// A1 range (`A1:D10`); `None` clears the auto filter.
+        range: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
