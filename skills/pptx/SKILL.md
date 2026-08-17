@@ -125,6 +125,12 @@ Delete a shape by slide + name:
 { "kind": "delete_shape", "payload": { "slide": "Slide 1", "shape": "Callout" } }
 ```
 
+Rename a shape (`cNvPr` name on the slide part):
+
+```json
+{ "kind": "rename_shape", "payload": { "slide": "Slide 1", "shape": "Title", "name": "Headline" } }
+```
+
 Speaker notes (existing notes slide part only):
 
 ```json
@@ -138,6 +144,7 @@ Omit `after` on `add_slide` to append at the end. `delete_slide` rejects the sol
 `move_slide` uses a 0-based `to_index` (final position); rejects no-ops and single-slide decks.
 Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
 `delete_shape` removes a `p:sp` by name or element_id; rejects missing shapes (tables use graphicFrame and are not deleted here).
+`rename_shape` updates `cNvPr` name; rejects empty/duplicate names (including table names on the same slide).
 
 Safety:
 
@@ -148,6 +155,7 @@ Safety:
 - `move_slide`: reorders only `p:sldId` entries in `ppt/presentation.xml`. Slide parts, notes, rels, and Content_Types stay byte-identical.
 - `add_textbox`: inserts a `p:sp` text box (`txBox="1"`) into the target slide’s `spTree`; other parts stay byte-identical.
 - `delete_shape`: removes the matching `p:sp` from the target slide part; other parts stay byte-identical.
+- `rename_shape`: rewrites the matching `cNvPr` name attribute on the target slide part; other parts stay byte-identical.
 - Text ops patch only the target slide part; media and other slides stay byte-identical.
 
 ### 4. Apply, history, revert

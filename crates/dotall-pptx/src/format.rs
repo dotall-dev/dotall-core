@@ -307,5 +307,15 @@ fn edit_capabilities() -> Vec<EditCapability> {
             }),
             safety: "Patches only the target slide part by removing the matching p:sp. Tables (graphicFrame) are not deleted via this op. Other slides and media stay byte-identical.".into(),
         },
+        EditCapability {
+            operation: "rename_shape".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Rename a text shape (p:sp cNvPr name) on a slide.".into(),
+            example: json!({
+                "kind": "rename_shape",
+                "payload": { "slide": "Slide 1", "shape": "Title", "name": "Headline" }
+            }),
+            safety: "Patches only the target slide part. Rejects duplicate names on the same slide (including table names). Other slides and media stay byte-identical.".into(),
+        },
     ]
 }

@@ -509,7 +509,10 @@ fn delete_shape_removes_shape_and_leaves_other_parts_byte_identical() {
             .all(|shape| shape.name != "Title"),
         "Title should be removed"
     );
-    assert_eq!(after.slides[0].tables.len(), before_model.slides[0].tables.len());
+    assert_eq!(
+        after.slides[0].tables.len(),
+        before_model.slides[0].tables.len()
+    );
     assert_eq!(after.slides[1].shapes[0].text, "Other");
     assert_eq!(edit.semantic_diff[0].change, "delete_shape");
     assert_eq!(edit.semantic_diff[0].target, "Slide 1!Title");
@@ -540,6 +543,67 @@ fn delete_shape_rejects_missing_shape() {
     assert!(
         message.contains("not found") || message.contains("MissingBox"),
         "unexpected error: {message}"
+    );
+}
+
+#[test]
+fn rename_shape_updates_name_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = minimal_pptx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "rename_shape".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "name": "Headline",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_presentation_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.slides[0].shapes[0].name, "Headline");
+    assert_eq!(after.slides[0].shapes[0].text, "Hello");
+    assert_eq!(edit.semantic_diff[0].change, "rename_shape");
+    assert_eq!(edit.semantic_diff[0].before.as_deref(), Some("Title"));
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("Headline"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn rename_shape_rejects_duplicate_name() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, pptx_with_table()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "rename_shape".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "name": "Table 1",
+                }),
+            }],
+        )
+        .expect_err("duplicate name");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("already") || message.contains("exists") || message.contains("table 1"),
+        "unexpected error: {error}"
     );
 }
 
