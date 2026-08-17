@@ -168,6 +168,7 @@ fn walk_field(
     let comb = flags & 16_777_216 == 16_777_216;
     let do_not_scroll = flags & 8_388_608 == 8_388_608;
     let do_not_spell_check = flags & 4_194_304 == 4_194_304;
+    let rich_text = flags & 33_554_432 == 33_554_432;
     let max_length = dict
         .get(b"MaxLen")
         .ok()
@@ -192,6 +193,7 @@ fn walk_field(
             comb,
             do_not_scroll,
             do_not_spell_check,
+            rich_text,
             max_length,
         });
     }

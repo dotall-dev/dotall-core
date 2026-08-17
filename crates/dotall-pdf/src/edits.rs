@@ -40,10 +40,11 @@ pub fn validate(
         "set_form_field_do_not_spell_check" => {
             validate_set_form_field_do_not_spell_check(model, operation)
         }
+        "set_form_field_rich_text" => validate_set_form_field_rich_text(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         "clear_document_metadata" => validate_clear_document_metadata(model, operation),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_document_metadata, or clear_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, clear_all_form_fields, set_form_fields, set_form_field_readonly, set_form_field_required, set_form_field_multiline, set_form_field_password, set_form_field_max_length, set_form_field_comb, set_form_field_do_not_scroll, set_form_field_do_not_spell_check, set_form_field_rich_text, set_document_metadata, or clear_document_metadata"
         ))),
     }
 }
@@ -631,6 +632,49 @@ fn validate_set_form_field_do_not_spell_check(
     })
 }
 
+fn validate_set_form_field_rich_text(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let name = required_str(&operation.payload, "name")?;
+    let rich_text = required_bool(&operation.payload, "rich_text")?;
+    let field = model
+        .fields
+        .iter()
+        .find(|field| field.name == name)
+        .ok_or_else(|| format_error(format!("field `{name}` was not found")))?;
+    if field.field_type != "tx" {
+        return Err(format_error(
+            "set_form_field_rich_text only applies to text (tx) fields",
+        ));
+    }
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_form_field_rich_text".into(),
+            payload: serde_json::json!({
+                "name": field.name,
+                "rich_text": rich_text,
+                "element_id": field.element_id,
+                "field_type": field.field_type,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("field:{}", field.name),
+            element_id: field.element_id.clone(),
+            change: "set_form_field_rich_text".into(),
+            before: Some(if field.rich_text { "true" } else { "false" }.into()),
+            after: Some(if rich_text { "true" } else { "false" }.into()),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_set_document_metadata(
     model: &PdfDocumentModel,
     operation: &SemanticOperation,
@@ -879,6 +923,15 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 do_not_spell_check,
             )?;
         }
+        "set_form_field_rich_text" => {
+            let name = required_str(&operation.payload, "name")?;
+            let rich_text = operation
+                .payload
+                .get("rich_text")
+                .and_then(serde_json::Value::as_bool)
+                .ok_or_else(|| format_error("`rich_text` boolean is required"))?;
+            set_field_flag(&mut document, name, FIELD_FLAG_RICH_TEXT, rich_text)?;
+        }
         other => {
             return Err(format_error(format!(
                 "unsupported pdf edit `{other}` in apply"
@@ -1053,6 +1106,7 @@ const FIELD_FLAG_PASSWORD: i64 = 8192;
 const FIELD_FLAG_DO_NOT_SPELL_CHECK: i64 = 4_194_304;
 const FIELD_FLAG_DO_NOT_SCROLL: i64 = 8_388_608;
 const FIELD_FLAG_COMB: i64 = 16_777_216;
+const FIELD_FLAG_RICH_TEXT: i64 = 33_554_432;
 
 fn set_field_flag(document: &mut Document, name: &str, flag: i64, enabled: bool) -> Result<()> {
     let mut target = None;
