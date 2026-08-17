@@ -198,6 +198,13 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"set_center_on_page","payload":{"sheet":"Revenue","horizontal":false,"vertical":false}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 18: set_paper_size (pageSetup paperSize; 9=A4)
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_paper_size","payload":{"sheet":"Revenue","paper_size":9}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect sheets[].paper_size 9 for Revenue
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -322,9 +329,14 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_shape_vert_align","payload":{"slide":"Slide 2","shape":"Title","vert_align":"superscript"}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 18 — small caps on Title (a:rPr cap)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_shape_caps","payload":{"slide":"Slide 2","shape":"Title","caps":"small"}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `set_shape_strikethrough` / `set_shape_vert_align` / `replace_shape_text` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` / `set_shape_font_size` / `set_shape_font_name` / `set_shape_font_color` / `set_shape_highlight` / `set_shape_strikethrough` / `set_shape_vert_align` / `set_shape_caps` / `replace_shape_text` patch only the target slide part.
 
 ---
 
@@ -440,6 +452,11 @@ $DOTALL apply demo/memo.docx --all
 # Wave 17 — paragraph superscript (w:vertAlign)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_vert_align","payload":{"index":2,"vert_align":"superscript"}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 18 — paragraph small caps (w:smallCaps)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_caps","payload":{"index":2,"caps":"small"}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
@@ -613,6 +630,16 @@ $DOTALL inspect demo/form.pdf
 # expect fields[].do_not_spell_check true for Name
 $DOTALL edit demo/form.pdf --ops-json \
   '[{"kind":"set_form_field_do_not_spell_check","payload":{"name":"Name","do_not_spell_check":false}}]'
+$DOTALL apply demo/form.pdf --all
+
+# Wave 18 — mark Name rich-text (Ff RichText), then clear
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_rich_text","payload":{"name":"Name","rich_text":true}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect fields[].rich_text true for Name
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_rich_text","payload":{"name":"Name","rich_text":false}}]'
 $DOTALL apply demo/form.pdf --all
 ```
 
