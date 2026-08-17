@@ -345,6 +345,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_alignment".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Set paragraph alignment (w:jc: left, center, right, both).".into(),
+            example: json!({
+                "kind": "set_paragraph_alignment",
+                "payload": { "index": 1, "alignment": "center" }
+            }),
+            safety:
+                "Upserts w:jc inside w:pPr on the target body/table paragraph. Patches only word/document.xml."
+                    .into(),
+        },
+        EditCapability {
             operation: "set_header_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

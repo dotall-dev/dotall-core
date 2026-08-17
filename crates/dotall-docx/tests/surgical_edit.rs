@@ -441,6 +441,63 @@ fn set_paragraph_style_updates_style_and_leaves_other_parts_byte_identical() {
 }
 
 #[test]
+fn set_paragraph_alignment_sets_jc_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_alignment".into(),
+                payload: serde_json::json!({ "index": 1, "alignment": "center" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document_xml = String::from_utf8(zip_entries(&patched.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        document_xml.contains(r#"<w:jc w:val="center"/>"#)
+            || document_xml.contains(r#"w:val="center""#),
+        "expected w:jc center in document.xml"
+    );
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+    assert_eq!(after.paragraphs[1].text, "Beta");
+    assert_eq!(edit.semantic_diff[0].change, "set_paragraph_alignment");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("center"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_alignment_rejects_invalid_value() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_alignment".into(),
+                payload: serde_json::json!({ "index": 0, "alignment": "diagonal" }),
+            }],
+        )
+        .expect_err("invalid alignment");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("alignment") || message.contains("left") || message.contains("center"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
 fn set_paragraph_style_replaces_existing_pstyle() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("memo.docx");

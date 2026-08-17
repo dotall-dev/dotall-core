@@ -26,6 +26,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "insert_paragraph" => validate_insert_paragraph(model, operation),
         "delete_paragraph" => validate_delete_paragraph(model, operation),
         "set_paragraph_style" => validate_set_paragraph_style(model, operation),
+        "set_paragraph_alignment" => validate_set_paragraph_alignment(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -33,7 +34,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -190,6 +191,51 @@ fn validate_set_paragraph_style(
     })
 }
 
+fn validate_set_paragraph_alignment(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let paragraph = resolve_body_paragraph(model, &operation.payload)?;
+    let alignment = normalize_alignment(required_str(&operation.payload, "alignment")?)?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_paragraph_alignment".into(),
+            payload: serde_json::json!({
+                "index": paragraph.index,
+                "alignment": alignment,
+                "element_id": paragraph.element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "set_paragraph_alignment".into(),
+            before: None,
+            after: Some(alignment),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn normalize_alignment(raw: &str) -> Result<String> {
+    let trimmed = raw.trim().to_ascii_lowercase();
+    match trimmed.as_str() {
+        "left" | "start" => Ok("left".into()),
+        "center" => Ok("center".into()),
+        "right" | "end" => Ok("right".into()),
+        "both" | "justify" => Ok("both".into()),
+        other => Err(format_error(format!(
+            "unsupported alignment `{other}`; use left, center, right, or both"
+        ))),
+    }
+}
+
 fn validate_set_header_footer_text(
     model: &DocumentModel,
     operation: &SemanticOperation,
@@ -328,6 +374,24 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 bytes,
             })
         }
+        "set_paragraph_alignment" => {
+            let index = operation
+                .payload
+                .get("index")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| format_error("`index` is required"))? as u32;
+            let alignment = required_str(&operation.payload, "alignment")?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let patched_xml = patch_paragraph_alignment(&original, index, alignment)?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
         "set_header_paragraph_text" | "set_footer_paragraph_text" => {
             let part = required_str(&operation.payload, "part")?;
             let index = operation
@@ -433,8 +497,55 @@ pub fn patch_paragraph_style(xml: &[u8], index: u32, style_id: &str) -> Result<V
     Ok(output.into_bytes())
 }
 
+pub fn patch_paragraph_alignment(xml: &[u8], index: u32, alignment: &str) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("document XML is not UTF-8: {error}")))?;
+    let spans = paragraph_spans(source)?;
+    let span = spans
+        .get(index as usize)
+        .ok_or_else(|| format_error(format!("paragraph `{index}` was not found")))?;
+    let paragraph = &source[span.0..span.1];
+    if UNSAFE_MARKERS
+        .iter()
+        .any(|marker| paragraph.contains(marker))
+    {
+        return Err(format_error(
+            "paragraph contains tracked changes, a content control, or a field",
+        ));
+    }
+    let open_end = paragraph
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:p"))?;
+    let jc_tag = format!(r#"<w:jc w:val="{}"/>"#, xml_escape_attr(alignment));
+    let replacement = match extract_p_pr(&paragraph[open_end..]) {
+        Some(p_pr) => {
+            let patched_p_pr = upsert_p_jc(p_pr, &jc_tag)?;
+            format!(
+                "{}{}{}",
+                &paragraph[..open_end],
+                patched_p_pr,
+                &paragraph[open_end + p_pr.len()..]
+            )
+        }
+        None => {
+            format!(
+                "{}<w:pPr>{}</w:pPr>{}",
+                &paragraph[..open_end],
+                jc_tag,
+                &paragraph[open_end..]
+            )
+        }
+    };
+    let mut output = String::new();
+    output.push_str(&source[..span.0]);
+    output.push_str(&replacement);
+    output.push_str(&source[span.1..]);
+    Ok(output.into_bytes())
+}
+
 fn upsert_p_style(p_pr: &str, style_tag: &str) -> Result<String> {
-    if let Some(start) = find_p_style_open(p_pr) {
+    if let Some(start) = find_named_open(p_pr, "w:pStyle") {
         let end = element_end(p_pr, start, "w:pStyle")?;
         return Ok(format!("{}{}{}", &p_pr[..start], style_tag, &p_pr[end..]));
     }
@@ -454,19 +565,37 @@ fn upsert_p_style(p_pr: &str, style_tag: &str) -> Result<String> {
     ))
 }
 
-fn find_p_style_open(xml: &str) -> Option<usize> {
+fn upsert_p_jc(p_pr: &str, jc_tag: &str) -> Result<String> {
+    if let Some(start) = find_named_open(p_pr, "w:jc") {
+        let end = element_end(p_pr, start, "w:jc")?;
+        return Ok(format!("{}{}{}", &p_pr[..start], jc_tag, &p_pr[end..]));
+    }
+    let open_end = p_pr
+        .find('>')
+        .map(|offset| offset + 1)
+        .ok_or_else(|| format_error("unterminated w:pPr"))?;
+    if p_pr[..open_end].ends_with("/>") {
+        let open = p_pr[..open_end].trim_end_matches("/>");
+        return Ok(format!("{open}>{jc_tag}</w:pPr>"));
+    }
+    Ok(format!(
+        "{}{}{}",
+        &p_pr[..open_end],
+        jc_tag,
+        &p_pr[open_end..]
+    ))
+}
+
+fn find_named_open(xml: &str, tag: &str) -> Option<usize> {
+    let needle = format!("<{tag}");
     let mut search = 0;
-    while let Some(rel) = xml[search..].find("<w:pStyle") {
+    while let Some(rel) = xml[search..].find(&needle) {
         let at = search + rel;
-        let after = xml
-            .as_bytes()
-            .get(at + "<w:pStyle".len())
-            .copied()
-            .unwrap_or(0);
+        let after = xml.as_bytes().get(at + needle.len()).copied().unwrap_or(0);
         if after == b' ' || after == b'>' || after == b'/' {
             return Some(at);
         }
-        search = at + "<w:pStyle".len();
+        search = at + needle.len();
     }
     None
 }

@@ -107,6 +107,15 @@ Set paragraph style (`w:pStyle` / `style_id`) without rewriting `styles.xml`:
 exist in the document’s `styles.xml` for Word to resolve it — Dotall only sets
 the reference.
 
+Set paragraph alignment (`w:jc`: `left`, `center`, `right`, `both` / `justify`):
+
+```json
+{
+  "kind": "set_paragraph_alignment",
+  "payload": { "index": 1, "alignment": "center" }
+}
+```
+
 Header / footer:
 
 ```json
