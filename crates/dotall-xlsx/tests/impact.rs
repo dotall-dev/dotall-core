@@ -310,6 +310,7 @@ fn fixture_sheet(name: &str) -> SheetModel {
         auto_filter: None,
         print_area: None,
         print_titles: None,
+        page_orientation: None,
         cells: Vec::new(),
     }
 }

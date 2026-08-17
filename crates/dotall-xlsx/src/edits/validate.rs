@@ -88,6 +88,12 @@ pub fn validate(
     }
     if operations
         .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_page_orientation"))
+    {
+        return validate_set_page_orientation_operations(model, operations);
+    }
+    if operations
+        .iter()
         .any(|operation| matches!(operation.kind.as_str(), "define_name"))
     {
         return validate_define_name_operations(model, operations);
@@ -187,6 +193,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "set_print_titles"))
     {
         return validate_set_print_titles_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "set_page_orientation"))
+    {
+        return validate_set_page_orientation_operations(model, operations);
     }
     if operations
         .iter()
@@ -1181,6 +1193,74 @@ fn validate_set_print_titles_operations(
     })
 }
 
+fn validate_set_page_orientation_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "set_page_orientation edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "set_page_orientation" {
+        return Err(format_error("unsupported set_page_orientation edit"));
+    }
+    let sheet_name = operation
+        .payload
+        .get("sheet")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|sheet| !sheet.is_empty())
+        .ok_or_else(|| format_error("set_page_orientation requires a non-empty `sheet` field"))?;
+    let sheet = find_sheet(&workbook, sheet_name)?;
+    let canonical_sheet = sheet.name.clone();
+    let before = sheet.page_orientation.clone();
+    let orientation = operation
+        .payload
+        .get("orientation")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format_error("set_page_orientation requires `orientation` of portrait or landscape")
+        })?;
+    let orientation = match orientation.to_ascii_lowercase().as_str() {
+        "portrait" => "portrait".to_owned(),
+        "landscape" => "landscape".to_owned(),
+        _ => {
+            return Err(format_error(
+                "set_page_orientation `orientation` must be portrait or landscape",
+            ));
+        }
+    };
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "set_page_orientation".into(),
+            payload: serde_json::json!({
+                "sheet": canonical_sheet,
+                "orientation": orientation,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{canonical_sheet}!page_orientation"),
+            element_id: format!("page_orientation:{canonical_sheet}"),
+            change: "set_page_orientation".into(),
+            before,
+            after: Some(orientation),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
 fn validate_define_name_operations(
     model: &ArtifactEnvelope,
     operations: &[SemanticOperation],
@@ -1893,7 +1973,9 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::DeleteName { .. }
             | XlsxEditOp::HideSheet { .. } | XlsxEditOp::SetTabColor { .. }
             | XlsxEditOp::SetAutoFilter { .. }
-            | XlsxEditOp::SetPrintArea { .. } | XlsxEditOp::SetPrintTitles { .. } => {
+            | XlsxEditOp::SetPrintArea { .. }
+            | XlsxEditOp::SetPrintTitles { .. }
+            | XlsxEditOp::SetPageOrientation { .. } => {
                 unreachable!(
                     "sheet, merge, dimension, freeze, and define_name edits are validated separately"
                 )
@@ -2010,7 +2092,8 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::SetTabColor { .. }
         | XlsxEditOp::SetAutoFilter { .. }
         | XlsxEditOp::SetPrintArea { .. }
-        | XlsxEditOp::SetPrintTitles { .. } => {
+        | XlsxEditOp::SetPrintTitles { .. }
+        | XlsxEditOp::SetPageOrientation { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )
@@ -2086,6 +2169,7 @@ mod tests {
             auto_filter: None,
             print_area: None,
             print_titles: None,
+            page_orientation: None,
             cells,
         }
     }

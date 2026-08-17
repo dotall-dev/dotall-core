@@ -17,6 +17,7 @@ use super::auto_filter;
 use super::dimensions;
 use super::freeze_panes;
 use super::merges;
+use super::page_orientation;
 use super::shared_strings;
 use super::structural;
 use super::tab_color;
@@ -112,6 +113,9 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
             bytes,
         });
+    }
+    if let [XlsxEditOp::SetPageOrientation { sheet, orientation }] = operations.as_slice() {
+        return patch_page_orientation(&original, sheet, orientation);
     }
     if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
         let patch = workbook::define_name(&original, name, formula)?;
@@ -276,6 +280,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetAutoFilter { .. }
                 | XlsxEditOp::SetPrintArea { .. }
                 | XlsxEditOp::SetPrintTitles { .. }
+                | XlsxEditOp::SetPageOrientation { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -310,7 +315,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::SetTabColor { .. }
             | XlsxEditOp::SetAutoFilter { .. }
             | XlsxEditOp::SetPrintArea { .. }
-            | XlsxEditOp::SetPrintTitles { .. } => {
+            | XlsxEditOp::SetPrintTitles { .. }
+            | XlsxEditOp::SetPageOrientation { .. } => {
                 unreachable!("structural operations return above")
             }
         };
@@ -742,6 +748,24 @@ fn patch_auto_filter(original: &[u8], sheet: &str, range: Option<&str>) -> Resul
     })
 }
 
+fn patch_page_orientation(
+    original: &[u8],
+    sheet: &str,
+    orientation: &str,
+) -> Result<PatchedOutput> {
+    let worksheet_paths = worksheet_paths(original)?;
+    let path = worksheet_paths
+        .get(sheet)
+        .ok_or_else(|| writer_error(format!("worksheet path not found for sheet `{sheet}`")))?;
+    let xml = entry_bytes(original, path)?;
+    let mut replacements = BTreeMap::new();
+    replacements.insert(path.clone(), page_orientation::patch(&xml, orientation)?);
+    let bytes = rebuild_package(original, &replacements, &BTreeSet::new(), &BTreeMap::new())?;
+    Ok(PatchedOutput {
+        after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+        bytes,
+    })
+}
 fn shared_strings_path(package: &[u8]) -> Result<Option<String>> {
     let relationships = entry_bytes(package, "xl/_rels/workbook.xml.rels")?;
     if let Some(target) = parse_shared_strings_target(&relationships)? {

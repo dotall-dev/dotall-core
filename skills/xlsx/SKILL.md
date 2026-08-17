@@ -183,6 +183,14 @@ Set or clear print titles / repeat rows+cols (`_xlnm.Print_Titles`; both `null` 
 
 Inspect surfaces `print_titles.rows` / `print_titles.cols` per sheet when present. Worksheets stay byte-identical.
 
+Set worksheet print orientation (`pageSetup`; `portrait` or `landscape`):
+
+```json
+{ "kind": "set_page_orientation", "payload": { "sheet": "Revenue", "orientation": "landscape" } }
+```
+
+Inspect surfaces `page_orientation` per sheet when present. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

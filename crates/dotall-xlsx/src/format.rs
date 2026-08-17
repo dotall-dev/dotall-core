@@ -83,6 +83,7 @@ impl FormatHandler for XlsxFormat {
                     "auto_filter": sheet.auto_filter,
                     "print_area": sheet.print_area,
                     "print_titles": sheet.print_titles,
+                    "page_orientation": sheet.page_orientation,
                 })
             })
             .collect::<Vec<_>>();
@@ -604,6 +605,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 "payload": { "sheet": "Revenue", "rows": "1:1", "cols": "A:A" }
             }),
             safety: "Surgically patches only xl/workbook.xml definedNames for _xlnm.Print_Titles. Pass null rows and cols to clear. Worksheets stay byte-identical."
+                .into(),
+        },
+        EditCapability {
+            operation: "set_page_orientation".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Set worksheet print orientation via pageSetup (portrait or landscape)."
+                .into(),
+            example: json!({
+                "kind": "set_page_orientation",
+                "payload": { "sheet": "Revenue", "orientation": "landscape" }
+            }),
+            safety: "Surgically patches only the target worksheet pageSetup orientation attribute. Other sheets stay byte-identical."
                 .into(),
         },
     ]

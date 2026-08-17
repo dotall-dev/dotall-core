@@ -138,6 +138,10 @@ pub(crate) fn parse_validated_operations(
                 rows: optional_string(operation, "rows")?,
                 cols: optional_string(operation, "cols")?,
             }),
+            "set_page_orientation" => Ok(XlsxEditOp::SetPageOrientation {
+                sheet: required_string(operation, "sheet")?,
+                orientation: required_string(operation, "orientation")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),

@@ -115,6 +115,11 @@ pub enum XlsxEditOp {
         /// Column span `A:B`; `None` omits/clears cols when paired with rows.
         cols: Option<String>,
     },
+    SetPageOrientation {
+        sheet: String,
+        /// `portrait` or `landscape`.
+        orientation: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -130,6 +130,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "set_auto_filter",
             "set_print_area",
             "set_print_titles",
+            "set_page_orientation",
         ]
     );
     assert_eq!(
@@ -610,6 +611,7 @@ fn workbook_model_with_sparse_cells(cells: Vec<CellModel>) -> dotall_core::Artif
                 auto_filter: None,
                 print_area: None,
                 print_titles: None,
+                page_orientation: None,
                 cells,
             }],
             named_ranges: Vec::new(),

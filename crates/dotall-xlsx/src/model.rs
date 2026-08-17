@@ -35,6 +35,9 @@ pub struct SheetModel {
     /// Print titles (rows/cols to repeat). Absent when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub print_titles: Option<PrintTitles>,
+    /// Page orientation (`portrait` / `landscape`). Absent when unset in OOXML.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_orientation: Option<String>,
     pub cells: Vec<CellModel>,
 }
 

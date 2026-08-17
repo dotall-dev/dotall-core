@@ -3,6 +3,7 @@ mod dimensions;
 mod freeze_panes;
 mod merges;
 mod package;
+mod page_orientation;
 mod shared_strings;
 mod structural;
 mod tab_color;
