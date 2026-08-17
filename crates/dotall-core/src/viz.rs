@@ -20,13 +20,19 @@ pub struct VizNode {
     pub children: Vec<VizNode>,
 }
 
-/// Compact history row for the viz timeline.
+/// Compact history row for the viz git graph.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VizHistoryEntry {
     pub path: String,
     pub version: u64,
     pub summary: String,
     pub op_count: usize,
+    pub timestamp: String,
+    /// Previous sequential version on the same file (`None` for v1).
+    pub parent: Option<u64>,
+    /// When this version reverts an earlier one, the target version.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revert_of: Option<u64>,
 }
 
 /// Aggregate `.all/` footprint and access-derived estimates.
@@ -83,11 +89,15 @@ fn collect_history(store: &DotallStore) -> Result<Vec<VizHistoryEntry>> {
     let mut entries = Vec::new();
     for status in store.status()? {
         for summary in store.list_history(&status.path)? {
+            let record = store.get_history(&status.path, summary.version)?;
             entries.push(VizHistoryEntry {
                 path: status.path.clone(),
                 version: summary.version,
                 summary: summary.summary,
                 op_count: summary.op_count,
+                timestamp: summary.timestamp,
+                parent: (summary.version > 1).then_some(summary.version - 1),
+                revert_of: record.revert_of,
             });
         }
     }

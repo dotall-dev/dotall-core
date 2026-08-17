@@ -7,93 +7,196 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: #0f1115;
-      --fg: #e8eaed;
-      --muted: #9aa0a6;
-      --line: #2a2f3a;
-      --accent: #8ab4f8;
+      --cabinet: #14221c;
+      --paper: #e8edd4;
+      --ink: #0e1612;
+      --suture: #ff5a36;
+      --oxide: #7eb8a8;
+      --muted: #8aa090;
+      --line: rgba(232, 237, 212, 0.14);
+      --grid: rgba(232, 237, 212, 0.05);
+      --display: Palatino, "Palatino Linotype", "Iowan Old Style", "Book Antiqua", serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
-      font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      background: var(--bg);
-      color: var(--fg);
-      padding: 1.5rem;
+      color: var(--paper);
+      font: 13px/1.4 var(--mono);
+      background-color: var(--cabinet);
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 28px 28px;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
     }
-    h1 { font-size: 1.4rem; margin: 0 0 1rem; }
-    h2 { font-size: 1rem; margin: 1.5rem 0 0.75rem; color: var(--muted); font-weight: 600; }
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 1.5rem;
+      padding: 1.25rem 1.5rem 0.85rem;
+      border-bottom: 1px solid var(--line);
+    }
+    h1 {
+      margin: 0;
+      font-family: var(--display);
+      font-size: 2.15rem;
+      font-style: italic;
+      font-weight: 500;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+    h1 span {
+      color: var(--suture);
+      font-style: normal;
+    }
+    .metrics {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 0.35rem 1.15rem;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    .metrics b {
+      color: var(--paper);
+      font-weight: 600;
+    }
     .note {
       color: var(--muted);
-      font-size: 0.85rem;
-      margin: 0.5rem 0 0;
-      max-width: 52rem;
+      font-size: 0.72rem;
+      padding: 0.45rem 1.5rem 0.7rem;
+      border-bottom: 1px dashed var(--suture);
     }
-    dl {
+    main {
+      flex: 1;
       display: grid;
-      grid-template-columns: max-content 1fr;
-      gap: 0.35rem 1rem;
-      margin: 0;
+      grid-template-columns: minmax(18rem, 1.05fr) minmax(18rem, 1fr);
+      min-height: 0;
     }
-    dt { color: var(--muted); }
-    dd { margin: 0; }
-    ul.tree, ul.history {
-      list-style: none;
-      margin: 0;
-      padding-left: 1.1rem;
+    section {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+    section + section {
       border-left: 1px solid var(--line);
     }
-    ul.tree > li, ul.history > li { margin: 0.15rem 0; }
-    details > summary {
-      cursor: pointer;
-      list-style: none;
+    h2 {
+      margin: 0;
+      padding: 0.7rem 1.1rem 0.55rem;
+      font-size: 0.68rem;
+      font-weight: 600;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--oxide);
+      border-bottom: 1px solid var(--line);
     }
-    details > summary::-webkit-details-marker { display: none; }
-    details > summary::before {
-      content: "▸ ";
-      color: var(--accent);
+    .pane {
+      flex: 1;
+      overflow: auto;
+      padding: 0.6rem 0.4rem 1.5rem 0.6rem;
     }
-    details[open] > summary::before { content: "▾ "; }
-    .bytes { color: var(--muted); margin-left: 0.5rem; }
-    .err { color: #f28b82; }
+    svg {
+      display: block;
+      overflow: visible;
+    }
+    .empty {
+      color: var(--muted);
+      padding: 1.25rem 1rem;
+      max-width: 22rem;
+    }
+    .err { color: var(--suture); padding: 1rem 1.5rem; }
+    .node-label, .commit-label { pointer-events: none; }
+    .hit { cursor: pointer; }
+    .hit:focus { outline: 1px solid var(--suture); outline-offset: 2px; }
+    @media (max-width: 820px) {
+      main { grid-template-columns: 1fr; }
+      section + section { border-left: 0; border-top: 1px solid var(--line); }
+      header { flex-direction: column; align-items: flex-start; }
+      .metrics { justify-content: flex-start; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .head-dot { animation: none; }
+    }
+    @keyframes pulse {
+      50% { stroke-width: 4px; }
+    }
+    .head-dot {
+      animation: pulse 2.4s ease-in-out infinite;
+    }
   </style>
 </head>
 <body>
-  <h1>.all/</h1>
-  <h2>Metrics</h2>
-  <dl id="metrics"></dl>
+  <header>
+    <h1>.all<span>/</span></h1>
+    <div class="metrics" id="metrics"></div>
+  </header>
   <p class="note" id="metrics-note"></p>
-  <h2>Tree</h2>
-  <div id="tree"></div>
-  <h2>History</h2>
-  <ul class="history" id="history"></ul>
+  <main>
+    <section>
+      <h2>Versions</h2>
+      <div class="pane" id="git-graph"></div>
+    </section>
+    <section>
+      <h2>By tree</h2>
+      <div class="pane" id="file-tree"></div>
+    </section>
+  </main>
   <script>
     const PREVIEW_LIMIT = 8 * 1024;
+    const SUTURE = "#ff5a36";
+    const OXIDE = "#7eb8a8";
+    const PAPER = "#e8edd4";
+    const MUTED = "#8aa090";
+    const CABINET = "#14221c";
+    const LANE_COLORS = ["#ff5a36", "#7eb8a8", "#e8edd4", "#c4a35a", "#d98b6a", "#8ab4f8"];
 
     const METRIC_LABELS = {
-      all_bytes: { label: ".all/ size", unit: "bytes" },
-      snapshot_part_bytes: { label: "Snapshot parts", unit: "bytes" },
-      naive_full_copy_bytes: { label: "Naive full-copy size", unit: "bytes" },
-      model_cache_hits: { label: "Model cache hits", unit: "hits" },
-      view_cache_hits: { label: "View cache hits", unit: "hits" },
-      estimated_tokens_served: { label: "Tokens served (from access log)", unit: "tokens" },
-      estimated_dump_tokens: {
-        label: "Dump tokens (lower bound)",
-        unit: "tokens",
-      },
+      all_bytes: { label: ".all size", unit: "B" },
+      snapshot_part_bytes: { label: "snapshot parts", unit: "B" },
+      naive_full_copy_bytes: { label: "naive copies", unit: "B" },
+      model_cache_hits: { label: "model hits", unit: "" },
+      view_cache_hits: { label: "view hits", unit: "" },
+      estimated_tokens_served: { label: "tokens served", unit: "" },
+      estimated_dump_tokens: { label: "dump tokens (floor)", unit: "" },
     };
 
+    function svgEl(name, attrs) {
+      const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+      for (const [key, value] of Object.entries(attrs || {})) {
+        el.setAttribute(key, value);
+      }
+      return el;
+    }
+
     function formatMetric(value, unit) {
-      return String(value) + " " + unit;
+      return unit ? String(value) + " " + unit : String(value);
     }
 
     function formatBytes(n) {
+      if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+      if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
       return String(n) + " B";
     }
 
+    function fileStem(path) {
+      const parts = path.split("/").filter(Boolean);
+      return parts[parts.length - 1] || path;
+    }
+
+    function laneColor(index) {
+      return LANE_COLORS[index % LANE_COLORS.length];
+    }
+
     function renderMetrics(metrics) {
-      const dl = document.getElementById("metrics");
-      dl.innerHTML = "";
+      const root = document.getElementById("metrics");
+      root.innerHTML = "";
       const keys = [
         "all_bytes",
         "snapshot_part_bytes",
@@ -106,70 +209,336 @@
       for (const key of keys) {
         if (!(key in metrics)) continue;
         const meta = METRIC_LABELS[key] || { label: key, unit: "" };
-        const dt = document.createElement("dt");
-        dt.textContent = meta.label;
-        const dd = document.createElement("dd");
-        dd.textContent = formatMetric(metrics[key], meta.unit);
-        dl.appendChild(dt);
-        dl.appendChild(dd);
+        const span = document.createElement("span");
+        const value = key.indexOf("bytes") >= 0
+          ? formatBytes(metrics[key])
+          : formatMetric(metrics[key], meta.unit);
+        const strong = document.createElement("b");
+        strong.textContent = value;
+        span.appendChild(strong);
+        span.appendChild(document.createTextNode(" " + meta.label));
+        root.appendChild(span);
       }
-      const note = document.getElementById("metrics-note");
-      note.textContent =
+      document.getElementById("metrics-note").textContent =
         "Dump tokens are an estimate: compressed source size / 4 (lower bound; packages are not unzipped).";
     }
 
-    function renderNode(node) {
-      const li = document.createElement("li");
-      const label = document.createElement("span");
-      label.textContent = node.name;
-      const bytes = document.createElement("span");
-      bytes.className = "bytes";
-      bytes.textContent = formatBytes(node.bytes);
-      if (node.children && node.children.length > 0) {
-        const details = document.createElement("details");
-        const summary = document.createElement("summary");
-        summary.appendChild(label);
-        summary.appendChild(bytes);
-        details.appendChild(summary);
-        const ul = document.createElement("ul");
-        ul.className = "tree";
-        for (const child of node.children) {
-          ul.appendChild(renderNode(child));
-        }
-        details.appendChild(ul);
-        li.appendChild(details);
-      } else {
-        li.appendChild(label);
-        li.appendChild(bytes);
-      }
-      return li;
-    }
-
-    function renderTree(tree) {
-      const root = document.getElementById("tree");
+    function renderGitGraph(history) {
+      const root = document.getElementById("git-graph");
       root.innerHTML = "";
-      const ul = document.createElement("ul");
-      ul.className = "tree";
-      ul.appendChild(renderNode(tree));
-      root.appendChild(ul);
-    }
+      if (!history || history.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "No versions yet. Apply an edit and this graph grows like git log.";
+        root.appendChild(empty);
+        return;
+      }
 
-    function renderHistory(history) {
-      const ul = document.getElementById("history");
-      ul.innerHTML = "";
+      const lanes = [];
       for (const entry of history) {
-        const li = document.createElement("li");
+        if (!lanes.includes(entry.path)) lanes.push(entry.path);
+      }
+      const timeline = history.slice().sort(function (a, b) {
+        if (a.timestamp !== b.timestamp) return b.timestamp.localeCompare(a.timestamp);
+        if (a.path !== b.path) return a.path.localeCompare(b.path);
+        return b.version - a.version;
+      });
+
+      const laneW = 22;
+      const rowH = 38;
+      const left = 22;
+      const top = 36;
+      const labelX = left + lanes.length * laneW + 18;
+      const width = Math.max(420, labelX + 420);
+      const height = top + timeline.length * rowH + 16;
+      const svg = svgEl("svg", {
+        viewBox: "0 0 " + width + " " + height,
+        width: String(width),
+        height: String(height),
+        role: "img",
+        "aria-label": "Git-style version graph, one lane per tracked file",
+      });
+
+      lanes.forEach(function (path, index) {
+        const x = left + index * laneW;
+        const label = svgEl("text", {
+          x: String(x),
+          y: "16",
+          fill: laneColor(index),
+          "font-size": "9",
+          "text-anchor": "middle",
+          "font-family": "ui-monospace, monospace",
+        });
+        const stem = fileStem(path);
+        label.textContent = stem.length > 8 ? stem.slice(0, 7) + "…" : stem;
+        svg.appendChild(label);
+      });
+
+      const pos = {};
+      timeline.forEach(function (entry, row) {
+        pos[entry.path + "@" + entry.version] = {
+          x: left + lanes.indexOf(entry.path) * laneW,
+          y: top + row * rowH,
+          entry: entry,
+        };
+      });
+
+      lanes.forEach(function (path, index) {
+        const rows = timeline.filter(function (entry) { return entry.path === path; });
+        if (rows.length === 0) return;
+        const first = pos[path + "@" + rows[0].version];
+        const last = pos[path + "@" + rows[rows.length - 1].version];
+        const rail = svgEl("line", {
+          x1: String(first.x),
+          y1: String(first.y),
+          x2: String(last.x),
+          y2: String(last.y),
+          stroke: laneColor(index),
+          "stroke-width": "1.5",
+          "stroke-dasharray": "3 6",
+          "stroke-linecap": "round",
+          opacity: "0.55",
+        });
+        svg.appendChild(rail);
+      });
+
+      timeline.forEach(function (entry) {
+        const here = pos[entry.path + "@" + entry.version];
+        if (entry.parent) {
+          const parent = pos[entry.path + "@" + entry.parent];
+          if (parent) {
+            const edge = svgEl("line", {
+              x1: String(here.x),
+              y1: String(here.y),
+              x2: String(parent.x),
+              y2: String(parent.y),
+              stroke: laneColor(lanes.indexOf(entry.path)),
+              "stroke-width": "2",
+              "stroke-dasharray": "3 5",
+              "stroke-linecap": "round",
+            });
+            svg.appendChild(edge);
+          }
+        }
+        if (entry.revert_of) {
+          const origin = pos[entry.path + "@" + entry.revert_of];
+          if (origin) {
+            const midX = here.x + 14;
+            const curve = svgEl("path", {
+              d: "M " + here.x + " " + here.y + " C " + midX + " " + here.y + ", " +
+                midX + " " + origin.y + ", " + origin.x + " " + origin.y,
+              fill: "none",
+              stroke: SUTURE,
+              "stroke-width": "1.5",
+              "stroke-dasharray": "2 4",
+            });
+            svg.appendChild(curve);
+          }
+        }
+      });
+
+      const heads = {};
+      timeline.forEach(function (entry) {
+        if (!(entry.path in heads)) heads[entry.path] = entry.version;
+      });
+
+      timeline.forEach(function (entry) {
+        const here = pos[entry.path + "@" + entry.version];
+        const color = laneColor(lanes.indexOf(entry.path));
+        const isHead = heads[entry.path] === entry.version;
+        const group = svgEl("g", {
+          class: "hit",
+          tabindex: "0",
+          role: "button",
+          "data-path": entry.path,
+        });
+        const title = svgEl("title");
+        title.textContent = entry.path + " v" + entry.version + " — " + entry.summary;
+        group.appendChild(title);
+        const dot = svgEl("circle", {
+          cx: String(here.x),
+          cy: String(here.y),
+          r: isHead ? "7" : "5.5",
+          fill: CABINET,
+          stroke: isHead ? SUTURE : color,
+          "stroke-width": isHead ? "2.5" : "2",
+          class: isHead ? "head-dot" : "",
+        });
+        group.appendChild(dot);
         const summary = entry.summary.length > PREVIEW_LIMIT
           ? entry.summary.slice(0, PREVIEW_LIMIT) + "…"
           : entry.summary;
-        li.textContent = entry.path + " v" + entry.version + " (" + entry.op_count + " ops): " + summary;
-        ul.appendChild(li);
+        const label = svgEl("text", {
+          class: "commit-label",
+          x: String(labelX),
+          y: String(here.y + 4),
+          fill: PAPER,
+          "font-size": "12",
+          "font-family": "ui-monospace, monospace",
+        });
+        const ops = entry.op_count === 1 ? "1 op" : entry.op_count + " ops";
+        label.textContent = "v" + String(entry.version).padStart(3, "0") +
+          "  " + fileStem(entry.path) + "  " + ops + "  " + summary;
+        group.appendChild(label);
+        group.addEventListener("click", function () { highlightPath(entry.path); });
+        group.addEventListener("keydown", function (event) {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            highlightPath(entry.path);
+          }
+        });
+        svg.appendChild(group);
+      });
+
+      root.appendChild(svg);
+    }
+
+    function flattenTree(node, depth, parent, rows) {
+      rows.push({ node: node, depth: depth, parent: parent, index: rows.length });
+      const children = node.children || [];
+      for (const child of children) {
+        flattenTree(child, depth + 1, node, rows);
       }
-      if (history.length === 0) {
-        const li = document.createElement("li");
-        li.textContent = "(none)";
-        ul.appendChild(li);
+      return rows;
+    }
+
+    function nodeKind(node) {
+      if (node.children && node.children.length > 0) {
+        if (node.name === "cache") return "cache";
+        if (node.name === "state") return "state";
+        return "dir";
       }
+      return "file";
+    }
+
+    function nodeFill(kind) {
+      if (kind === "state") return SUTURE;
+      if (kind === "cache") return OXIDE;
+      if (kind === "dir") return "none";
+      return PAPER;
+    }
+
+    function nodeStroke(kind) {
+      if (kind === "state") return SUTURE;
+      if (kind === "cache") return OXIDE;
+      return PAPER;
+    }
+
+    function renderFileTree(tree) {
+      const root = document.getElementById("file-tree");
+      root.innerHTML = "";
+      if (!tree) {
+        const empty = document.createElement("p");
+        empty.className = "empty";
+        empty.textContent = "No .all/ tree yet. Run dotall init in this workspace.";
+        root.appendChild(empty);
+        return;
+      }
+
+      const rows = flattenTree(tree, 0, null, []);
+      const colW = 22;
+      const rowH = 26;
+      const left = 18;
+      const top = 18;
+      const labelPad = 14;
+      const maxLabel = rows.reduce(function (max, row) {
+        return Math.max(max, row.node.name.length);
+      }, 8);
+      const width = Math.max(360, left + 8 * colW + maxLabel * 8 + 80);
+      const height = top + rows.length * rowH + 12;
+      const svg = svgEl("svg", {
+        viewBox: "0 0 " + width + " " + height,
+        width: String(width),
+        height: String(height),
+        role: "img",
+        "aria-label": "Visual .all directory tree",
+      });
+
+      const pos = rows.map(function (row) {
+        return {
+          x: left + row.depth * colW,
+          y: top + row.index * rowH,
+          row: row,
+        };
+      });
+
+      rows.forEach(function (row, index) {
+        if (!row.parent) return;
+        const child = pos[index];
+        const parentIndex = rows.findIndex(function (candidate) {
+          return candidate.node === row.parent;
+        });
+        const parent = pos[parentIndex];
+        const elbow = svgEl("path", {
+          d: "M " + parent.x + " " + parent.y +
+            " V " + child.y +
+            " H " + child.x,
+          fill: "none",
+          stroke: MUTED,
+          "stroke-width": "1.25",
+          "stroke-dasharray": "2 5",
+          "stroke-linecap": "round",
+        });
+        svg.appendChild(elbow);
+      });
+
+      pos.forEach(function (item) {
+        const kind = nodeKind(item.row.node);
+        const group = svgEl("g", {
+          class: "hit tree-node",
+          tabindex: "0",
+          role: "treeitem",
+          "data-path": item.row.node.path || item.row.node.name,
+        });
+        const title = svgEl("title");
+        title.textContent = (item.row.node.path || item.row.node.name) +
+          " — " + formatBytes(item.row.node.bytes || 0);
+        group.appendChild(title);
+        const r = kind === "file" ? 3.5 : 5.5;
+        const stroke = nodeStroke(kind);
+        const dot = svgEl("circle", {
+          cx: String(item.x),
+          cy: String(item.y),
+          r: String(r),
+          fill: nodeFill(kind),
+          stroke: stroke,
+          "stroke-width": "1.6",
+          "data-stroke": stroke,
+        });
+        group.appendChild(dot);
+        const label = svgEl("text", {
+          class: "node-label",
+          x: String(item.x + labelPad),
+          y: String(item.y + 4),
+          fill: kind === "state" ? SUTURE : PAPER,
+          "font-size": "12",
+          "font-family": "ui-monospace, monospace",
+        });
+        const name = item.row.index === 0 ? ".all/" : item.row.node.name;
+        label.textContent = name + "  " + formatBytes(item.row.node.bytes || 0);
+        group.appendChild(label);
+        svg.appendChild(group);
+      });
+
+      root.appendChild(svg);
+    }
+
+    function highlightPath(path) {
+      const needle = path.replace(/\\/g, "/");
+      const nodes = document.querySelectorAll(".tree-node");
+      nodes.forEach(function (node) {
+        const nodePath = (node.getAttribute("data-path") || "").replace(/\\/g, "/");
+        const hit = nodePath === needle ||
+          nodePath.indexOf("/" + needle) >= 0 ||
+          nodePath.indexOf(needle) >= 0;
+        const circle = node.querySelector("circle");
+        if (!circle) return;
+        circle.setAttribute("stroke-width", hit ? "3" : "1.6");
+        circle.setAttribute(
+          "stroke",
+          hit ? SUTURE : (circle.getAttribute("data-stroke") || MUTED)
+        );
+      });
     }
 
     async function load() {
@@ -184,11 +553,15 @@
         const metrics = await metricsRes.json();
         const payload = await treeRes.json();
         renderMetrics(metrics);
-        renderTree(payload.tree);
-        renderHistory(payload.history || []);
+        renderGitGraph(payload.history || []);
+        renderFileTree(payload.tree);
       } catch (err) {
-        const dl = document.getElementById("metrics");
-        dl.innerHTML = "<dt class='err'>error</dt><dd class='err'>" + String(err) + "</dd>";
+        const metrics = document.getElementById("metrics");
+        metrics.replaceChildren();
+        const span = document.createElement("span");
+        span.className = "err";
+        span.textContent = String(err);
+        metrics.appendChild(span);
       }
     }
 

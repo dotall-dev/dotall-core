@@ -77,4 +77,12 @@ fn viz_serves_tree_and_metrics() {
         html.contains("lower bound") || html.contains("compressed source size / 4"),
         "HTML should label dump tokens as a lower-bound estimate"
     );
+    assert!(
+        html.contains("id=\"git-graph\""),
+        "HTML must draw a git-style history graph"
+    );
+    assert!(
+        html.contains("id=\"file-tree\""),
+        "HTML must draw a visual .all/ file tree"
+    );
 }
