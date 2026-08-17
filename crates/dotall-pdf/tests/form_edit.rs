@@ -585,6 +585,88 @@ fn set_form_field_readonly_toggles_ff_and_blocks_value_edits() {
 }
 
 #[test]
+fn set_form_field_required_toggles_ff_and_surfaces_in_inspect() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let name_field = model
+        .payload
+        .get("fields")
+        .and_then(|fields| fields.as_array())
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "Name"))
+        .expect("Name");
+    assert_eq!(name_field["required"], false);
+
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_required".into(),
+                payload: serde_json::json!({ "name": "Name", "required": true }),
+            }],
+        )
+        .expect("validate required");
+    let patched = handler.apply_edit(&path, &edit).expect("apply required");
+    fs::write(&path, &patched.bytes).expect("rewrite");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(name.required);
+    assert_eq!(edit.semantic_diff[0].change, "set_form_field_required");
+
+    let model = handler.parse(&path).expect("parse after");
+    let inspection = handler.inspect(&model).expect("inspect");
+    let inspect_name = inspection.summary["fields"]
+        .as_array()
+        .expect("fields")
+        .iter()
+        .find(|field| field["name"] == "Name")
+        .expect("Name in inspect");
+    assert_eq!(inspect_name["required"], true);
+
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field_required".into(),
+                payload: serde_json::json!({ "name": "Name", "required": false }),
+            }],
+        )
+        .expect("validate clear required");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let final_doc = parse_pdf_bytes(&cleared.bytes).expect("reparse");
+    let name = final_doc
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert!(!name.required);
+}
+
+#[test]
+fn capabilities_advertise_set_form_field_required() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_form_field_required"),
+        "capabilities must advertise set_form_field_required"
+    );
+}
+
+#[test]
 fn capabilities_advertise_set_form_field_readonly() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("form.pdf");

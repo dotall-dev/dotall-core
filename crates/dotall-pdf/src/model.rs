@@ -50,4 +50,6 @@ pub struct PdfFieldModel {
     pub options: Vec<String>,
     pub page: Option<u32>,
     pub read_only: bool,
+    #[serde(default)]
+    pub required: bool,
 }

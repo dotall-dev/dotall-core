@@ -162,6 +162,7 @@ fn walk_field(
         .and_then(|object| object.as_i64().ok())
         .unwrap_or(0);
     let read_only = flags & 1 == 1;
+    let required = flags & 2 == 2;
     let export_values = collect_export_values(document, dict);
     let options = collect_choice_options(document, dict);
     if let Some(field_type) = field_type.clone() {
@@ -174,6 +175,7 @@ fn walk_field(
             options,
             page: None,
             read_only,
+            required,
         });
     }
     if let Ok(kids) = dict.get(b"Kids") {
