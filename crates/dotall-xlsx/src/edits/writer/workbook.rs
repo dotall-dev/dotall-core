@@ -88,6 +88,17 @@ pub(super) fn add_sheet(package: &[u8], name: &str, after: Option<&str>) -> Resu
     })
 }
 
+/// Create or update a workbook-scoped defined name. Patches only `xl/workbook.xml`.
+pub(super) fn define_name(package: &[u8], name: &str, formula: &str) -> Result<PackagePatch> {
+    let workbook = entry_bytes(package, "xl/workbook.xml")?;
+    let patched = upsert_defined_name(&workbook, name, formula)?;
+    Ok(PackagePatch {
+        replacements: BTreeMap::from([("xl/workbook.xml".into(), patched)]),
+        additions: BTreeMap::new(),
+        removals: BTreeSet::new(),
+    })
+}
+
 pub(super) fn rename_sheet(package: &[u8], from: &str, to: &str) -> Result<PackagePatch> {
     let workbook = entry_bytes(package, "xl/workbook.xml")?;
     let sheets = sheets(&workbook)?;
@@ -543,6 +554,90 @@ fn formula_cells_referencing_sheet(xml: &[u8], sheet: &str) -> Result<Vec<String
         cursor = cell_end;
     }
     Ok(references)
+}
+
+fn upsert_defined_name(xml: &[u8], name: &str, formula: &str) -> Result<Vec<u8>> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| writer_error(format!("workbook XML is not UTF-8: {error}")))?;
+    let escaped_name = escape_xml(name);
+    let escaped_formula = escape_xml(formula);
+    let tag = format!(r#"<definedName name="{escaped_name}">{escaped_formula}</definedName>"#);
+
+    if let Some((open_start, _open_end, close_end)) = find_defined_name(text, name)? {
+        return Ok(format!("{}{}{}", &text[..open_start], tag, &text[close_end..]).into_bytes());
+    }
+
+    if let Some(container_end) = find_defined_names_close(text)? {
+        return Ok(format!(
+            "{}{}{}",
+            &text[..container_end],
+            tag,
+            &text[container_end..]
+        )
+        .into_bytes());
+    }
+
+    let sheets_close = text
+        .find("</sheets>")
+        .map(|offset| offset + "</sheets>".len())
+        .ok_or_else(|| writer_error("workbook XML is missing </sheets>"))?;
+    Ok(format!(
+        "{}<definedNames>{}</definedNames>{}",
+        &text[..sheets_close],
+        tag,
+        &text[sheets_close..]
+    )
+    .into_bytes())
+}
+
+fn find_defined_name(text: &str, name: &str) -> Result<Option<(usize, usize, usize)>> {
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find("<definedName") {
+        let start = cursor + offset;
+        if text[start + "<definedName".len()..].starts_with('s') {
+            cursor = start + "<definedName".len();
+            continue;
+        }
+        let open_end = text[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| writer_error("unterminated defined name"))?;
+        let open_tag = &text[start..open_end];
+        if open_tag.ends_with("/>") {
+            cursor = open_end;
+            continue;
+        }
+        let close = text[open_end..]
+            .find("</definedName>")
+            .map(|offset| open_end + offset)
+            .ok_or_else(|| writer_error("unterminated defined name"))?;
+        let close_end = close + "</definedName>".len();
+        if tag_attribute(open_tag, "name")
+            .as_deref()
+            .is_some_and(|existing| existing.eq_ignore_ascii_case(name))
+        {
+            return Ok(Some((start, open_end, close_end)));
+        }
+        cursor = close_end;
+    }
+    Ok(None)
+}
+
+fn find_defined_names_close(text: &str) -> Result<Option<usize>> {
+    let Some(start) = text.find("<definedNames") else {
+        return Ok(None);
+    };
+    let open_end = text[start..]
+        .find('>')
+        .map(|offset| start + offset + 1)
+        .ok_or_else(|| writer_error("unterminated definedNames"))?;
+    if text[start..open_end].ends_with("/>") {
+        return Ok(None);
+    }
+    text[open_end..]
+        .find("</definedNames>")
+        .map(|offset| Some(open_end + offset))
+        .ok_or_else(|| writer_error("unterminated definedNames"))
 }
 
 fn defined_names_referencing_sheet(xml: &[u8], sheet: &str) -> Result<Vec<String>> {

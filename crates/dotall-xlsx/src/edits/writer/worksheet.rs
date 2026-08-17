@@ -29,7 +29,8 @@ pub(super) fn patch(
             | XlsxEditOp::UnmergeCells { .. }
             | XlsxEditOp::SetColumnWidth { .. }
             | XlsxEditOp::SetRowHeight { .. }
-            | XlsxEditOp::FreezePanes { .. } => {
+            | XlsxEditOp::FreezePanes { .. }
+            | XlsxEditOp::DefineName { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         })
@@ -134,7 +135,8 @@ pub(super) fn patch(
                 | XlsxEditOp::UnmergeCells { .. }
                 | XlsxEditOp::SetColumnWidth { .. }
                 | XlsxEditOp::SetRowHeight { .. }
-                | XlsxEditOp::FreezePanes { .. } => {
+                | XlsxEditOp::FreezePanes { .. }
+                | XlsxEditOp::DefineName { .. } => {
                     unreachable!("structural operations return before worksheet patching")
                 }
             };
@@ -162,7 +164,8 @@ pub(super) fn patch(
             | XlsxEditOp::UnmergeCells { .. }
             | XlsxEditOp::SetColumnWidth { .. }
             | XlsxEditOp::SetRowHeight { .. }
-            | XlsxEditOp::FreezePanes { .. } => {
+            | XlsxEditOp::FreezePanes { .. }
+            | XlsxEditOp::DefineName { .. } => {
                 unreachable!("structural operations return before worksheet patching")
             }
         };
@@ -290,7 +293,8 @@ fn render_new_cell(
         | XlsxEditOp::UnmergeCells { .. }
         | XlsxEditOp::SetColumnWidth { .. }
         | XlsxEditOp::SetRowHeight { .. }
-        | XlsxEditOp::FreezePanes { .. } => {
+        | XlsxEditOp::FreezePanes { .. }
+        | XlsxEditOp::DefineName { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     };
@@ -463,7 +467,8 @@ fn render_cell_parts(
         | XlsxEditOp::UnmergeCells { .. }
         | XlsxEditOp::SetColumnWidth { .. }
         | XlsxEditOp::SetRowHeight { .. }
-        | XlsxEditOp::FreezePanes { .. } => {
+        | XlsxEditOp::FreezePanes { .. }
+        | XlsxEditOp::DefineName { .. } => {
             unreachable!("structural operations return before worksheet patching")
         }
     }

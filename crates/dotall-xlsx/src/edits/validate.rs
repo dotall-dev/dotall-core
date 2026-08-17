@@ -62,6 +62,12 @@ pub fn validate(
     {
         return validate_freeze_panes_operations(model, operations);
     }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "define_name"))
+    {
+        return validate_define_name_operations(model, operations);
+    }
 
     let workbook = decode(model)?;
     let graph = build(&workbook);
@@ -119,6 +125,12 @@ pub fn validate_with_source(
         .any(|operation| matches!(operation.kind.as_str(), "freeze_panes"))
     {
         return validate_freeze_panes_operations(model, operations);
+    }
+    if operations
+        .iter()
+        .any(|operation| matches!(operation.kind.as_str(), "define_name"))
+    {
+        return validate_define_name_operations(model, operations);
     }
     if operations.iter().all(|operation| {
         !matches!(
@@ -739,6 +751,83 @@ fn validate_freeze_panes_operations(
     })
 }
 
+fn validate_define_name_operations(
+    model: &ArtifactEnvelope,
+    operations: &[SemanticOperation],
+) -> Result<ValidatedEdit> {
+    if operations.len() != 1 {
+        return Err(format_error(
+            "define_name edits cannot be combined with other operations",
+        ));
+    }
+    let workbook = decode(model)?;
+    let operation = &operations[0];
+    if operation.kind != "define_name" {
+        return Err(format_error("unsupported define_name edit"));
+    }
+    let name = operation
+        .payload
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| format_error("define_name requires a non-empty `name` field"))?
+        .to_owned();
+    let formula_raw = operation
+        .payload
+        .get("formula")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format_error("define_name requires a `formula` field"))?;
+    let formula = normalize_defined_name_formula(formula_raw)?;
+    let existing = workbook
+        .named_ranges
+        .iter()
+        .find(|range| range.name.eq_ignore_ascii_case(&name));
+    let canonical_name = existing
+        .map(|range| range.name.clone())
+        .unwrap_or_else(|| name.clone());
+    let before = existing.map(|range| range.formula.clone());
+    let element_id = existing
+        .map(|range| range.element_id.clone())
+        .unwrap_or_else(|| ids::named_range_id(&canonical_name, &formula, MODEL_SCHEMA_VERSION));
+
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "define_name".into(),
+            payload: serde_json::json!({
+                "name": canonical_name,
+                "formula": formula,
+                "element_id": element_id,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("name:{canonical_name}"),
+            element_id,
+            change: "define_name".into(),
+            before,
+            after: Some(formula),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: vec!["refs parsed; values not evaluated".into()],
+        },
+    })
+}
+
+fn normalize_defined_name_formula(formula: &str) -> Result<String> {
+    let trimmed = formula.trim();
+    let body = trimmed.strip_prefix('=').unwrap_or(trimmed).trim();
+    if body.is_empty() {
+        return Err(format_error(
+            "define_name requires a non-empty formula body",
+        ));
+    }
+    Ok(body.to_owned())
+}
+
 fn decode(model: &ArtifactEnvelope) -> Result<WorkbookModel> {
     if model.format_id != FORMAT_ID
         || model.schema_id != MODEL_SCHEMA_ID
@@ -1238,8 +1327,11 @@ fn build_semantic_diff(parsed: &[ParsedOperation]) -> Vec<SemanticChange> {
             | XlsxEditOp::UnmergeCells { .. }
             | XlsxEditOp::SetColumnWidth { .. }
             | XlsxEditOp::SetRowHeight { .. }
-            | XlsxEditOp::FreezePanes { .. } => {
-                unreachable!("sheet, merge, dimension, and freeze edits are validated separately")
+            | XlsxEditOp::FreezePanes { .. }
+            | XlsxEditOp::DefineName { .. } => {
+                unreachable!(
+                    "sheet, merge, dimension, freeze, and define_name edits are validated separately"
+                )
             }
         })
         .collect()
@@ -1346,8 +1438,11 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::UnmergeCells { .. }
         | XlsxEditOp::SetColumnWidth { .. }
         | XlsxEditOp::SetRowHeight { .. }
-        | XlsxEditOp::FreezePanes { .. } => {
-            unreachable!("sheet, merge, dimension, and freeze edits are validated separately")
+        | XlsxEditOp::FreezePanes { .. }
+        | XlsxEditOp::DefineName { .. } => {
+            unreachable!(
+                "sheet, merge, dimension, freeze, and define_name edits are validated separately"
+            )
         }
     }
 }

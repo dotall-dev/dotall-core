@@ -81,6 +81,11 @@ pub enum XlsxEditOp {
         /// Openpyxl-style freeze cell; `None` clears freeze panes.
         cell: Option<String>,
     },
+    DefineName {
+        name: String,
+        /// OOXML defined-name formula body (no leading `=`).
+        formula: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

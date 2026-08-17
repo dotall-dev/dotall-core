@@ -110,6 +110,10 @@ pub(crate) fn parse_validated_operations(
                 sheet: required_string(operation, "sheet")?,
                 cell: optional_string(operation, "cell")?,
             }),
+            "define_name" => Ok(XlsxEditOp::DefineName {
+                name: required_string(operation, "name")?,
+                formula: required_string(operation, "formula")?,
+            }),
             "set_range" => Err(invalid_operation(
                 "validated set_range operations must be expanded into cell edits",
             )),

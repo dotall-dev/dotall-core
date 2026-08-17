@@ -130,6 +130,13 @@ Freeze panes (surgical worksheet `sheetViews`; `null` or `A1` clears):
 { "kind": "freeze_panes", "payload": { "sheet": "Sheet1", "cell": "B2" } }
 ```
 
+Define or update a workbook-scoped named range (surgical `xl/workbook.xml` only;
+leading `=` on `formula` is optional and stripped):
+
+```json
+{ "kind": "define_name", "payload": { "name": "Rate", "formula": "Inputs!$B$3" } }
+```
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.

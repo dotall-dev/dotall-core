@@ -519,6 +519,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Surgically patches only the target worksheet sheetViews; other sheets stay byte-identical."
                 .into(),
         },
+        EditCapability {
+            operation: "define_name".into(),
+            schema_version: crate::edits::SCHEMA_VERSION,
+            description: "Create or update a workbook-scoped defined name formula.".into(),
+            example: json!({
+                "kind": "define_name",
+                "payload": { "name": "Rate", "formula": "Inputs!$B$3" }
+            }),
+            safety: "Surgically patches only xl/workbook.xml definedNames; worksheets and other parts stay byte-identical."
+                .into(),
+        },
     ]
 }
 

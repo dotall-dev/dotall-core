@@ -79,6 +79,19 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
     if let [XlsxEditOp::FreezePanes { sheet, cell }] = operations.as_slice() {
         return patch_freeze_panes(&original, sheet, cell.as_deref());
     }
+    if let [XlsxEditOp::DefineName { name, formula }] = operations.as_slice() {
+        let patch = workbook::define_name(&original, name, formula)?;
+        let bytes = rebuild_package(
+            &original,
+            &patch.replacements,
+            &patch.removals,
+            &patch.additions,
+        )?;
+        return Ok(PatchedOutput {
+            after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+            bytes,
+        });
+    }
     if let [XlsxEditOp::AddSheet { name, after }] = operations.as_slice() {
         let patch = workbook::add_sheet(&original, name, after.as_deref())?;
         let bytes = rebuild_package(
@@ -196,6 +209,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::SetColumnWidth { .. }
                 | XlsxEditOp::SetRowHeight { .. }
                 | XlsxEditOp::FreezePanes { .. }
+                | XlsxEditOp::DefineName { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {
@@ -223,7 +237,8 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
             | XlsxEditOp::UnmergeCells { .. }
             | XlsxEditOp::SetColumnWidth { .. }
             | XlsxEditOp::SetRowHeight { .. }
-            | XlsxEditOp::FreezePanes { .. } => {
+            | XlsxEditOp::FreezePanes { .. }
+            | XlsxEditOp::DefineName { .. } => {
                 unreachable!("structural operations return above")
             }
         };
