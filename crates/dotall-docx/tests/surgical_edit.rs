@@ -1093,6 +1093,124 @@ fn capabilities_advertise_set_paragraph_strikethrough() {
 }
 
 #[test]
+fn set_paragraph_vert_align_superscript_sets_wvert_align_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    let before = fixture::minimal_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_vert_align".into(),
+                payload: serde_json::json!({ "index": 1, "vert_align": "superscript" }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let document_xml = String::from_utf8(zip_entries(&patched.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        document_xml.contains(r#"<w:vertAlign w:val="superscript"/>"#),
+        "expected w:vertAlign superscript in document.xml: {document_xml}"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "set_paragraph_vert_align");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("superscript"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn set_paragraph_vert_align_subscript_and_clear() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_vert_align".into(),
+                payload: serde_json::json!({ "index": 1, "vert_align": "subscript" }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    let document_xml = String::from_utf8(zip_entries(&patched.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        document_xml.contains(r#"<w:vertAlign w:val="subscript"/>"#),
+        "expected w:vertAlign subscript: {document_xml}"
+    );
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_vert_align".into(),
+                payload: serde_json::json!({ "index": 1, "vert_align": null }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let document_xml = String::from_utf8(zip_entries(&cleared.bytes)["word/document.xml"].clone())
+        .expect("document xml");
+    assert!(
+        !document_xml.contains("w:vertAlign"),
+        "expected w:vertAlign cleared: {document_xml}"
+    );
+}
+
+#[test]
+fn set_paragraph_vert_align_rejects_invalid_value() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_vert_align".into(),
+                payload: serde_json::json!({ "index": 1, "vert_align": "baseline" }),
+            }],
+        )
+        .expect_err("invalid vert_align");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("vert_align")
+            || message.contains("superscript")
+            || message.contains("subscript"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_paragraph_vert_align() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_paragraph_vert_align"),
+        "capabilities must advertise set_paragraph_vert_align"
+    );
+}
+
+#[test]
 fn set_paragraph_underline_sets_wu_and_leaves_other_parts_byte_identical() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("memo.docx");

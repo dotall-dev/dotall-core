@@ -462,6 +462,20 @@ fn edit_capabilities() -> Vec<EditCapability> {
                     .into(),
         },
         EditCapability {
+            operation: "set_paragraph_vert_align".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear superscript/subscript (w:vertAlign) on all runs in a body/table paragraph."
+                    .into(),
+            example: json!({
+                "kind": "set_paragraph_vert_align",
+                "payload": { "index": 1, "vert_align": "superscript" }
+            }),
+            safety:
+                "Upserts w:vertAlign w:val=superscript|subscript (null clears). Patches only word/document.xml. Rejects tracked changes / SDT / fields."
+                    .into(),
+        },
+        EditCapability {
             operation: "replace_paragraph_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

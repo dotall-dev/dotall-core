@@ -188,6 +188,15 @@ Set or clear strikethrough on all runs in a body/table paragraph (`w:strike`):
 }
 ```
 
+Set or clear superscript/subscript on all runs in a body/table paragraph (`w:vertAlign`; `null` clears):
+
+```json
+{
+  "kind": "set_paragraph_vert_align",
+  "payload": { "index": 1, "vert_align": "superscript" }
+}
+```
+
 Find/replace a substring inside one body/table paragraph (rejects empty `find` / no match; first-run rewrite like `set_paragraph_text`):
 
 ```json

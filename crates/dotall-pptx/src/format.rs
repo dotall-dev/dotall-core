@@ -411,6 +411,18 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Upserts a:rPr strike=\"sngStrike\"/\"noStrike\" on each a:r in the shape txBody. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
         },
         EditCapability {
+            operation: "set_shape_vert_align".into(),
+            schema_version: SCHEMA_VERSION,
+            description:
+                "Set or clear superscript/subscript on all text runs inside a slide shape (a:rPr baseline)."
+                    .into(),
+            example: json!({
+                "kind": "set_shape_vert_align",
+                "payload": { "slide": "Slide 1", "shape": "Title", "vert_align": "superscript" }
+            }),
+            safety: "Upserts a:rPr baseline=\"30000\" (superscript) / \"-25000\" (subscript); null clears. Patches only the target slide part. Rejects graphicFrame/SmartArt/charts.".into(),
+        },
+        EditCapability {
             operation: "replace_shape_text".into(),
             schema_version: SCHEMA_VERSION,
             description:

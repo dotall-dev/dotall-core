@@ -1345,6 +1345,140 @@ fn capabilities_advertise_set_shape_strikethrough() {
     );
 }
 
+#[test]
+fn set_shape_vert_align_superscript_sets_baseline_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    let before = minimal_pptx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_vert_align".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "vert_align": "superscript",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let slide_xml = String::from_utf8(zip_entries(&patched.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        slide_xml.contains(r#"baseline="30000""#),
+        "expected a:rPr baseline=30000 for superscript, got: {slide_xml}"
+    );
+    assert_eq!(edit.semantic_diff[0].change, "set_shape_vert_align");
+    assert_eq!(edit.semantic_diff[0].after.as_deref(), Some("superscript"));
+    assert_untouched_entries_identical(&before, &patched.bytes, &["ppt/slides/slide1.xml"]);
+}
+
+#[test]
+fn set_shape_vert_align_subscript_and_clear() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let set = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_vert_align".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "vert_align": "subscript",
+                }),
+            }],
+        )
+        .expect("validate set");
+    let patched = handler.apply_edit(&path, &set).expect("apply set");
+    let slide_xml = String::from_utf8(zip_entries(&patched.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        slide_xml.contains(r#"baseline="-25000""#),
+        "expected baseline=-25000 for subscript, got: {slide_xml}"
+    );
+    fs::write(&path, &patched.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("parse");
+    let clear = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_vert_align".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "vert_align": null,
+                }),
+            }],
+        )
+        .expect("validate clear");
+    let cleared = handler.apply_edit(&path, &clear).expect("apply clear");
+    let slide_xml = String::from_utf8(zip_entries(&cleared.bytes)["ppt/slides/slide1.xml"].clone())
+        .expect("slide xml");
+    assert!(
+        !slide_xml.contains("baseline="),
+        "expected baseline cleared, got: {slide_xml}"
+    );
+}
+
+#[test]
+fn set_shape_vert_align_rejects_invalid_value() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let error = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_shape_vert_align".into(),
+                payload: serde_json::json!({
+                    "slide": "Slide 1",
+                    "shape": "Title",
+                    "vert_align": "baseline",
+                }),
+            }],
+        )
+        .expect_err("invalid vert_align");
+    let message = error.to_string().to_lowercase();
+    assert!(
+        message.contains("vert_align")
+            || message.contains("superscript")
+            || message.contains("subscript"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn capabilities_advertise_set_shape_vert_align() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("deck.pptx");
+    fs::write(&path, minimal_pptx()).expect("write fixture");
+    let handler = PptxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "set_shape_vert_align"),
+        "capabilities must advertise set_shape_vert_align"
+    );
+}
+
 fn assert_untouched_entries_identical(before: &[u8], after: &[u8], patched: &[&str]) {
     let before_entries = zip_entries(before);
     let after_entries = zip_entries(after);
