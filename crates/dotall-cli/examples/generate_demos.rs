@@ -61,6 +61,7 @@ fn write_financials(path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     revenue.write_formula_with_format(3, 1, "=B2+B3", &currency)?;
     revenue.write_string(4, 0, "Commission")?;
     revenue.write_formula_with_format(4, 1, "=B4*Inputs!B2", &currency)?;
+    revenue.autofilter(0, 0, 4, 1)?;
 
     workbook.define_name("Rate", "=Inputs!$B$2")?;
     workbook.save(path)?;

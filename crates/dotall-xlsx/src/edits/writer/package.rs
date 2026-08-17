@@ -247,7 +247,7 @@ pub(super) fn patch(source: &Path, edit: &ValidatedEdit) -> Result<PatchedOutput
                 | XlsxEditOp::DeleteName { .. }
                 | XlsxEditOp::HideSheet { .. }
                 | XlsxEditOp::SetTabColor { .. }
-            | XlsxEditOp::SetAutoFilter { .. }
+                | XlsxEditOp::SetAutoFilter { .. }
         )
     }) {
         return Err(DotallError::UnsupportedCapability {

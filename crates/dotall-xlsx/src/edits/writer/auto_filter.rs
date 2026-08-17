@@ -21,15 +21,38 @@ fn upsert_auto_filter(source: &str, reference: &str) -> Result<Vec<u8>> {
         output.push_str(&source[end..]);
         return Ok(output.into_bytes());
     }
-    let insertion = source
-        .find("</sheetData>")
-        .map(|offset| offset + "</sheetData>".len())
-        .ok_or_else(|| writer_error("worksheet XML is missing </sheetData>"))?;
+    let insertion =
+        sheet_data_end(source).ok_or_else(|| writer_error("worksheet XML is missing sheetData"))?;
     let mut output = String::with_capacity(source.len() + tag.len());
     output.push_str(&source[..insertion]);
     output.push_str(&tag);
     output.push_str(&source[insertion..]);
     Ok(output.into_bytes())
+}
+
+fn sheet_data_end(source: &str) -> Option<usize> {
+    if let Some(offset) = source.find("</sheetData>") {
+        return Some(offset + "</sheetData>".len());
+    }
+    // Self-closing <sheetData/> (or with attributes).
+    let mut cursor = 0;
+    let open = "<sheetData";
+    while let Some(rel) = source[cursor..].find(open) {
+        let start = cursor + rel;
+        let after = source.as_bytes().get(start + open.len()).copied()?;
+        if after != b' ' && after != b'>' && after != b'/' {
+            cursor = start + open.len();
+            continue;
+        }
+        let open_end = source[start..].find('>').map(|offset| start + offset + 1)?;
+        if source[start..open_end].ends_with("/>") {
+            return Some(open_end);
+        }
+        return source[open_end..]
+            .find("</sheetData>")
+            .map(|offset| open_end + offset + "</sheetData>".len());
+    }
+    None
 }
 
 fn clear_auto_filter(source: &str) -> Result<Vec<u8>> {
@@ -92,7 +115,11 @@ mod tests {
         let xml = br#"<worksheet><sheetData/><mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells></worksheet>"#;
         let patched = patch(xml, Some("A1:C3")).expect("upsert");
         let text = String::from_utf8(patched).expect("utf8");
-        assert!(text.contains(r#"</sheetData><autoFilter ref="A1:C3"/><mergeCells"#));
+        assert!(
+            text.contains(r#"<sheetData/><autoFilter ref="A1:C3"/><mergeCells"#)
+                || text.contains(r#"</sheetData><autoFilter ref="A1:C3"/><mergeCells"#),
+            "unexpected XML: {text}"
+        );
     }
 
     #[test]

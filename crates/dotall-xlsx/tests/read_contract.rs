@@ -127,6 +127,7 @@ fn format_handler_detects_xlsx_and_inspects_structure() {
             "delete_name",
             "hide_sheet",
             "set_tab_color",
+            "set_auto_filter",
         ]
     );
     assert_eq!(

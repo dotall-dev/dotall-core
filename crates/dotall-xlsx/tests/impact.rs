@@ -307,7 +307,7 @@ fn fixture_sheet(name: &str) -> SheetModel {
         merges: Vec::new(),
         freeze_panes: None,
         tab_color: None,
-                auto_filter: None,
+        auto_filter: None,
         cells: Vec::new(),
     }
 }

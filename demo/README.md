@@ -124,6 +124,16 @@ $DOTALL edit demo/financials.xlsx --ops-json \
   '[{"kind":"set_tab_color","payload":{"sheet":"Inputs","color":null}}]'
 $DOTALL apply demo/financials.xlsx --all
 
+# Wave 10: set_auto_filter on Revenue, then clear
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_auto_filter","payload":{"sheet":"Revenue","range":"A1:B5"}}]'
+$DOTALL apply demo/financials.xlsx --all
+$DOTALL inspect demo/financials.xlsx
+# expect sheets[].auto_filter A1:B5 for Revenue
+$DOTALL edit demo/financials.xlsx --ops-json \
+  '[{"kind":"set_auto_filter","payload":{"sheet":"Revenue","range":null}}]'
+$DOTALL apply demo/financials.xlsx --all
+
 $DOTALL history demo/financials.xlsx
 ```
 
@@ -206,9 +216,14 @@ $DOTALL apply demo/deck.pptx --all
 $DOTALL edit demo/deck.pptx --ops-json \
   '[{"kind":"set_shape_italic","payload":{"slide":"Slide 2","shape":"Title","italic":true}}]'
 $DOTALL apply demo/deck.pptx --all
+
+# Wave 10 — underline Title text (content-on-slide companion to bold/italic)
+$DOTALL edit demo/deck.pptx --ops-json \
+  '[{"kind":"set_shape_underline","payload":{"slide":"Slide 2","shape":"Title","underline":true}}]'
+$DOTALL apply demo/deck.pptx --all
 ```
 
-Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` patch only the target slide part.
+Note: after `add_slide` after Slide 1, former “Next Steps” becomes Slide 3; deleting Slide 3 leaves the blank Slide 2. Notes stay on the original title slide part. `move_slide` only rewrites `presentation.xml` order — slide/notes parts stay byte-identical. `add_textbox` / `delete_shape` / `rename_shape` / `set_shape_bold` / `set_shape_italic` / `set_shape_underline` patch only the target slide part.
 
 ---
 
@@ -282,6 +297,11 @@ $DOTALL apply demo/memo.docx --all
 # Wave 9 — paragraph italic (w:i on runs)
 $DOTALL edit demo/memo.docx --ops-json \
   '[{"kind":"set_paragraph_italic","payload":{"index":2,"italic":true}}]'
+$DOTALL apply demo/memo.docx --all
+
+# Wave 10 — paragraph underline (w:u on runs)
+$DOTALL edit demo/memo.docx --ops-json \
+  '[{"kind":"set_paragraph_underline","payload":{"index":2,"underline":true}}]'
 $DOTALL apply demo/memo.docx --all
 ```
 
@@ -376,6 +396,16 @@ $DOTALL edit demo/form.pdf --ops-json \
 $DOTALL apply demo/form.pdf --all
 $DOTALL read demo/form.pdf --selector-kind field --selector Name
 # expect Grace Hopper; Agree Yes
+
+# Wave 10 — lock Name (Ff ReadOnly), then unlock
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_readonly","payload":{"name":"Name","readonly":true}}]'
+$DOTALL apply demo/form.pdf --all
+$DOTALL inspect demo/form.pdf
+# expect fields[].read_only true for Name
+$DOTALL edit demo/form.pdf --ops-json \
+  '[{"kind":"set_form_field_readonly","payload":{"name":"Name","readonly":false}}]'
+$DOTALL apply demo/form.pdf --all
 ```
 
 ---

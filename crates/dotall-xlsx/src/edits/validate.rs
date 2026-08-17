@@ -1770,7 +1770,7 @@ fn operation_to_semantic(op: &XlsxEditOp) -> SemanticOperation {
         | XlsxEditOp::DeleteName { .. }
         | XlsxEditOp::HideSheet { .. }
         | XlsxEditOp::SetTabColor { .. }
-            | XlsxEditOp::SetAutoFilter { .. } => {
+        | XlsxEditOp::SetAutoFilter { .. } => {
             unreachable!(
                 "sheet, merge, dimension, freeze, and define_name edits are validated separately"
             )
@@ -1843,7 +1843,7 @@ mod tests {
             merges: Vec::new(),
             freeze_panes: None,
             tab_color: None,
-                auto_filter: None,
+            auto_filter: None,
             cells,
         }
     }
