@@ -1,24 +1,26 @@
 use std::fs;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::{DotallError, Result};
 use crate::pipeline::{CachedArtifact, CachedView};
+use crate::status::ObjectState;
 use crate::store::DotallStore;
 
 /// Workspace search request over cached `.all/` views and models.
 ///
 /// `query` is matched case-insensitively against cached view content and
-/// against `named_ranges` entries stored in cached models. `glob` filters the
-/// tracked paths that participate in the search; `*` matches a single path
-/// segment and `**` matches across segments.
+/// against string values in cached model payloads (including `named_ranges`).
+/// `glob` filters the tracked paths that participate in the search; `*` matches
+/// a single path segment and `**` matches across segments.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchRequest {
     pub query: String,
     pub glob: Option<String>,
 }
 
-/// One matching line from a cached view or named-range entry from a cached model.
+/// One matching line from a cached view or string entry from a cached model.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SearchHit {
     pub path: String,
@@ -36,14 +38,16 @@ pub struct SearchResults {
 }
 
 const SNIPPET_MAX: usize = 160;
+const MAX_HITS_PER_FILE: usize = 32;
 const SELECTOR_KIND_NAMED_RANGES: &str = "named_ranges";
 
 /// Searches cached `.all/` views and models for `request.query` without
 /// scanning ZIPs, source bytes, or anything under `state/`. Objects with
 /// neither a `cache/model/model.json` nor any `cache/views/*.json` are
-/// reported via `not_indexed`. When `request.glob` is set, tracked paths that
-/// do not match the glob are skipped entirely (never reported as
-/// `not_indexed`).
+/// reported via `not_indexed`. Stale or missing objects are also treated as
+/// `not_indexed` (their caches are not served). When `request.glob` is set,
+/// tracked paths that do not match the glob are skipped entirely (never
+/// reported as `not_indexed`).
 pub fn search_store(store: &DotallStore, request: &SearchRequest) -> Result<SearchResults> {
     let query = request.query.trim();
     if query.is_empty() {
@@ -65,6 +69,11 @@ pub fn search_store(store: &DotallStore, request: &SearchRequest) -> Result<Sear
         if let Some(pattern) = glob
             && !glob_matches(pattern, &status.path)
         {
+            continue;
+        }
+
+        if matches!(status.state, ObjectState::Stale | ObjectState::Missing) {
+            not_indexed.push(status.path.clone());
             continue;
         }
 
@@ -93,6 +102,8 @@ pub fn search_store(store: &DotallStore, request: &SearchRequest) -> Result<Sear
             continue;
         }
 
+        let mut remaining = MAX_HITS_PER_FILE;
+
         if model_path.is_file() {
             search_model(
                 &model_path,
@@ -100,16 +111,20 @@ pub fn search_store(store: &DotallStore, request: &SearchRequest) -> Result<Sear
                 &status.format_id,
                 &needle,
                 &mut hits,
+                &mut remaining,
             )?;
         }
 
-        if !views_dir.is_dir() {
+        if remaining == 0 || !views_dir.is_dir() {
             continue;
         }
 
         for entry in
             fs::read_dir(&views_dir).map_err(|source| DotallError::io(&views_dir, source))?
         {
+            if remaining == 0 {
+                break;
+            }
             let entry = entry.map_err(|source| DotallError::io(&views_dir, source))?;
             let file_type = entry
                 .file_type()
@@ -125,25 +140,28 @@ pub fn search_store(store: &DotallStore, request: &SearchRequest) -> Result<Sear
                 continue;
             }
 
-            let bytes = fs::read(&path).map_err(|source| DotallError::io(&path, source))?;
-            let view: CachedView =
-                serde_json::from_slice(&bytes).map_err(|source| DotallError::Serialization {
-                    context: format!("cached view at {}", path.display()),
-                    source,
-                })?;
-
-            let snippet = match matching_line(&view.response.content, &needle) {
-                Some(snippet) => snippet,
-                None => continue,
+            let bytes = match fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
+            let view: CachedView = match serde_json::from_slice(&bytes) {
+                Ok(view) => view,
+                Err(_) => continue,
             };
 
-            hits.push(SearchHit {
-                path: status.path.clone(),
-                format_id: status.format_id.clone(),
-                selector_kind: None,
-                selector: None,
-                snippet,
-            });
+            for snippet in matching_lines(&view.response.content, &needle) {
+                if remaining == 0 {
+                    break;
+                }
+                hits.push(SearchHit {
+                    path: status.path.clone(),
+                    format_id: status.format_id.clone(),
+                    selector_kind: None,
+                    selector: None,
+                    snippet,
+                });
+                remaining = remaining.saturating_sub(1);
+            }
         }
     }
 
@@ -156,7 +174,11 @@ fn search_model(
     format_id: &str,
     needle: &str,
     hits: &mut Vec<SearchHit>,
+    remaining: &mut usize,
 ) -> Result<()> {
+    if *remaining == 0 {
+        return Ok(());
+    }
     let bytes = fs::read(model_path).map_err(|source| DotallError::io(model_path, source))?;
     let cached: CachedArtifact =
         serde_json::from_slice(&bytes).map_err(|source| DotallError::Serialization {
@@ -164,36 +186,112 @@ fn search_model(
             source,
         })?;
 
-    let Some(named_ranges) = cached
-        .artifact
-        .payload
-        .get("named_ranges")
-        .and_then(|v| v.as_array())
-    else {
-        return Ok(());
-    };
-
-    for entry in named_ranges {
-        let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        let formula = entry.get("formula").and_then(|v| v.as_str()).unwrap_or("");
-        let haystack_name = name.to_ascii_lowercase();
-        let haystack_formula = formula.to_ascii_lowercase();
-        if !haystack_name.contains(needle) && !haystack_formula.contains(needle) {
-            continue;
-        }
-        let snippet = format!("{name} \u{2192} {formula}");
-        let snippet = truncate_snippet(&snippet);
-        hits.push(SearchHit {
-            path: status_path.to_string(),
-            format_id: format_id.to_string(),
-            selector_kind: Some(SELECTOR_KIND_NAMED_RANGES.to_string()),
-            selector: Some(name.to_string()),
-            snippet,
-        });
-    }
+    walk_model_value(
+        &cached.artifact.payload,
+        &[],
+        status_path,
+        format_id,
+        needle,
+        hits,
+        remaining,
+    );
     Ok(())
+}
+
+fn walk_model_value(
+    value: &Value,
+    path: &[&str],
+    status_path: &str,
+    format_id: &str,
+    needle: &str,
+    hits: &mut Vec<SearchHit>,
+    remaining: &mut usize,
+) {
+    if *remaining == 0 {
+        return;
+    }
+
+    if path.last() == Some(&"named_ranges")
+        && let Some(entries) = value.as_array()
+    {
+        for entry in entries {
+            if *remaining == 0 {
+                return;
+            }
+            push_named_range_hit(entry, status_path, format_id, needle, hits, remaining);
+        }
+        return;
+    }
+
+    match value {
+        Value::String(text) => {
+            if text.to_ascii_lowercase().contains(needle) {
+                hits.push(SearchHit {
+                    path: status_path.to_string(),
+                    format_id: format_id.to_string(),
+                    selector_kind: None,
+                    selector: None,
+                    snippet: truncate_snippet(text.trim()),
+                });
+                *remaining = remaining.saturating_sub(1);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                walk_model_value(item, path, status_path, format_id, needle, hits, remaining);
+                if *remaining == 0 {
+                    return;
+                }
+            }
+        }
+        Value::Object(map) => {
+            for (key, child) in map {
+                let mut child_path = path.to_vec();
+                child_path.push(key.as_str());
+                walk_model_value(
+                    child,
+                    &child_path,
+                    status_path,
+                    format_id,
+                    needle,
+                    hits,
+                    remaining,
+                );
+                if *remaining == 0 {
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_named_range_hit(
+    entry: &Value,
+    status_path: &str,
+    format_id: &str,
+    needle: &str,
+    hits: &mut Vec<SearchHit>,
+    remaining: &mut usize,
+) {
+    let Some(name) = entry.get("name").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let formula = entry.get("formula").and_then(|v| v.as_str()).unwrap_or("");
+    let haystack_name = name.to_ascii_lowercase();
+    let haystack_formula = formula.to_ascii_lowercase();
+    if !haystack_name.contains(needle) && !haystack_formula.contains(needle) {
+        return;
+    }
+    let snippet = truncate_snippet(&format!("{name} \u{2192} {formula}"));
+    hits.push(SearchHit {
+        path: status_path.to_string(),
+        format_id: format_id.to_string(),
+        selector_kind: Some(SELECTOR_KIND_NAMED_RANGES.to_string()),
+        selector: Some(name.to_string()),
+        snippet,
+    });
+    *remaining = remaining.saturating_sub(1);
 }
 
 fn truncate_snippet(value: &str) -> String {
@@ -204,14 +302,14 @@ fn truncate_snippet(value: &str) -> String {
     }
 }
 
-fn matching_line(content: &str, needle: &str) -> Option<String> {
+fn matching_lines(content: &str, needle: &str) -> Vec<String> {
+    let mut lines = Vec::new();
     for line in content.lines() {
         if line.to_ascii_lowercase().contains(needle) {
-            let trimmed = line.trim();
-            return Some(truncate_snippet(trimmed));
+            lines.push(truncate_snippet(line.trim()));
         }
     }
-    None
+    lines
 }
 
 /// Matches a glob pattern against a `/`-separated relative path.
@@ -280,27 +378,41 @@ fn segment_matches(pattern: &str, segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        SELECTOR_KIND_NAMED_RANGES, SNIPPET_MAX, glob_matches, matching_line, segment_matches,
+        SELECTOR_KIND_NAMED_RANGES, SNIPPET_MAX, glob_matches, matching_lines, segment_matches,
     };
 
     #[test]
-    fn matching_line_finds_case_insensitive_match_and_trims() {
-        let snippet = matching_line("  Commission Rate is 10%  \n", "rate");
-        assert_eq!(snippet.as_deref(), Some("Commission Rate is 10%"));
+    fn matching_lines_finds_case_insensitive_match_and_trims() {
+        let snippets = matching_lines("  Commission Rate is 10%  \n", "rate");
+        assert_eq!(snippets, vec!["Commission Rate is 10%".to_string()]);
     }
 
     #[test]
-    fn matching_line_truncates_long_lines_to_snippet_max() {
+    fn matching_lines_returns_all_matches() {
+        let content = "Prior year channel mix stayed at 10%.\nQ3 commission rate: 10%.\nnope\n";
+        let snippets = matching_lines(content, "10%");
+        assert_eq!(
+            snippets,
+            vec![
+                "Prior year channel mix stayed at 10%.".to_string(),
+                "Q3 commission rate: 10%.".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn matching_lines_truncates_long_lines_to_snippet_max() {
         let long = "x".repeat(200);
         let line = format!("rate {long}");
-        let snippet = matching_line(&line, "rate").expect("snippet");
-        assert_eq!(snippet.len(), SNIPPET_MAX);
-        assert!(snippet.starts_with("rate "));
+        let snippets = matching_lines(&line, "rate");
+        assert_eq!(snippets.len(), 1);
+        assert_eq!(snippets[0].len(), SNIPPET_MAX);
+        assert!(snippets[0].starts_with("rate "));
     }
 
     #[test]
-    fn matching_line_returns_none_when_no_match() {
-        assert!(matching_line("no match here", "rate").is_none());
+    fn matching_lines_returns_empty_when_no_match() {
+        assert!(matching_lines("no match here", "rate").is_empty());
     }
 
     #[test]
