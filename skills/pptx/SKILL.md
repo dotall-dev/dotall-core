@@ -62,7 +62,7 @@ From the response, capture:
 - `edit_capabilities[]` — supported operations, example payloads, and safety notes.
 - `source_hash` — required for `dotall_edit` and `dotall_revert`.
 - `suggested_reads` — usually one `slide` selector per slide.
-- Inspect `summary.comments[]` / `summary.charts[]` when present (comments: slide, optional shape, author, text, element_id; charts: slide, title, element_id).
+- Inspect `summary.comments[]` / `summary.charts[]` / `summary.pictures[]` when present (comments: slide, optional shape, author, text, element_id; charts: slide, title, element_id; pictures: slide, name, part, element_id).
 
 v0 does **not** expose `dotall_deps` for presentations.
 
@@ -273,6 +273,22 @@ Insert a classic PowerPoint comment (ISO `commentAuthors` + `ppt/comments/commen
 
 `author` defaults to `"Dotall"`. `shape` is optional (anchors to a named text shape when present; otherwise slide-level). Rejects `set_comment` / `delete_comment` / `replace_comment`. Charts appear in inspect `summary.charts[]` (title/slide/element_id) but chart mutate (`set_chart_title`, rewriting `ppt/charts/*`) is rejected.
 
+Insert a PNG/JPEG picture onto a slide (new `ppt/media` part + `p:pic`). Existing media stays byte-identical:
+
+```json
+{
+  "kind": "insert_picture",
+  "payload": {
+    "slide": "Slide 1",
+    "bytes_base64": "<base64>",
+    "content_type": "image/png",
+    "name": "Logo"
+  }
+}
+```
+
+`content_type` defaults to `image/png` (`image/png` / `image/jpeg` only). Omit `name` to auto-name `Picture N`; rejects duplicate names on the slide. Rejects `replace_picture` / `delete_picture` / `set_picture`. Inspect lists pictures in `summary.pictures[]` (`element_id`, `slide`, `name`, `part`).
+
 Omit `after` on `add_slide` to append at the end. `delete_slide` rejects the sole remaining slide.
 `move_slide` uses a 0-based `to_index` (final position); rejects no-ops and single-slide decks.
 Omit `name` on `add_textbox` to auto-name `TextBox N`; rejects duplicate names.
@@ -301,6 +317,7 @@ Safety:
 - `set_table_cell_bold`: upserts `a:rPr b` on runs in the target table cell (`a:tc`); rejects out-of-range `row`/`col`. Other parts stay byte-identical.
 - `set_notes_text`: patches only the notes slide part; rejects slides without a notes part. First `a:t` is replaced; later runs cleared. Slide XML stays byte-identical.
 - `insert_comment`: append-only classic comments (`ppt/commentAuthors.xml`, `ppt/comments/commentN.xml`, slide `.rels`, Content_Types). Does not rewrite existing `p:cm` entries in place. Optional `shape` anchors via extLst; omit for slide-level. Rejects mutate of existing comments.
+- `insert_picture`: adds `ppt/media/imageN.png|jpeg`, slide image rel, Default png/jpeg in Content_Types, and splices `p:pic` into the slide `spTree` (1cm×1cm). Existing `ppt/media/*` stay byte-identical. Rejects mutate of existing pictures.
 - Charts: inspect/read only via `summary.charts[]`. Reject chart title/XML mutate.
 - `add_slide` / `delete_slide`: surgically update `presentation.xml`, `presentation.xml.rels`, and `[Content_Types].xml`; duplicate a blank slide template or remove the target slide part. Untouched slide/media parts stay byte-identical.
 - `move_slide`: reorders only `p:sldId` entries in `ppt/presentation.xml`. Slide parts, notes, rels, and Content_Types stay byte-identical.

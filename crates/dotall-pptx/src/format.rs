@@ -107,6 +107,14 @@ impl FormatHandler for PptxFormat {
                         "title": chart.title,
                     })
                 }).collect::<Vec<_>>(),
+                "pictures": presentation.pictures.iter().map(|picture| {
+                    json!({
+                        "element_id": picture.element_id,
+                        "slide": picture.slide,
+                        "name": picture.name,
+                        "part": picture.part,
+                    })
+                }).collect::<Vec<_>>(),
             }),
             capabilities: capabilities(),
             edit_capabilities: edit_capabilities(),
@@ -540,6 +548,21 @@ fn edit_capabilities() -> Vec<EditCapability> {
                 }
             }),
             safety: "Append-only: creates or appends ppt/comments/commentN.xml and updates commentAuthors, slide .rels, and Content_Types. Does not mutate existing comments. Charts are inspect-only.".into(),
+        },
+        EditCapability {
+            operation: "insert_picture".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Insert a PNG/JPEG picture onto a slide (new ppt/media part + p:pic).".into(),
+            example: json!({
+                "kind": "insert_picture",
+                "payload": {
+                    "slide": "Slide 1",
+                    "bytes_base64": "<base64>",
+                    "content_type": "image/png",
+                    "name": "Logo"
+                }
+            }),
+            safety: "Adds ppt/media/imageN.png|jpeg, a slide image relationship, Default png/jpeg in Content_Types, and splices p:pic into the slide spTree (1cm×1cm). Existing ppt/media/* stay byte-identical. Rejects replace/delete/set_picture.".into(),
         },
     ]
 }

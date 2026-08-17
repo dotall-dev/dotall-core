@@ -12,12 +12,12 @@ pub const FORMAT_ID: &str = "pptx";
 
 pub use fixture::{
     demo_deck_pptx, demo_q3_deck_pptx, minimal_pptx, minimal_pptx_with_media, pptx_two_text_shapes,
-    pptx_with_chart, pptx_with_comment, pptx_with_notes, pptx_with_table,
+    pptx_with_chart, pptx_with_comment, pptx_with_notes, pptx_with_png, pptx_with_table,
 };
 pub use format::PptxFormat;
 pub use model::{
-    ChartModel, CommentModel, PresentationModel, SCHEMA_ID, SCHEMA_VERSION, ShapeModel, SlideModel,
-    TableCellModel, TableModel,
+    ChartModel, CommentModel, PictureModel, PresentationModel, SCHEMA_ID, SCHEMA_VERSION,
+    ShapeModel, SlideModel, TableCellModel, TableModel,
 };
 pub use parser::parse_presentation_bytes;
 

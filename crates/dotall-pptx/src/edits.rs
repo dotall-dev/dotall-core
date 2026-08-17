@@ -31,6 +31,9 @@ const COMMENT_AUTHORS_CONTENT_TYPE: &str =
 const COMMENTS_CONTENT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.presentationml.comments+xml";
 
+const IMAGE_REL_TYPE: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+
 const SHAPE_ANCHOR_URI: &str = "{C0A1B2D3-E4F5-6789-ABCD-EF0123456789}";
 
 const EMPTY_COMMENT_AUTHORS: &[u8] = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:cmAuthorLst xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"></p:cmAuthorLst>"#;
@@ -81,15 +84,20 @@ pub fn validate(
         "replace_shape_text" => validate_replace_shape_text(model, operation),
         "replace_across_shapes" => validate_replace_across_shapes(model, operation),
         "insert_comment" => validate_insert_comment(model, operation),
+        "insert_picture" => validate_insert_picture(model, operation),
         "set_comment" | "delete_comment" | "replace_comment" => Err(format_error(format!(
             "rejected pptx edit `{}`: mutating existing comments is not supported; use insert_comment",
+            operation.kind
+        ))),
+        "set_picture" | "delete_picture" | "replace_picture" => Err(format_error(format!(
+            "rejected pptx edit `{}`: mutating existing pictures is not supported; use insert_picture",
             operation.kind
         ))),
         "set_chart_title" => Err(format_error(
             "rejected pptx edit `set_chart_title`: chart mutate is not supported (charts are inspect-only)",
         )),
         other => Err(format_error(format!(
-            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, replace_across_shapes, set_table_cell_text, set_table_cell_bold, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_bullet, set_shape_hyperlink, insert_comment, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
+            "unsupported pptx edit `{other}`; use set_shape_text, replace_shape_text, replace_across_shapes, set_table_cell_text, set_table_cell_bold, set_notes_text, set_shape_bold, set_shape_italic, set_shape_underline, set_shape_font_size, set_shape_font_name, set_shape_font_color, set_shape_highlight, set_shape_strikethrough, set_shape_vert_align, set_shape_caps, set_shape_bullet, set_shape_hyperlink, insert_comment, insert_picture, add_slide, delete_slide, move_slide, add_textbox, delete_shape, or rename_shape"
         ))),
     }
 }
@@ -1158,6 +1166,106 @@ fn validate_insert_comment(
     })
 }
 
+fn validate_insert_picture(
+    model: &PresentationModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let slide_ref = required_str(&operation.payload, "slide")?;
+    let bytes_base64 = required_str(&operation.payload, "bytes_base64")?;
+    let content_type = optional_str(&operation.payload, "content_type")?.unwrap_or("image/png");
+    let slide = selector::resolve_slide(model, slide_ref)
+        .ok_or_else(|| format_error(format!("slide `{slide_ref}` was not found")))?;
+    let extension = match content_type {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpeg",
+        other => {
+            return Err(format_error(format!(
+                "unsupported content_type `{other}`; use image/png or image/jpeg"
+            )));
+        }
+    };
+    let bytes = decode_base64_image(bytes_base64)?;
+    if bytes.is_empty() {
+        return Err(format_error("picture bytes must not be empty"));
+    }
+    let name = match optional_str(&operation.payload, "name")? {
+        Some(name) => {
+            if name_taken_on_slide(model, &slide.name, name) {
+                return Err(format_error(format!(
+                    "name `{name}` already exists on `{}`",
+                    slide.name
+                )));
+            }
+            name.to_owned()
+        }
+        None => {
+            let mut n = 1u32;
+            loop {
+                let candidate = format!("Picture {n}");
+                if !name_taken_on_slide(model, &slide.name, &candidate) {
+                    break candidate;
+                }
+                n = n.saturating_add(1);
+            }
+        }
+    };
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "insert_picture".into(),
+            payload: serde_json::json!({
+                "slide": slide.name,
+                "name": name,
+                "part_name": slide.part_name,
+                "content_type": content_type,
+                "extension": extension,
+                "bytes_base64": bytes_base64,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: format!("{}!{}", slide.name, name),
+            element_id: String::new(),
+            change: "insert_picture".into(),
+            before: None,
+            after: Some(name),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn name_taken_on_slide(model: &PresentationModel, slide_name: &str, name: &str) -> bool {
+    if model
+        .pictures
+        .iter()
+        .any(|picture| picture.slide == slide_name && picture.name == name)
+    {
+        return true;
+    }
+    let Some(slide) = model.slides.iter().find(|slide| slide.name == slide_name) else {
+        return false;
+    };
+    slide
+        .shapes
+        .iter()
+        .any(|shape| shape.name == name || shape.element_id == name)
+        || slide
+            .tables
+            .iter()
+            .any(|table| table.name == name || table.element_id == name)
+}
+
+fn decode_base64_image(encoded: &str) -> Result<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .map_err(|error| format_error(format!("invalid bytes_base64: {error}")))
+}
+
 pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput> {
     let operation = edit
         .operations
@@ -1495,6 +1603,15 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
             let author = required_str(&operation.payload, "author")?;
             let shape = optional_str(&operation.payload, "shape")?;
             insert_comment_patch(package, part_name, text, author, shape)?
+        }
+        "insert_picture" => {
+            let part_name = required_str(&operation.payload, "part_name")?;
+            let name = required_str(&operation.payload, "name")?;
+            let extension = required_str(&operation.payload, "extension")?;
+            let content_type = required_str(&operation.payload, "content_type")?;
+            let bytes_base64 = required_str(&operation.payload, "bytes_base64")?;
+            let bytes = decode_base64_image(bytes_base64)?;
+            insert_picture_patch(package, part_name, name, extension, content_type, &bytes)?
         }
         other => {
             return Err(format_error(format!(
@@ -2127,6 +2244,133 @@ fn insert_comment_patch(
         additions,
         removals: BTreeSet::new(),
     })
+}
+
+fn insert_picture_patch(
+    package: &[u8],
+    slide_part: &str,
+    name: &str,
+    extension: &str,
+    content_type: &str,
+    image_bytes: &[u8],
+) -> Result<PackagePatch> {
+    let mut replacements = BTreeMap::new();
+    let mut additions = BTreeMap::new();
+
+    let media_number = next_media_image_number(package)?;
+    let media_part = format!("ppt/media/image{media_number}.{extension}");
+    additions.insert(media_part.clone(), image_bytes.to_vec());
+
+    let slide_rels_name = slide_relationship_part(slide_part);
+    let slide_rels_exist = has_entry(package, &slide_rels_name)?;
+    let slide_rels_xml = if slide_rels_exist {
+        entry_bytes(package, &slide_rels_name)?
+    } else {
+        EMPTY_RELATIONSHIPS.to_vec()
+    };
+    let used = relationship_id_numbers(&slide_rels_xml)?;
+    let rid = format!("rId{}", lowest_unused_number(&used));
+    let target = format!("../media/image{media_number}.{extension}");
+    let patched_rels = insert_before_close(
+        &slide_rels_xml,
+        "Relationships",
+        &format!(r#"<Relationship Id="{rid}" Type="{IMAGE_REL_TYPE}" Target="{target}"/>"#),
+    )?;
+    if slide_rels_exist {
+        replacements.insert(slide_rels_name, patched_rels);
+    } else {
+        additions.insert(slide_rels_name, patched_rels);
+    }
+
+    let slide_xml = entry_bytes(package, slide_part)?;
+    replacements.insert(
+        slide_part.to_owned(),
+        patch_add_picture(&slide_xml, name, &rid)?,
+    );
+
+    let content_types = entry_bytes(package, "[Content_Types].xml")?;
+    let mut patched_types = content_types.clone();
+    if !content_type_has_default(&patched_types, extension)? {
+        patched_types = insert_before_close(
+            &patched_types,
+            "Types",
+            &format!(r#"<Default Extension="{extension}" ContentType="{content_type}"/>"#),
+        )?;
+    }
+    if patched_types.as_slice() != content_types.as_slice() {
+        replacements.insert("[Content_Types].xml".into(), patched_types);
+    }
+
+    Ok(PackagePatch {
+        replacements,
+        additions,
+        removals: BTreeSet::new(),
+    })
+}
+
+fn patch_add_picture(xml: &[u8], name: &str, rid: &str) -> Result<Vec<u8>> {
+    let source = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("slide XML is not UTF-8: {error}")))?;
+    let close = "</p:spTree>";
+    let position = source
+        .rfind(close)
+        .ok_or_else(|| format_error("slide is missing closing p:spTree"))?;
+    let shape_id = next_c_nv_pr_id(source);
+    let pic = format!(
+        concat!(
+            r#"<p:pic>"#,
+            r#"<p:nvPicPr>"#,
+            r#"<p:cNvPr id="{id}" name="{name}"/>"#,
+            r#"<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>"#,
+            r#"<p:nvPr/>"#,
+            r#"</p:nvPicPr>"#,
+            r#"<p:blipFill>"#,
+            r#"<a:blip r:embed="{rid}"/>"#,
+            r#"<a:stretch><a:fillRect/></a:stretch>"#,
+            r#"</p:blipFill>"#,
+            r#"<p:spPr>"#,
+            r#"<a:xfrm>"#,
+            r#"<a:off x="0" y="0"/>"#,
+            r#"<a:ext cx="914400" cy="914400"/>"#,
+            r#"</a:xfrm>"#,
+            r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#,
+            r#"</p:spPr>"#,
+            r#"</p:pic>"#
+        ),
+        id = shape_id,
+        name = xml_escape(name),
+        rid = xml_escape(rid)
+    );
+    Ok(format!("{}{}{}", &source[..position], pic, &source[position..]).into_bytes())
+}
+
+fn next_media_image_number(package: &[u8]) -> Result<u32> {
+    let mut archive = ZipArchive::new(Cursor::new(package))
+        .map_err(|error| format_error(format!("invalid PPTX package: {error}")))?;
+    let mut used = BTreeSet::new();
+    for index in 0..archive.len() {
+        let entry = archive
+            .by_index(index)
+            .map_err(|error| format_error(format!("cannot read ZIP entry: {error}")))?;
+        let name = entry.name();
+        if let Some(rest) = name.strip_prefix("ppt/media/image") {
+            let number = rest
+                .split('.')
+                .next()
+                .and_then(|value| value.parse::<u32>().ok());
+            if let Some(number) = number {
+                used.insert(number);
+            }
+        }
+    }
+    Ok(lowest_unused_number(&used))
+}
+
+fn content_type_has_default(xml: &[u8], extension: &str) -> Result<bool> {
+    let text = std::str::from_utf8(xml)
+        .map_err(|error| format_error(format!("Content_Types is not UTF-8: {error}")))?;
+    let needle = format!(r#"Extension="{extension}""#);
+    Ok(text.contains(&needle))
 }
 
 fn resolve_comments_part(

@@ -13,6 +13,8 @@ pub struct PresentationModel {
     pub comments: Vec<CommentModel>,
     #[serde(default)]
     pub charts: Vec<ChartModel>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pictures: Vec<PictureModel>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -67,4 +69,12 @@ pub struct ChartModel {
     pub element_id: String,
     pub slide: String,
     pub title: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PictureModel {
+    pub element_id: String,
+    pub slide: String,
+    pub name: String,
+    pub part: String,
 }

@@ -10,8 +10,8 @@ use zip::ZipArchive;
 use crate::FORMAT_ID;
 use crate::ids;
 use crate::model::{
-    ChartModel, CommentModel, PresentationModel, SCHEMA_VERSION, ShapeModel, SlideModel,
-    TableCellModel, TableModel,
+    ChartModel, CommentModel, PictureModel, PresentationModel, SCHEMA_VERSION, ShapeModel,
+    SlideModel, TableCellModel, TableModel,
 };
 
 pub fn parse_presentation(source: &Path) -> Result<PresentationModel> {
@@ -35,6 +35,7 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
     let mut slides = Vec::new();
     let mut comments = Vec::new();
     let mut charts = Vec::new();
+    let mut pictures = Vec::new();
     for (index, rid) in rids.into_iter().enumerate() {
         let target = targets
             .get(&rid)
@@ -62,6 +63,7 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
             &slide_xml,
             &slide_rel_targets,
         ));
+        pictures.extend(parse_slide_pictures(&name, &slide_xml, &slide_rel_targets));
 
         slides.push(SlideModel {
             element_id: ids::slide_id(&name, index as u32, SCHEMA_VERSION),
@@ -81,6 +83,7 @@ pub fn parse_presentation_bytes(package: &[u8]) -> Result<PresentationModel> {
         media_parts: media_part_names(&mut archive),
         comments,
         charts,
+        pictures,
     })
 }
 
@@ -477,6 +480,76 @@ fn chart_title(xml: &[u8]) -> String {
         buffer.clear();
     }
     texts.concat()
+}
+
+fn parse_slide_pictures(
+    slide_name: &str,
+    slide_xml: &[u8],
+    slide_rel_targets: &BTreeMap<String, (String, String)>,
+) -> Vec<PictureModel> {
+    let mut reader = Reader::from_reader(slide_xml);
+    reader.config_mut().trim_text(false);
+    let mut buffer = Vec::new();
+    let mut pictures = Vec::new();
+    let mut in_pic = false;
+    let mut name = String::new();
+    let mut embed_rid = None;
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Start(tag)) if tag.local_name().as_ref() == b"pic" => {
+                in_pic = true;
+                name.clear();
+                embed_rid = None;
+            }
+            Ok(Event::Empty(tag) | Event::Start(tag))
+                if in_pic && tag.local_name().as_ref() == b"cNvPr" =>
+            {
+                for attribute in tag.attributes().flatten() {
+                    if attribute.key.local_name().as_ref() == b"name" {
+                        name = String::from_utf8_lossy(&attribute.value).into_owned();
+                    }
+                }
+            }
+            Ok(Event::Empty(tag) | Event::Start(tag))
+                if in_pic && tag.local_name().as_ref() == b"blip" =>
+            {
+                for attribute in tag.attributes().flatten() {
+                    if attribute.key.local_name().as_ref() == b"embed" {
+                        embed_rid = Some(String::from_utf8_lossy(&attribute.value).into_owned());
+                    }
+                }
+            }
+            Ok(Event::End(tag)) if in_pic && tag.local_name().as_ref() == b"pic" => {
+                if let Some(rid) = embed_rid.take()
+                    && let Some((target, rel_type)) = slide_rel_targets.get(&rid)
+                    && rel_type.ends_with("/image")
+                {
+                    let part = resolve_slide_relative_target(target);
+                    let display_name = if name.is_empty() {
+                        format!("Picture {}", pictures.len() + 1)
+                    } else {
+                        name.clone()
+                    };
+                    pictures.push(PictureModel {
+                        element_id: ids::picture_id(
+                            slide_name,
+                            &display_name,
+                            &part,
+                            SCHEMA_VERSION,
+                        ),
+                        slide: slide_name.to_owned(),
+                        name: display_name,
+                        part,
+                    });
+                }
+                in_pic = false;
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    pictures
 }
 
 fn parse_shapes_and_tables(

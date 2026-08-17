@@ -46,6 +46,10 @@ pub fn chart_id(slide_name: &str, part_name: &str, schema_version: u32) -> Strin
     opaque_id("ch", schema_version, &[slide_name, part_name])
 }
 
+pub fn picture_id(slide_name: &str, name: &str, part: &str, schema_version: u32) -> String {
+    opaque_id("pic", schema_version, &[slide_name, name, part])
+}
+
 fn opaque_id(prefix: &str, schema_version: u32, components: &[&str]) -> String {
     let mut hasher = Hasher::new();
     hasher.update(b"pptx.presentation");
