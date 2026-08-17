@@ -170,6 +170,15 @@ Set or clear font color on all runs in a body/table paragraph (`w:color`; `null`
 }
 ```
 
+Set or clear highlight on all runs in a body/table paragraph (`w:highlight`; Word names like `yellow`; `null` clears):
+
+```json
+{
+  "kind": "set_paragraph_highlight",
+  "payload": { "index": 1, "color": "yellow" }
+}
+```
+
 Header / footer:
 
 ```json

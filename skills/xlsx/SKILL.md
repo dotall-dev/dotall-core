@@ -191,6 +191,25 @@ Set worksheet print orientation (`pageSetup`; `portrait` or `landscape`):
 
 Inspect surfaces `page_orientation` per sheet when present. Other worksheets stay byte-identical.
 
+Set worksheet print margins (`pageMargins` in inches; `header`/`footer` optional):
+
+```json
+{
+  "kind": "set_page_margins",
+  "payload": {
+    "sheet": "Revenue",
+    "left": 0.5,
+    "right": 0.5,
+    "top": 0.75,
+    "bottom": 0.75,
+    "header": 0.3,
+    "footer": 0.3
+  }
+}
+```
+
+Inspect surfaces `page_margins` per sheet when present. Other worksheets stay byte-identical.
+
 Reuse `transaction_id` when retrying the same staged edit after a transient error.
 
 Check pending work with **`dotall_staged`**.
