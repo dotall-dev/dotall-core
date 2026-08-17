@@ -233,6 +233,17 @@ fn edit_capabilities() -> Vec<EditCapability> {
             safety: "Form fill only. Checkboxes accept On/Off or export values; radios require an explicit export value when multiple on-states exist. Rejects encrypted and signed PDFs. Does not rewrite page content streams.".into(),
         },
         EditCapability {
+            operation: "clear_form_field".into(),
+            schema_version: SCHEMA_VERSION,
+            description: "Clear an AcroForm field (blank text/choice, Off for checkbox/radio)."
+                .into(),
+            example: json!({
+                "kind": "clear_form_field",
+                "payload": { "name": "Name" }
+            }),
+            safety: "Sets Tx/Ch to empty string and Btn to Off. Rejects encrypted, signed, and read-only fields. Does not rewrite page content streams.".into(),
+        },
+        EditCapability {
             operation: "set_document_metadata".into(),
             schema_version: SCHEMA_VERSION,
             description: "Set PDF /Info Title, Author, and/or Subject.".into(),

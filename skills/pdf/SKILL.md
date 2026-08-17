@@ -2,9 +2,9 @@
 name: pdf
 description: >-
   Work with .pdf files through Dotall MCP. Use when inspecting pages, listing
-  AcroForm fields, filling a text/checkbox/choice/radio field, setting /Info
-  metadata, or reverting a PDF in a Dotall workspace. Do not rewrite page
-  content streams.
+  AcroForm fields, filling or clearing a text/checkbox/choice/radio field,
+  setting /Info metadata, or reverting a PDF in a Dotall workspace. Do not
+  rewrite page content streams.
 ---
 
 # PDF via Dotall MCP
@@ -17,7 +17,7 @@ operators.
 ```text
 dotall_capabilities or dotall_inspect
   → dotall_read (page / field / full)
-  → dotall_edit set_form_field | set_document_metadata (stage)
+  → dotall_edit set_form_field | clear_form_field | set_document_metadata (stage)
   → dotall_apply OR flush-on-close
   → dotall_history / revert
 ```
@@ -67,6 +67,15 @@ Radio group (`Btn` with multiple on-states): always pass an explicit export valu
 {
   "kind": "set_form_field",
   "payload": { "name": "Priority", "value": "High" }
+}
+```
+
+Clear a field (blank text/choice, `Off` for checkbox/radio):
+
+```json
+{
+  "kind": "clear_form_field",
+  "payload": { "name": "Name" }
 }
 ```
 

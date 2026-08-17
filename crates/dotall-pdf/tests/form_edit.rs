@@ -133,6 +133,114 @@ fn set_form_field_updates_value() {
 }
 
 #[test]
+fn clear_form_field_blanks_text_and_turns_checkbox_off() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("form.pdf");
+    fs::write(&path, minimal_form_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let filled = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Name", "value": "Grace" }),
+            }],
+        )
+        .expect("validate fill");
+    let after_fill = handler.apply_edit(&path, &filled).expect("apply fill");
+    fs::write(&path, &after_fill.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("reparse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_form_field".into(),
+                payload: serde_json::json!({ "name": "Name" }),
+            }],
+        )
+        .expect("validate clear");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse cleared");
+    let name = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Name")
+        .expect("Name");
+    assert_eq!(name.value, "");
+    assert_eq!(edit.semantic_diff[0].change, "clear_form_field");
+}
+
+#[test]
+fn clear_form_field_sets_checkbox_off() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("checkbox.pdf");
+    fs::write(&path, minimal_checkbox_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let on = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_form_field".into(),
+                payload: serde_json::json!({ "name": "Agree", "value": "On" }),
+            }],
+        )
+        .expect("validate on");
+    let after_on = handler.apply_edit(&path, &on).expect("apply on");
+    fs::write(&path, &after_on.bytes).expect("rewrite");
+
+    let model = handler.parse(&path).expect("reparse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_form_field".into(),
+                payload: serde_json::json!({ "name": "Agree" }),
+            }],
+        )
+        .expect("validate clear");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let agree = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Agree")
+        .expect("Agree");
+    assert_eq!(agree.value, "Off");
+}
+
+#[test]
+fn clear_form_field_sets_radio_off() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("radio.pdf");
+    fs::write(&path, minimal_radio_pdf()).expect("write fixture");
+
+    let handler = PdfFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "clear_form_field".into(),
+                payload: serde_json::json!({ "name": "Priority" }),
+            }],
+        )
+        .expect("validate clear radio");
+    let patched = handler.apply_edit(&path, &edit).expect("apply clear radio");
+    let after = parse_pdf_bytes(&patched.bytes).expect("reparse");
+    let priority = after
+        .fields
+        .iter()
+        .find(|field| field.name == "Priority")
+        .expect("Priority");
+    assert_eq!(priority.value, "Off");
+}
+
+#[test]
 fn rejects_unknown_field() {
     let directory = tempdir().expect("temporary directory");
     let path = directory.path().join("form.pdf");

@@ -27,9 +27,10 @@ pub fn validate(
     let operation = &operations[0];
     match operation.kind.as_str() {
         "set_form_field" => validate_set_form_field(model, operation),
+        "clear_form_field" => validate_clear_form_field(model, operation),
         "set_document_metadata" => validate_set_document_metadata(model, operation),
         other => Err(format_error(format!(
-            "unsupported pdf edit `{other}`; use set_form_field or set_document_metadata"
+            "unsupported pdf edit `{other}`; use set_form_field, clear_form_field, or set_document_metadata"
         ))),
     }
 }
@@ -82,6 +83,67 @@ fn validate_set_form_field(
             notes: Vec::new(),
         },
     })
+}
+
+fn validate_clear_form_field(
+    model: &PdfDocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let name = required_str(&operation.payload, "name")?;
+    let field = model
+        .fields
+        .iter()
+        .find(|field| field.name == name)
+        .ok_or_else(|| format_error(format!("field `{name}` was not found")))?;
+    if field.read_only {
+        return Err(format_error("field is read-only"));
+    }
+    let value = clear_value_for_field(field)?;
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "clear_form_field".into(),
+            payload: serde_json::json!({
+                "name": field.name,
+                "value": value,
+                "element_id": field.element_id,
+                "field_type": field.field_type,
+            }),
+        }],
+        semantic_diff: vec![SemanticChange {
+            target: field.name.clone(),
+            element_id: field.element_id.clone(),
+            change: "clear_form_field".into(),
+            before: Some(field.value.clone()),
+            after: Some(value),
+        }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn clear_value_for_field(field: &PdfFieldModel) -> Result<String> {
+    match field.field_type.as_str() {
+        "tx" | "ch" => Ok(String::new()),
+        "btn" => {
+            if field
+                .export_values
+                .iter()
+                .any(|value| value.eq_ignore_ascii_case("Off"))
+            {
+                Ok("Off".into())
+            } else {
+                resolve_btn_value(field, "Off")
+            }
+        }
+        other => Err(format_error(format!(
+            "field type `{other}` is not supported in v0"
+        ))),
+    }
 }
 
 fn validate_set_document_metadata(
@@ -169,7 +231,7 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
     let mut document = Document::load_mem(package)
         .map_err(|error| format_error(format!("invalid PDF: {error}")))?;
     match operation.kind.as_str() {
-        "set_form_field" => {
+        "set_form_field" | "clear_form_field" => {
             let name = required_str(&operation.payload, "name")?;
             let value = required_str(&operation.payload, "value")?;
             let field_type = operation
