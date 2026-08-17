@@ -45,6 +45,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
         "set_paragraph_caps" => validate_set_paragraph_caps(model, operation),
         "set_paragraph_hyperlink" => validate_set_paragraph_hyperlink(model, operation),
         "replace_paragraph_text" => validate_replace_paragraph_text(model, operation),
+        "replace_across_paragraphs" => validate_replace_across_paragraphs(model, operation),
         "set_header_paragraph_text" => {
             validate_set_header_footer_text(model, operation, StoryKind::Header)
         }
@@ -52,7 +53,7 @@ pub fn validate(model: &DocumentModel, operations: &[SemanticOperation]) -> Resu
             validate_set_header_footer_text(model, operation, StoryKind::Footer)
         }
         other => Err(format_error(format!(
-            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_header_paragraph_text, or set_footer_paragraph_text"
+            "unsupported docx edit `{other}`; use set_paragraph_text, replace_paragraph_text, replace_across_paragraphs, insert_paragraph, delete_paragraph, set_paragraph_style, set_paragraph_alignment, set_paragraph_bold, set_paragraph_italic, set_paragraph_underline, set_paragraph_font_size, set_paragraph_font_name, set_paragraph_font_color, set_paragraph_highlight, set_paragraph_strikethrough, set_paragraph_vert_align, set_paragraph_caps, set_paragraph_hyperlink, set_header_paragraph_text, or set_footer_paragraph_text"
         ))),
     }
 }
@@ -147,6 +148,67 @@ fn validate_replace_paragraph_text(
             before: Some(paragraph.text.clone()),
             after: Some(after_text),
         }],
+        dependency_impact: DependencyImpact {
+            forward: Vec::new(),
+            notes: Vec::new(),
+        },
+    })
+}
+
+fn validate_replace_across_paragraphs(
+    model: &DocumentModel,
+    operation: &SemanticOperation,
+) -> Result<ValidatedEdit> {
+    let find = required_str(&operation.payload, "find")?;
+    let replace = required_str(&operation.payload, "replace")?;
+    if find.is_empty() {
+        return Err(format_error(
+            "replace_across_paragraphs requires a non-empty `find` string",
+        ));
+    }
+    let matches: Vec<&crate::model::ParagraphModel> = model
+        .paragraphs
+        .iter()
+        .filter(|paragraph| paragraph.editable && paragraph.text.contains(find))
+        .collect();
+    if matches.is_empty() {
+        return Err(format_error(
+            "`find` string was not found in any editable body/table paragraph",
+        ));
+    }
+    let payload_matches: Vec<serde_json::Value> = matches
+        .iter()
+        .map(|paragraph| {
+            serde_json::json!({
+                "index": paragraph.index,
+                "element_id": paragraph.element_id,
+                "text": paragraph.text.replace(find, replace),
+            })
+        })
+        .collect();
+    let semantic_diff = matches
+        .iter()
+        .map(|paragraph| SemanticChange {
+            target: format!("paragraph:{}", paragraph.index),
+            element_id: paragraph.element_id.clone(),
+            change: "replace_across_paragraphs".into(),
+            before: Some(paragraph.text.clone()),
+            after: Some(paragraph.text.replace(find, replace)),
+        })
+        .collect();
+    Ok(ValidatedEdit {
+        format_id: FORMAT_ID.into(),
+        schema_id: SCHEMA_ID.into(),
+        schema_version: SCHEMA_VERSION,
+        operations: vec![SemanticOperation {
+            kind: "replace_across_paragraphs".into(),
+            payload: serde_json::json!({
+                "find": find,
+                "replace": replace,
+                "matches": payload_matches,
+            }),
+        }],
+        semantic_diff,
         dependency_impact: DependencyImpact {
             forward: Vec::new(),
             notes: Vec::new(),
@@ -734,6 +796,32 @@ pub fn apply_bytes(package: &[u8], edit: &ValidatedEdit) -> Result<PatchedOutput
                 &text_payload.text,
                 text_payload.runs.as_deref(),
             )?;
+            let bytes = rebuild_package(
+                package,
+                &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),
+            )?;
+            Ok(PatchedOutput {
+                after_source_hash: blake3::hash(&bytes).to_hex().to_string(),
+                bytes,
+            })
+        }
+        "replace_across_paragraphs" => {
+            let matches = operation
+                .payload
+                .get("matches")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| format_error("`matches` is required"))?;
+            let original = entry_bytes(package, "word/document.xml")?;
+            let mut patched_xml = original;
+            for item in matches {
+                let index = item
+                    .get("index")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(|| format_error("`index` is required"))?
+                    as u32;
+                let text = required_str(item, "text")?;
+                patched_xml = patch_paragraph_text(&patched_xml, index, text, None)?;
+            }
             let bytes = rebuild_package(
                 package,
                 &BTreeMap::from([("word/document.xml".to_owned(), patched_xml)]),

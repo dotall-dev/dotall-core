@@ -233,6 +233,15 @@ Find/replace a substring inside one body/table paragraph (rejects empty `find` /
 }
 ```
 
+Find/replace a substring across all editable body/table paragraphs (`replace` may be empty; rejects empty `find` / no match). Skips non-editable paragraphs (tracked changes / SDT / fields) without failing when others match. Reuses the `replace_paragraph_text` rewrite per matching paragraph; patches only `word/document.xml`:
+
+```json
+{
+  "kind": "replace_across_paragraphs",
+  "payload": { "find": "Monday", "replace": "Tuesday" }
+}
+```
+
 Header / footer:
 
 ```json

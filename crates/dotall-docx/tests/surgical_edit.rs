@@ -1807,3 +1807,143 @@ fn capabilities_advertise_replace_paragraph_text() {
         "capabilities must advertise replace_paragraph_text"
     );
 }
+
+#[test]
+fn replace_across_paragraphs_find_replace_and_leaves_other_parts_byte_identical() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("table.docx");
+    let before = fixture::table_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let staged = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "set_paragraph_text".into(),
+                payload: serde_json::json!({ "index": 0, "text": "Cell intro" }),
+            }],
+        )
+        .expect("stage body needle");
+    let staged_bytes = handler.apply_edit(&path, &staged).expect("apply stage");
+    fs::write(&path, &staged_bytes.bytes).expect("rewrite staged");
+
+    let model = handler.parse(&path).expect("reparse staged");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_across_paragraphs".into(),
+                payload: serde_json::json!({
+                    "find": "Cell",
+                    "replace": "Slot",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs[0].text, "Slot intro");
+    assert_eq!(after.paragraphs[1].text, "SlotA");
+    assert_eq!(after.paragraphs[2].text, "SlotB");
+    assert_eq!(edit.semantic_diff.len(), 3);
+    assert!(
+        edit.semantic_diff
+            .iter()
+            .all(|change| change.change == "replace_across_paragraphs")
+    );
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn replace_across_paragraphs_rejects_empty_find_and_no_match() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let empty = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_across_paragraphs".into(),
+                payload: serde_json::json!({
+                    "find": "",
+                    "replace": "x",
+                }),
+            }],
+        )
+        .expect_err("empty find");
+    assert!(
+        empty.to_string().to_lowercase().contains("find"),
+        "unexpected: {empty}"
+    );
+
+    let missing = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_across_paragraphs".into(),
+                payload: serde_json::json!({
+                    "find": "zzz",
+                    "replace": "x",
+                }),
+            }],
+        )
+        .expect_err("no match");
+    let message = missing.to_string().to_lowercase();
+    assert!(
+        message.contains("find") || message.contains("not found") || message.contains("match"),
+        "unexpected: {missing}"
+    );
+}
+
+#[test]
+fn replace_across_paragraphs_skips_non_editable_when_others_match() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("tracked.docx");
+    let before = fixture::tracked_change_docx();
+    fs::write(&path, &before).expect("write fixture");
+
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let edit = handler
+        .validate_edit(
+            &model,
+            &[SemanticOperation {
+                kind: "replace_across_paragraphs".into(),
+                payload: serde_json::json!({
+                    "find": "a",
+                    "replace": "X",
+                }),
+            }],
+        )
+        .expect("validate");
+    let patched = handler.apply_edit(&path, &edit).expect("apply");
+    let after = parse_document_bytes(&patched.bytes).expect("reparse");
+
+    assert_eq!(after.paragraphs[0].text, "AlphX");
+    assert_eq!(after.paragraphs[1].text, "Beta");
+    assert_eq!(edit.semantic_diff.len(), 1);
+    assert_untouched_entries_identical(&before, &patched.bytes, &["word/document.xml"]);
+}
+
+#[test]
+fn capabilities_advertise_replace_across_paragraphs() {
+    let directory = tempdir().expect("temporary directory");
+    let path = directory.path().join("memo.docx");
+    fs::write(&path, fixture::minimal_docx()).expect("write fixture");
+    let handler = DocxFormat;
+    let model = handler.parse(&path).expect("parse");
+    let inspection = handler.inspect(&model).expect("inspect");
+    assert!(
+        inspection
+            .edit_capabilities
+            .iter()
+            .any(|cap| cap.operation == "replace_across_paragraphs"),
+        "capabilities must advertise replace_across_paragraphs"
+    );
+}
